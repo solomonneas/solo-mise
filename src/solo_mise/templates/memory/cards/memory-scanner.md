@@ -86,13 +86,9 @@ Avoid promoting during active sessions because card writes invalidate prefix cac
 - the prompt should embed the skip-rules and cost controls above
 - output goes either directly to `memory/cards/*.md` (if your harness can write there) or through `.claude/memory-handoffs/` for the conservative ingester to route
 
-## Why this replaces "dreaming"
+## Anti-patterns
 
-Earlier setups had a "dream and promote" job that appended generated reflections directly to `MEMORY.md`. That pattern bloated the index (which loads on every session), wrote unverified reflections as facts, and triggered bootstrap-truncation when the file grew past load limits.
-
-The session-review scanner keeps the same goal (promote durable knowledge nightly) but:
-
-- Reads sessions, not reflections.
-- Writes cards or daily logs, not the index.
-- Skips its own outputs and announce-only noise by design.
-- Routes through the same handoff gates as any other producer when uncertainty is high.
+- **Auto-promoting raw session fragments into `MEMORY.md`.** The index loads on every session; appending fragments nightly bloats it past the bootstrap budget and turns the on-load cache cost into a monthly tax. Write cards instead.
+- **Persisting reflections as facts.** The scanner reads sessions and produces summaries of decisions that happened, not generated commentary on what might have. Promoted findings must be evidence-backed.
+- **Reviewing its own output.** The scanner must skip cron-spawned sessions, heartbeats, announce-only noise, and prior scanner runs. Otherwise it spirals.
+- **Skipping the handoff gates when uncertain.** When confidence is below the auto-promote bar, route through `.claude/memory-handoffs/` and let the ingester apply the same conservative rules everything else gets.
