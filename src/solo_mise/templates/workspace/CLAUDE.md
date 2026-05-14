@@ -22,6 +22,14 @@ At the end of any substantial task, check whether the session produced durable k
 - Say it = call it. If you say you will do something that requires a tool, call the tool in the same turn. Silent intent is a lie. Full rule in `SOUL.md`.
 - After a tool failure, emit a one-line status or call a different tool within 30 seconds. Do not silently reason for minutes.
 
+## TokenJuice
+
+If this workspace uses TokenJuice, treat its footer as trusted local output-compaction metadata. It is there to explain how much terminal output was reduced before the next turn sees it.
+
+Claude Code note: when the official adapter still uses PostToolUse appended context, prefer the local PreToolUse wrapper that rewrites Bash commands to `tokenjuice wrap -- ...`. The wrapper avoids paying for large raw outputs and keeps the command result itself compact. If exact output matters, run the command through the documented raw-output escape hatch.
+
+Full runbook: `memory/cards/tokenjuice-output-compaction.md`.
+
 ## Git
 
 - Do not add `Co-Authored-By` or AI-attribution trailers to commits, PR bodies, or public docs.

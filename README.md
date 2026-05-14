@@ -26,6 +26,8 @@
 
 ## What this is
 
+Mise en place means "everything in its place before the work starts." In a kitchen, that is chopped onions, clean pans, labels, and a station that does not make you hunt for salt mid-service. For agents, it is the same idea: rules, memory, tools, handoff inboxes, publish guards, and boring verification already laid out before the session gets expensive.
+
 This package lays down a clean starting point for an agent workspace or a repo that needs durable memory handoffs. It is meant for people running real tools, real docs, and real automation across OpenClaw, Claude Code, Codex, Hermes, or a similar harness.
 
 The cookbook explains the why. This package gives you the kitchen.
@@ -38,6 +40,7 @@ The cookbook explains the why. This package gives you the kitchen.
 - starter memory cards and routing rules
 - multi-workspace handoff patterns for people administering more than one agent setup
 - memory-care staleness checks so durable cards do not quietly rot
+- TokenJuice output-compaction guidance for Claude Code and Codex, including wrapper notes and savings expectations
 - content-guard publish gates so private infrastructure does not leak into public docs
 - adapter fragments for OpenClaw (tested), Hermes (stubbed), and generic harnesses
 - doctor checks that prove the system is wired before you trust it
@@ -97,6 +100,8 @@ memory/cards/*.md, TOOLS.md, USER.md, rules/*.md, .learnings/*.md
 The ingester is intentionally conservative. Safe card handoffs become cards. Targeted updates append to the right file. Ambiguous material gets kicked out for review instead of being trusted automatically.
 
 For users running multiple agent homes, treat the owner workspace as the hub. Remote or secondary workspaces can write handoffs into their own `.claude/memory-handoffs/` directories, then a trusted sync pulls those files into a staging inbox on the owner. That keeps agents informed about what happened elsewhere without creating multiple canonical memories.
+
+Token-heavy terminal work gets the same treatment: make the wrapper explicit, make the escape hatch obvious, and tell every harness what is happening. The TokenJuice starter card documents Claude Code's PreToolUse wrapper path while the upstream PostToolUse fix is still pending, Codex's hook setup, and the savings model: observed output/context compaction can be huge, but billing-token savings depend on whether compacted output is fed into later turns.
 
 ## Related
 
