@@ -12,7 +12,7 @@ python3 -m venv .venv
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q              # full suite (40 tests)
+.venv/bin/python -m pytest -q              # full suite (42 tests)
 .venv/bin/python -m pytest tests/test_ingest.py -q   # one file
 .venv/bin/python -m pytest -k "promote" -q  # one keyword
 ```
@@ -76,6 +76,20 @@ See `RELEASE.md`.
 ## Multi-workspace memory
 
 Use `memory/cards/multi-workspace-handoff-admin.md` as the public-safe pattern for pulling handoffs from secondary agent homes into one canonical owner. Use `memory/cards/memory-care-staleness.md` for the card decay scanner and safe refresh loop.
+
+## TokenJuice notes
+
+Use `memory/cards/tokenjuice-output-compaction.md` for the public-safe pattern. Important checks:
+
+```bash
+tokenjuice --version
+tokenjuice stats
+tokenjuice doctor hooks
+tokenjuice wrap -- git status --short
+tokenjuice wrap --raw -- git status --short
+```
+
+Claude Code currently needs the local PreToolUse wrapper pattern when the upstream PostToolUse replacement fix has not landed. Codex can use the normal hook path, but verify the active hook feature flag with `tokenjuice doctor hooks` because config keys have changed across releases.
 
 ## Where things live
 

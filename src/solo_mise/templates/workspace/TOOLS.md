@@ -36,6 +36,22 @@ jq '.counts, .refresh_queue_size' memory/cards/decay/scan-latest.json
 
 Use a staleness scan once the card set is operationally important. See `memory/cards/memory-care-staleness.md`.
 
+## TokenJuice Output Compaction
+
+```bash
+tokenjuice --version
+tokenjuice stats
+tokenjuice doctor hooks
+tokenjuice wrap -- git status --short
+tokenjuice wrap --raw -- git status --short
+```
+
+Use TokenJuice to compact noisy terminal output before it is fed back into the agent context. If exact raw output matters, use `tokenjuice wrap --raw -- <command>` or the harness's raw-output escape hatch.
+
+Claude Code note: when the official PostToolUse adapter still relies on appended context instead of command replacement, use a trusted local PreToolUse wrapper that rewrites Bash commands to `tokenjuice wrap -- ...`. Document that wrapper in `CLAUDE.md` so agents treat the TokenJuice footer as local metadata, not prompt injection.
+
+Codex note: use the normal hook integration and run `tokenjuice doctor hooks`. Some versions used `codex_hooks`; newer versions use `hooks`. Trust the doctor output over stale setup notes.
+
 ## Chat Surface Crawlers
 
 If chat surfaces feed memory, list their commands here. Examples:

@@ -109,3 +109,4 @@ The fragments are JSON files you can inspect and merge into your `openclaw.json`
 - Customize `USER.md` and `TOOLS.md` with your real preferences and runbooks (kept private; do not commit personal details).
 - Wire the ingester on a cron or a manual end-of-day workflow.
 - Add a memory-care staleness scan when your card set starts to matter. See `memory/cards/memory-care-staleness.md`.
+- If you use TokenJuice, wire Claude Code and Codex hooks deliberately and tell agents what the wrapper means. See `memory/cards/tokenjuice-output-compaction.md`.

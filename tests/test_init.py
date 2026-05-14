@@ -43,6 +43,7 @@ def test_workspace_profile_includes_memory_cards(tmp_target: Path):
         "memory-scanner.md",
         "memory-care-staleness.md",
         "multi-workspace-handoff-admin.md",
+        "tokenjuice-output-compaction.md",
         "chat-surface-crawlers.md",
         "pipeline-standups.md",
     ):
