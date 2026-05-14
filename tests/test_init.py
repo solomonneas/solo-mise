@@ -46,10 +46,17 @@ def test_workspace_profile_includes_memory_cards(tmp_target: Path):
         "tokenjuice-output-compaction.md",
         "chat-surface-crawlers.md",
         "pipeline-standups.md",
+        "obsidian-notes.md",
+        "backup-restic.md",
     ):
         assert (tmp_target / "memory" / "cards" / card).is_file(), f"missing card {card}"
     assert (tmp_target / "memory" / "handoff-inbox").is_dir()
     assert (tmp_target / ".claude" / "memory-handoffs" / "processed").is_dir()
+    # skill + script land at the right paths, executable bit on the script
+    assert (tmp_target / "skills" / "note" / "SKILL.md").is_file()
+    backup = tmp_target / "scripts" / "backup-restic.sh"
+    assert backup.is_file()
+    assert backup.stat().st_mode & 0o111, "backup-restic.sh should be executable"
 
 
 def test_openclaw_profile_extends_workspace(tmp_target: Path):
