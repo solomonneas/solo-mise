@@ -48,6 +48,27 @@ def load_profile(profile_id: str) -> Dict[str, Any]:
     return manifest
 
 
+def load_depth_manifest(depth_id: str) -> Dict[str, Any]:
+    """Load and merge a depth manifest, resolving `extends` chains."""
+    return _load_layered("depth", depth_id)
+
+
+def _load_layered(kind: str, manifest_id: str) -> Dict[str, Any]:
+    base = template_root() / kind
+    path = base / f"{manifest_id}.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"Unknown {kind}: {manifest_id} (looked at {path})")
+    manifest = json.loads(path.read_text())
+    parent_id = manifest.get("extends")
+    if parent_id:
+        parent = _load_layered(kind, parent_id)
+        merged_files = list(parent.get("files", [])) + list(manifest.get("files", []))
+        merged_dirs = list(parent.get("dirs", [])) + list(manifest.get("dirs", []))
+        manifest["files"] = _dedupe_files(merged_files)
+        manifest["dirs"] = sorted(set(merged_dirs))
+    return manifest
+
+
 def _dedupe_files(entries):
     """Keep the last occurrence per destination path."""
     seen: Dict[str, Dict[str, Any]] = {}

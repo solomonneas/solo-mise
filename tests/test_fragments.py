@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from solo_mise import fragments as frag_mod
+from solo_mise.templates import load_depth_manifest, template_root
 
 
 def test_openclaw_fragments(tmp_path: Path):
@@ -41,3 +42,37 @@ def test_hermes_fragments(tmp_path: Path):
 def test_unknown_harness_errors(tmp_path: Path):
     rc = frag_mod.write_fragments(tmp_path, harness="bogus")
     assert rc == 2
+
+
+def test_load_depth_repo():
+    m = load_depth_manifest("repo")
+    assert m["id"] == "repo"
+    dsts = [f["dst"] for f in m["files"]]
+    assert "AGENTS.md" in dsts
+    assert "SAFETY_RULES.md" in dsts
+    assert "INSTALL_FOR_AGENTS.md" in dsts
+    assert "hooks/pre-push" in dsts
+    assert ".solo-mise/policies/public-repo.json" in dsts
+    # depth baseline does NOT install harness-specific bridge files
+    assert "CLAUDE.md" not in dsts
+
+
+def test_load_depth_workspace():
+    m = load_depth_manifest("workspace")
+    assert m["id"] == "workspace"
+    dsts = [f["dst"] for f in m["files"]]
+    assert "AGENTS.md" in dsts
+    assert "MEMORY.md" in dsts
+    assert "TOOLS.md" in dsts
+    assert "USER.md" in dsts
+    assert "SOUL.md" in dsts
+    assert "IDENTITY.md" in dsts
+    assert "HEARTBEAT.md" in dsts
+    assert "CLAUDE.md" not in dsts
+
+
+def test_depth_repo_files_exist():
+    m = load_depth_manifest("repo")
+    root = template_root()
+    for entry in m["files"]:
+        assert (root / entry["src"]).is_file(), entry["src"]
