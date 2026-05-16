@@ -169,3 +169,29 @@ def test_harness_override(tmp_target: Path):
     init_mod.run(target=tmp_target, profile_id="repo", harness="hermes")
     agents = (tmp_target / "AGENTS.md").read_text()
     assert "Hermes" in agents
+
+
+def test_cli_parses_depth_harnesses(monkeypatch, tmp_path):
+    from solo_mise.cli import _build_parser
+    parser = _build_parser()
+    ns = parser.parse_args([
+        "init",
+        "--target", str(tmp_path),
+        "--depth", "workspace",
+        "--harnesses", "claude,codex,openclaw",
+        "--owner", "openclaw",
+        "--include", "publisher",
+    ])
+    assert ns.depth == "workspace"
+    assert ns.harnesses == "claude,codex,openclaw"
+    assert ns.owner == "openclaw"
+    assert ns.includes == ["publisher"]
+
+
+def test_cli_rejects_unknown_harness(tmp_path):
+    from solo_mise.cli import main
+    rc = main([
+        "init", "--target", str(tmp_path),
+        "--harnesses", "claude,weird",
+    ])
+    assert rc != 0

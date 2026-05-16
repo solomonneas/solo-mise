@@ -48,6 +48,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not create or update the target's .gitignore.",
     )
     p_init.add_argument("--dry-run", action="store_true", help="Show what would happen.")
+    p_init.add_argument(
+        "--depth",
+        choices=["repo", "workspace"],
+        default=None,
+        help="Install depth: 'repo' (minimal) or 'workspace' (full home). "
+             "Required unless --profile is used.",
+    )
+    p_init.add_argument(
+        "--harnesses",
+        default=None,
+        help="Comma-separated harness ids: claude, codex, openclaw, hermes. "
+             "Pass 'none' for a generic install with no harness-specific files.",
+    )
+    p_init.add_argument(
+        "--owner",
+        default=None,
+        help="Override the canonical memory owner. Must be 'this-repo' or one of --harnesses.",
+    )
+    p_init.add_argument(
+        "--include",
+        dest="includes",
+        action="append",
+        default=[],
+        help="Optional add-on (currently: 'publisher'). May be repeated.",
+    )
 
     # doctor
     p_doctor = sub.add_parser("doctor", help="Verify a target workspace.")
@@ -110,6 +135,36 @@ def main(argv=None) -> int:
     cmd = args.command
 
     if cmd == "init":
+        # New v0.3.0 path: --depth/--harnesses build a Selection directly.
+        if getattr(args, "depth", None) is not None or getattr(args, "harnesses", None) is not None:
+            from .selection import Selection, KNOWN_HARNESSES, resolve_owner
+            from .install import install_selection
+
+            depth = args.depth or "repo"
+            if args.harnesses is None or args.harnesses == "":
+                harnesses = ["claude"]
+            elif args.harnesses == "none":
+                harnesses = []
+            else:
+                harnesses = [h.strip() for h in args.harnesses.split(",") if h.strip()]
+            for h in harnesses:
+                if h not in KNOWN_HARNESSES:
+                    print(f"error: unknown harness {h!r} (valid: {KNOWN_HARNESSES})", file=sys.stderr)
+                    return 2
+            try:
+                owner = resolve_owner(harnesses, override=args.owner)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            sel = Selection(depth=depth, harnesses=harnesses, owner=owner, includes=list(args.includes))
+            return install_selection(
+                target=args.target,
+                selection=sel,
+                force=getattr(args, "force", False),
+                dry_run=getattr(args, "dry_run", False),
+                allow_home=getattr(args, "allow_home", False),
+            )
+
         from . import init as init_mod
 
         return init_mod.run(
