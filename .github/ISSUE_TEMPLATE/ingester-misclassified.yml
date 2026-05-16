@@ -1,0 +1,56 @@
+name: Ingester misclassified a handoff
+description: A handoff that should have promoted to a card was bounced, or vice versa. This is the most useful report you can file - routing rules need real examples.
+labels: ["ingester"]
+body:
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Misclassification direction
+      options:
+        - "Should have promoted, was bounced to review"
+        - "Should have been bounced, was auto-promoted"
+        - "Targeted update fired against the wrong file"
+        - "Other"
+    validations:
+      required: true
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff content
+      description: |
+        Paste the handoff that was misclassified, with all personal details scrubbed
+        (paths, hostnames, account ids, tokens). The structure matters more than the
+        literal content - if you cannot share it, paste a redacted version with
+        `<redacted-purpose>` placeholders.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+      description: |
+        Where should this have ended up? memory/cards/<name>.md? An append to
+        TOOLS.md? An append to a specific rule file? The review inbox?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: solo-mise version
+      placeholder: solo-mise 0.2.0
+    validations:
+      required: true
+  - type: checkboxes
+    id: scrub
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have scrubbed personal paths, hostnames, tokens, and account ids from the handoff above.
+          required: true

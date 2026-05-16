@@ -1,0 +1,51 @@
+name: Bug report
+description: Something is broken in solo-mise itself (CLI, doctor, ingester, scrub).
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, and what did you expect versus what you got?
+      placeholder: |
+        I ran `solo-mise init --target ./foo --profile workspace` and got X.
+        I expected Y.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: solo-mise version
+      description: Output of `solo-mise --version`.
+      placeholder: solo-mise 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: 3.12.3
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Ubuntu 24.04, macOS 14.5, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full output
+      description: Paste the full stdout + stderr. Redact personal paths if you want, but keep enough for us to reproduce.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: scrub
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have scrubbed any personal hostnames, tokens, or paths from the report.
+          required: true

@@ -1,0 +1,51 @@
+name: Profile init or doctor fails
+description: A specific profile fails to init cleanly or doctor reports failures on a fresh install.
+labels: ["bug", "profile"]
+body:
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options:
+        - repo
+        - workspace
+        - openclaw
+        - hermes
+        - generic
+        - publisher
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact commands you ran
+      description: We want to reproduce the failure verbatim.
+      render: shell
+      placeholder: |
+        rm -rf /tmp/sm && mkdir -p /tmp/sm && git init -q /tmp/sm
+        solo-mise init --target /tmp/sm --profile workspace
+        solo-mise doctor --target /tmp/sm
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Full output of `init` and `doctor`.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: solo-mise version
+      placeholder: solo-mise 0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything unusual about your target?
+      description: Pre-existing files, custom .gitignore, weird filesystem, network sandbox, etc.
+    validations:
+      required: false
