@@ -195,3 +195,23 @@ def test_cli_rejects_unknown_harness(tmp_path):
         "--harnesses", "claude,weird",
     ])
     assert rc != 0
+
+
+def test_legacy_profile_translates_and_warns(tmp_path, capsys):
+    from solo_mise.cli import main
+    rc = main(["init", "--target", str(tmp_path), "--profile", "workspace"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "deprecated" in captured.err.lower()
+    assert "workspace" in captured.err
+    # Workspace install includes MEMORY.md
+    assert (tmp_path / "MEMORY.md").is_file()
+    # And CLAUDE.md from the claude harness
+    assert (tmp_path / "CLAUDE.md").is_file()
+
+
+def test_legacy_profile_openclaw_translates(tmp_path):
+    from solo_mise.cli import main
+    rc = main(["init", "--target", str(tmp_path), "--profile", "openclaw"])
+    assert rc == 0
+    assert (tmp_path / ".solo-mise" / "openclaw" / "README.md").is_file()

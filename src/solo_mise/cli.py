@@ -25,9 +25,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_init.add_argument(
         "--profile",
         "-p",
-        default="repo",
+        default=None,
         choices=["repo", "workspace", "openclaw", "hermes", "generic", "publisher"],
-        help="Profile to install (default: repo).",
+        help="(Deprecated) Profile to install. Use --depth/--harnesses instead.",
     )
     p_init.add_argument(
         "--harness",
@@ -165,16 +165,40 @@ def main(argv=None) -> int:
                 allow_home=getattr(args, "allow_home", False),
             )
 
-        from . import init as init_mod
+        # Legacy --profile path: translate to a Selection, warn, install.
+        if args.profile:
+            from .selection import profile_to_selection
+            from .install import install_selection
+            sel = profile_to_selection(args.profile)
+            equivalent = f"--depth {sel.depth} --harnesses {','.join(sel.harnesses) or 'none'}"
+            if sel.owner != "this-repo" and sel.owner in sel.harnesses:
+                equivalent += f" --owner {sel.owner}"
+            for inc in sel.includes:
+                equivalent += f" --include {inc}"
+            print(
+                f"warning: --profile is deprecated. The v0.3.0+ equivalent is "
+                f"`{equivalent}`. --profile will be removed in v0.4.0.",
+                file=sys.stderr,
+            )
+            return install_selection(
+                target=args.target,
+                selection=sel,
+                force=getattr(args, "force", False),
+                dry_run=getattr(args, "dry_run", False),
+                allow_home=getattr(args, "allow_home", False),
+            )
 
-        return init_mod.run(
+        # No flags and no --profile: default to repo+claude for now.
+        # Task 12 wires the interactive prompt here.
+        from .selection import Selection
+        from .install import install_selection
+        sel = Selection(depth="repo", harnesses=["claude"], owner="claude", includes=[])
+        return install_selection(
             target=args.target,
-            profile_id=args.profile,
-            force=args.force,
-            dry_run=args.dry_run,
-            harness=args.harness,
-            allow_home=args.allow_home,
-            update_gitignore=args.update_gitignore,
+            selection=sel,
+            force=getattr(args, "force", False),
+            dry_run=getattr(args, "dry_run", False),
+            allow_home=getattr(args, "allow_home", False),
         )
     if cmd == "doctor":
         from . import doctor as doctor_mod
