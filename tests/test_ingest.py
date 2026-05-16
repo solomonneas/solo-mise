@@ -266,3 +266,26 @@ def test_missing_inbox_returns_error(tmp_target: Path):
     tmp_target.mkdir()
     rc = ingest_mod.run(target=tmp_target)
     assert rc == 2
+
+
+def test_ingest_scans_multiple_writer_inboxes(tmp_path):
+    from solo_mise.install import install_selection
+    from solo_mise.selection import Selection
+    from solo_mise.ingest import run as ingest_run
+
+    sel = Selection(depth="workspace", harnesses=["claude", "codex"], owner="this-repo", includes=[])
+    install_selection(tmp_path, sel)
+
+    # Drop a handoff in each writer's inbox.
+    (tmp_path / ".claude/memory-handoffs/2026-01-01-claude.md").write_text(
+        "# Memory Handoff\n## Type\nsetup\n## Title\nclaude\n## Summary\nfrom claude\n## Recommended memory action\nno-card\n## Target document\nTOOLS.md\n## Suggested document content\n- claude entry\n"
+    )
+    (tmp_path / ".codex/memory-handoffs/2026-01-01-codex.md").write_text(
+        "# Memory Handoff\n## Type\nsetup\n## Title\ncodex\n## Summary\nfrom codex\n## Recommended memory action\nno-card\n## Target document\nTOOLS.md\n## Suggested document content\n- codex entry\n"
+    )
+
+    rc = ingest_run(target=tmp_path, promote_cards=True, route_documents=True)
+    assert rc == 0
+    tools = (tmp_path / "TOOLS.md").read_text()
+    assert "- claude entry" in tools
+    assert "- codex entry" in tools

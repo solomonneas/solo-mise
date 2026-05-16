@@ -169,3 +169,74 @@ def test_harness_override(tmp_target: Path):
     init_mod.run(target=tmp_target, profile_id="repo", harness="hermes")
     agents = (tmp_target / "AGENTS.md").read_text()
     assert "Hermes" in agents
+
+
+def test_cli_parses_depth_harnesses(monkeypatch, tmp_path):
+    from solo_mise.cli import _build_parser
+    parser = _build_parser()
+    ns = parser.parse_args([
+        "init",
+        "--target", str(tmp_path),
+        "--depth", "workspace",
+        "--harnesses", "claude,codex,openclaw",
+        "--owner", "openclaw",
+        "--include", "publisher",
+    ])
+    assert ns.depth == "workspace"
+    assert ns.harnesses == "claude,codex,openclaw"
+    assert ns.owner == "openclaw"
+    assert ns.includes == ["publisher"]
+
+
+def test_cli_rejects_unknown_harness(tmp_path):
+    from solo_mise.cli import main
+    rc = main([
+        "init", "--target", str(tmp_path),
+        "--harnesses", "claude,weird",
+    ])
+    assert rc != 0
+
+
+def test_legacy_profile_translates_and_warns(tmp_path, capsys):
+    from solo_mise.cli import main
+    rc = main(["init", "--target", str(tmp_path), "--profile", "workspace"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "deprecated" in captured.err.lower()
+    assert "workspace" in captured.err
+    # Workspace install includes MEMORY.md
+    assert (tmp_path / "MEMORY.md").is_file()
+    # And CLAUDE.md from the claude harness
+    assert (tmp_path / "CLAUDE.md").is_file()
+
+
+def test_legacy_profile_openclaw_translates(tmp_path):
+    from solo_mise.cli import main
+    rc = main(["init", "--target", str(tmp_path), "--profile", "openclaw"])
+    assert rc == 0
+    assert (tmp_path / ".solo-mise" / "openclaw" / "README.md").is_file()
+
+
+def test_cli_invokes_prompt_when_no_selection_flags(monkeypatch, tmp_path):
+    """init without any selection flags should call prompt_for_selection."""
+    called = {}
+    from solo_mise import cli
+    from solo_mise.selection import Selection
+
+    def fake_prompt():
+        called["yes"] = True
+        return Selection(depth="repo", harnesses=["claude"], owner="claude", includes=[])
+
+    monkeypatch.setattr(cli, "prompt_for_selection", fake_prompt)
+    rc = cli.main(["init", "--target", str(tmp_path)])
+    assert rc == 0
+    assert called.get("yes") is True
+
+
+def test_cli_skips_prompt_when_depth_given(monkeypatch, tmp_path):
+    from solo_mise import cli
+    def fail():
+        raise AssertionError("prompt should not be called")
+    monkeypatch.setattr(cli, "prompt_for_selection", fail)
+    rc = cli.main(["init", "--target", str(tmp_path), "--depth", "repo", "--harnesses", "claude"])
+    assert rc == 0

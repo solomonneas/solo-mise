@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .prompt import prompt_for_selection  # imported here so tests can monkeypatch cli.prompt_for_selection
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -25,9 +26,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_init.add_argument(
         "--profile",
         "-p",
-        default="repo",
+        default=None,
         choices=["repo", "workspace", "openclaw", "hermes", "generic", "publisher"],
-        help="Profile to install (default: repo).",
+        help="(Deprecated) Profile to install. Use --depth/--harnesses instead.",
     )
     p_init.add_argument(
         "--harness",
@@ -48,6 +49,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not create or update the target's .gitignore.",
     )
     p_init.add_argument("--dry-run", action="store_true", help="Show what would happen.")
+    p_init.add_argument(
+        "--depth",
+        choices=["repo", "workspace"],
+        default=None,
+        help="Install depth: 'repo' (minimal) or 'workspace' (full home). "
+             "Required unless --profile is used.",
+    )
+    p_init.add_argument(
+        "--harnesses",
+        default=None,
+        help="Comma-separated harness ids: claude, codex, openclaw, hermes. "
+             "Pass 'none' for a generic install with no harness-specific files.",
+    )
+    p_init.add_argument(
+        "--owner",
+        default=None,
+        help="Override the canonical memory owner. Must be 'this-repo' or one of --harnesses.",
+    )
+    p_init.add_argument(
+        "--include",
+        dest="includes",
+        action="append",
+        default=[],
+        help="Optional add-on (currently: 'publisher'). May be repeated.",
+    )
 
     # doctor
     p_doctor = sub.add_parser("doctor", help="Verify a target workspace.")
@@ -101,6 +127,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_hf = sub.add_parser("hermes-fragments", help="Write Hermes adapter fragments (experimental).")
     p_hf.add_argument("--out", "-o", type=Path, required=True, help="Output directory.")
 
+    # reconfigure
+    p_recon = sub.add_parser("reconfigure", help="Adjust an existing install to a new Selection.")
+    p_recon.add_argument("--target", "-t", type=Path, default=Path("."))
+    p_recon.add_argument("--depth", choices=["repo", "workspace"], default=None)
+    p_recon.add_argument("--harnesses", default=None)
+    p_recon.add_argument("--owner", default=None)
+    p_recon.add_argument("--include", dest="includes", action="append", default=[])
+    p_recon.add_argument("--prune", action="store_true",
+                         help="Remove files for harnesses no longer selected.")
+
     return parser
 
 
@@ -110,16 +146,73 @@ def main(argv=None) -> int:
     cmd = args.command
 
     if cmd == "init":
-        from . import init as init_mod
+        # New v0.3.0 path: --depth/--harnesses build a Selection directly.
+        if getattr(args, "depth", None) is not None or getattr(args, "harnesses", None) is not None:
+            from .selection import Selection, KNOWN_HARNESSES, resolve_owner
+            from .install import install_selection
 
-        return init_mod.run(
+            depth = args.depth or "repo"
+            if args.harnesses is None or args.harnesses == "":
+                harnesses = ["claude"]
+            elif args.harnesses == "none":
+                harnesses = []
+            else:
+                harnesses = [h.strip() for h in args.harnesses.split(",") if h.strip()]
+            for h in harnesses:
+                if h not in KNOWN_HARNESSES:
+                    print(f"error: unknown harness {h!r} (valid: {KNOWN_HARNESSES})", file=sys.stderr)
+                    return 2
+            try:
+                owner = resolve_owner(harnesses, override=args.owner)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            sel = Selection(depth=depth, harnesses=harnesses, owner=owner, includes=list(args.includes))
+            return install_selection(
+                target=args.target,
+                selection=sel,
+                force=getattr(args, "force", False),
+                dry_run=getattr(args, "dry_run", False),
+                allow_home=getattr(args, "allow_home", False),
+            )
+
+        # Legacy --profile path: translate to a Selection, warn, install.
+        if args.profile:
+            from .selection import profile_to_selection
+            from .install import install_selection
+            sel = profile_to_selection(args.profile)
+            equivalent = f"--depth {sel.depth} --harnesses {','.join(sel.harnesses) or 'none'}"
+            if sel.owner != "this-repo" and sel.owner in sel.harnesses:
+                equivalent += f" --owner {sel.owner}"
+            for inc in sel.includes:
+                equivalent += f" --include {inc}"
+            print(
+                f"warning: --profile is deprecated. The v0.3.0+ equivalent is "
+                f"`{equivalent}`. --profile will be removed in v0.4.0.",
+                file=sys.stderr,
+            )
+            return install_selection(
+                target=args.target,
+                selection=sel,
+                force=getattr(args, "force", False),
+                dry_run=getattr(args, "dry_run", False),
+                allow_home=getattr(args, "allow_home", False),
+            )
+
+        # No flags and no --profile: interactive prompt.
+        from .prompt import NonInteractiveError
+        from .install import install_selection
+        try:
+            sel = prompt_for_selection()
+        except NonInteractiveError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        return install_selection(
             target=args.target,
-            profile_id=args.profile,
-            force=args.force,
-            dry_run=args.dry_run,
-            harness=args.harness,
-            allow_home=args.allow_home,
-            update_gitignore=args.update_gitignore,
+            selection=sel,
+            force=getattr(args, "force", False),
+            dry_run=getattr(args, "dry_run", False),
+            allow_home=getattr(args, "allow_home", False),
         )
     if cmd == "doctor":
         from . import doctor as doctor_mod
@@ -150,6 +243,31 @@ def main(argv=None) -> int:
         from . import fragments as frag_mod
 
         return frag_mod.write_fragments(args.out, harness="hermes")
+    if cmd == "reconfigure":
+        from .config import load_config
+        from .reconfigure import reconfigure as _reconfigure
+        from .selection import Selection, KNOWN_HARNESSES, resolve_owner
+
+        existing = load_config(args.target)
+        if existing is None:
+            print("error: no .solo-mise/config.json in target. Run `solo-mise init` first.", file=sys.stderr)
+            return 2
+
+        depth = args.depth or existing.selection.depth
+        if args.harnesses is None:
+            harnesses = list(existing.selection.harnesses)
+        elif args.harnesses == "none":
+            harnesses = []
+        else:
+            harnesses = [h.strip() for h in args.harnesses.split(",") if h.strip()]
+        for h in harnesses:
+            if h not in KNOWN_HARNESSES:
+                print(f"error: unknown harness {h!r}", file=sys.stderr)
+                return 2
+        owner = resolve_owner(harnesses, override=args.owner)
+        includes = list(args.includes) if args.includes else list(existing.selection.includes)
+        new_sel = Selection(depth=depth, harnesses=harnesses, owner=owner, includes=includes)
+        return _reconfigure(args.target, new_selection=new_sel, prune=args.prune)
 
     parser.error(f"unknown command: {cmd}")
     return 2
