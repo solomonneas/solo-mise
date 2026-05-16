@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-16
+
+### Added
+- Two-axis selection model: `--depth {repo,workspace}` + `--harnesses {claude,codex,openclaw,hermes}` + `--include publisher`. Pick any combination of harnesses.
+- Interactive prompt on bare `solo-mise init` (no flags). Defaults to claude + repo + no includes.
+- `.solo-mise/config.json` is now the per-target source of truth for selection state. Read by `doctor`, `ingest`, and `reconfigure`.
+- `solo-mise reconfigure --target . [--prune]` adjusts an existing install to a new selection. `--prune` removes orphaned files for deselected harnesses.
+- Per-writer handoff inboxes: `.codex/memory-handoffs/` for Codex (in addition to existing `.claude/memory-handoffs/`).
+- Ingester now scans all configured writer inboxes.
+- Doctor reports apparent harness shape, checks per-writer inbox, warns on orphaned inbox dirs from unselected harnesses.
+
+### Changed
+- README reframed around the two-axis model. New "Picking your harnesses" section walks through four common combos.
+- CONTRIBUTING.md "Adding a profile" replaced by "Adding a harness" + "Adding a depth" + "Adding an include".
+
+### Deprecated
+- `solo-mise init --profile <x>` still works but prints a stderr deprecation note pointing at the new flags. Will be removed in v0.4.0.
+
+### Migration
+
+If you have v0.2.0 scripts using `--profile`:
+
+| v0.2.0 | v0.3.0+ |
+|---|---|
+| `--profile repo` | `--depth repo --harnesses claude` |
+| `--profile workspace` | `--depth workspace --harnesses claude` |
+| `--profile openclaw` | `--depth workspace --harnesses claude,openclaw` |
+| `--profile hermes` | `--depth workspace --harnesses claude,hermes` |
+| `--profile generic` | `--depth workspace --harnesses none` |
+| `--profile publisher` | `--depth repo --harnesses claude --include publisher` |
+
 ## [0.2.0] - 2026-05-16
 
 ### Added
@@ -60,6 +91,7 @@ Initial release.
 - OpenClaw adapter fragments and harness-aware doctor checks.
 - Experimental Hermes adapter fragments.
 
-[Unreleased]: https://github.com/solomonneas/solo-mise/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/solomonneas/solo-mise/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/solomonneas/solo-mise/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/solomonneas/solo-mise/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/solomonneas/solo-mise/releases/tag/v0.1.0
