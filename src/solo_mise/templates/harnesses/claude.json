@@ -1,0 +1,12 @@
+{
+  "id": "claude",
+  "role": "writer",
+  "description": "Claude Code bridge + handoff inbox.",
+  "files": [
+    {"src": "workspace/CLAUDE.md", "dst": "CLAUDE.md"},
+    {"src": "claude/memory-handoffs/TEMPLATE.md", "dst": ".claude/memory-handoffs/TEMPLATE.md"}
+  ],
+  "dirs": [
+    ".claude/memory-handoffs/processed"
+  ]
+}

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from solo_mise import fragments as frag_mod
-from solo_mise.templates import load_depth_manifest, template_root
+from solo_mise.templates import load_depth_manifest, load_harness_manifest, template_root
 
 
 def test_openclaw_fragments(tmp_path: Path):
@@ -76,3 +76,54 @@ def test_depth_repo_files_exist():
     root = template_root()
     for entry in m["files"]:
         assert (root / entry["src"]).is_file(), entry["src"]
+
+
+def test_load_harness_claude():
+    m = load_harness_manifest("claude")
+    assert m["id"] == "claude"
+    assert m.get("role") == "writer"
+    dsts = [f["dst"] for f in m["files"]]
+    assert "CLAUDE.md" in dsts
+    assert ".claude/memory-handoffs/TEMPLATE.md" in dsts
+    assert ".claude/memory-handoffs/processed" in m.get("dirs", [])
+
+
+def test_load_harness_codex():
+    m = load_harness_manifest("codex")
+    assert m["id"] == "codex"
+    assert m.get("role") == "writer"
+    dsts = [f["dst"] for f in m["files"]]
+    # Codex has no bridge file today (reads AGENTS.md from depth baseline)
+    assert "CODEX.md" not in dsts
+    assert ".codex/memory-handoffs/TEMPLATE.md" in dsts
+    assert ".codex/memory-handoffs/processed" in m.get("dirs", [])
+
+
+def test_load_harness_openclaw():
+    m = load_harness_manifest("openclaw")
+    assert m["id"] == "openclaw"
+    assert m.get("role") == "reader"
+    dsts = [f["dst"] for f in m["files"]]
+    # Reader fragments live under .solo-mise/openclaw/
+    assert any(d.startswith(".solo-mise/openclaw/") for d in dsts)
+    # No inbox for readers
+    assert not any("/memory-handoffs/" in d for d in dsts)
+
+
+def test_load_harness_hermes():
+    m = load_harness_manifest("hermes")
+    assert m["id"] == "hermes"
+    assert m.get("role") == "reader"
+
+
+def test_codex_template_file_exists():
+    from solo_mise.templates import template_root
+    assert (template_root() / "codex" / "memory-handoffs" / "TEMPLATE.md").is_file()
+
+
+def test_all_harness_files_exist():
+    from solo_mise.templates import template_root
+    for h in ("claude", "codex", "openclaw", "hermes"):
+        m = load_harness_manifest(h)
+        for entry in m["files"]:
+            assert (template_root() / entry["src"]).is_file(), f"{h}: {entry['src']}"

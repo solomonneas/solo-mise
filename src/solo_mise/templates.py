@@ -53,6 +53,11 @@ def load_depth_manifest(depth_id: str) -> Dict[str, Any]:
     return _load_layered("depth", depth_id)
 
 
+def load_harness_manifest(harness_id: str) -> Dict[str, Any]:
+    """Load a harness manifest. Harness manifests do not currently use `extends`."""
+    return _load_layered("harnesses", harness_id)
+
+
 def _load_layered(kind: str, manifest_id: str) -> Dict[str, Any]:
     base = template_root() / kind
     path = base / f"{manifest_id}.json"

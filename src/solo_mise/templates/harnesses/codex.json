@@ -1,0 +1,11 @@
+{
+  "id": "codex",
+  "role": "writer",
+  "description": "Codex handoff inbox. (AGENTS.md is in the depth baseline; no separate bridge file today.)",
+  "files": [
+    {"src": "codex/memory-handoffs/TEMPLATE.md", "dst": ".codex/memory-handoffs/TEMPLATE.md"}
+  ],
+  "dirs": [
+    ".codex/memory-handoffs/processed"
+  ]
+}
