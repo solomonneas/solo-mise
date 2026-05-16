@@ -55,6 +55,12 @@ The cookbook explains the why. This package gives you the kitchen.
 ## Install
 
 ```bash
+pipx install solo-mise
+```
+
+Or, to track `main`:
+
+```bash
 pipx install git+https://github.com/solomonneas/solo-mise
 ```
 
@@ -67,7 +73,36 @@ solo-mise doctor --target ~/agent-kitchen
 solo-mise scrub --target .
 ```
 
+Re-running `solo-mise init` against an existing target is safe. It refuses to overwrite tracked files without `--force`, and the `.gitignore` block it manages is replaced between its markers without touching the rest of your file.
+
 See [QUICKSTART.md](QUICKSTART.md) for setup, verification, and the ingest flow.
+
+### What a green doctor looks like
+
+```text
+solo-mise doctor: target /home/you/agent-kitchen (generic)
+  [ok]   bootstrap: AGENTS.md              /home/you/agent-kitchen/AGENTS.md
+  [ok]   bootstrap: CLAUDE.md              /home/you/agent-kitchen/CLAUDE.md
+  [ok]   bootstrap: MEMORY.md              /home/you/agent-kitchen/MEMORY.md
+  [ok]   bootstrap: TOOLS.md               /home/you/agent-kitchen/TOOLS.md
+  [ok]   bootstrap: USER.md                /home/you/agent-kitchen/USER.md
+  [ok]   bootstrap: SAFETY_RULES.md        /home/you/agent-kitchen/SAFETY_RULES.md
+  [ok]   bootstrap: INSTALL_FOR_AGENTS.md  /home/you/agent-kitchen/INSTALL_FOR_AGENTS.md
+  [ok]   handoff: inbox                    /home/you/agent-kitchen/.claude/memory-handoffs
+  [ok]   handoff: TEMPLATE.md              /home/you/agent-kitchen/.claude/memory-handoffs/TEMPLATE.md
+  [ok]   handoff: processed/               /home/you/agent-kitchen/.claude/memory-handoffs/processed
+  [ok]   memory: cards/                    /home/you/agent-kitchen/memory/cards
+  [ok]   publish: hooks/pre-push           /home/you/agent-kitchen/hooks/pre-push
+  [ok]   publish: content-guard            /home/you/repos/content-guard
+
+summary: 14 checks, 0 failed, 0 manual
+```
+
+Anything `[warn]` is fine; `[fail]` means the install is incomplete. The `openclaw` and `hermes` harnesses add their own checks on top.
+
+### Privacy
+
+solo-mise makes no network calls. It does not phone home, collect telemetry, or sync anything to a server. Everything happens on your local filesystem against the templates packaged with the install. The only file that touches the network is the `pre-push` hook, and it runs the local `content-guard` scanner against your own commits before they leave the machine.
 
 ## Profiles
 

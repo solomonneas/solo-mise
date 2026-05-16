@@ -160,6 +160,13 @@ def run(
     # Post-install notes.
     print(f"solo-mise: installed profile '{profile_id}' to {target}")
     print(f"solo-mise: memory owner -> {memory_owner_name}")
+    if profile_id == "hermes":
+        print(
+            "solo-mise: NOTE - the hermes adapter is experimental. "
+            "Validate against your real Hermes install before relying on it. "
+            "See CONTRIBUTING.md for graduation criteria.",
+            file=sys.stderr,
+        )
     notes = profile.get("post_install_notes", [])
     if notes:
         print()
