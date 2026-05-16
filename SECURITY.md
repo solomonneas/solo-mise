@@ -6,7 +6,8 @@ solo-mise is in alpha. Only the latest minor release on the `main` branch receiv
 
 ## Reporting a vulnerability
 
-Please **do not** open a public GitHub issue for security problems. Email **srneas@gmail.com** with:
+Please **do not** open a public GitHub issue for security problems. Email **srneas@gmail.com** with: <!-- content-guard: allow pii/email -->
+
 
 - A short description of the issue.
 - Steps to reproduce (or a minimal proof of concept).
