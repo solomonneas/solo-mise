@@ -27,6 +27,12 @@ SAFE_SPECIAL_TARGETS = {
     ".learnings/FEATURE_REQUESTS.md",
 }
 
+# Writer harness id -> inbox dir (mirror of install._WRITER_INBOX).
+_WRITER_INBOXES = {
+    "claude": ".claude/memory-handoffs",
+    "codex": ".codex/memory-handoffs",
+}
+
 # Recognized handoff sections. Any section name outside this set is a signal
 # that the parser split content at an internal `##` heading; route to inbox.
 KNOWN_SECTIONS = {
@@ -53,6 +59,27 @@ class IngestStats:
     actions: List[str] = field(default_factory=list)
 
 
+def _resolve_inbox_paths(target: Path) -> list[Path]:
+    """Return handoff inbox directories for `target` in deterministic order.
+
+    Reads `.solo-mise/config.json` when present and returns one inbox per
+    writer harness in the selection (alphabetical by harness id). Falls back
+    to the legacy `.claude/memory-handoffs/` path for pre-v0.3.0 installs.
+    """
+    from .config import load_config
+
+    cfg = load_config(target)
+    if cfg is None:
+        legacy = target / ".claude" / "memory-handoffs"
+        return [legacy] if legacy.is_dir() else []
+    paths: list[Path] = []
+    for h in sorted(cfg.selection.harnesses):
+        rel = _WRITER_INBOXES.get(h)
+        if rel and (target / rel).is_dir():
+            paths.append(target / rel)
+    return paths
+
+
 def run(
     target: Path,
     dry_run: bool = False,
@@ -66,44 +93,45 @@ def run(
     Match the cookbook wrapper by passing both flags explicitly.
     """
     target = target.expanduser().resolve()
-    handoffs_dir = target / ".claude" / "memory-handoffs"
-    processed_dir = handoffs_dir / "processed"
     inbox_dir = target / "memory" / "handoff-inbox"
 
-    if not handoffs_dir.is_dir():
-        print(f"solo-mise ingest: no handoff inbox at {handoffs_dir}", file=sys.stderr)
+    handoff_dirs = _resolve_inbox_paths(target)
+    if not handoff_dirs:
+        legacy = target / ".claude" / "memory-handoffs"
+        print(f"solo-mise ingest: no handoff inbox at {legacy}", file=sys.stderr)
         return 2
 
     stats = IngestStats()
 
-    handoffs = _list_handoffs(handoffs_dir)
-    for path in handoffs:
-        stats.processed += 1
-        sections = parse(path)
-        outcome = decide(
-            sections,
-            target=target,
-            promote_cards=promote_cards,
-            route_documents=route_documents,
-        )
-        action = _execute(
-            outcome,
-            handoff_path=path,
-            target=target,
-            sections=sections,
-            inbox_dir=inbox_dir,
-            processed_dir=processed_dir,
-            dry_run=dry_run,
-        )
-        stats.actions.append(action.summary)
-        if action.kind == "promoted":
-            stats.promoted += 1
-        elif action.kind == "routed":
-            stats.routed += 1
-        elif action.kind == "inboxed":
-            stats.inboxed += 1
-        elif action.kind == "skipped":
-            stats.skipped += 1
+    for handoffs_dir in handoff_dirs:
+        processed_dir = handoffs_dir / "processed"
+        for path in _list_handoffs(handoffs_dir):
+            stats.processed += 1
+            sections = parse(path)
+            outcome = decide(
+                sections,
+                target=target,
+                promote_cards=promote_cards,
+                route_documents=route_documents,
+            )
+            action = _execute(
+                outcome,
+                handoff_path=path,
+                target=target,
+                sections=sections,
+                inbox_dir=inbox_dir,
+                processed_dir=processed_dir,
+                dry_run=dry_run,
+            )
+            stats.actions.append(action.summary)
+            if action.kind == "promoted":
+                stats.promoted += 1
+            elif action.kind == "routed":
+                stats.routed += 1
+            elif action.kind == "inboxed":
+                stats.inboxed += 1
+            elif action.kind == "skipped":
+                stats.skipped += 1
 
     _report(stats, dry_run=dry_run)
     return 0
