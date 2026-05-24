@@ -1,4 +1,4 @@
-"""Tests for solo-mise openclaw-fragments / hermes-fragments."""
+"""Tests for brigade openclaw-fragments / hermes-fragments."""
 from __future__ import annotations
 
 import json
@@ -57,7 +57,7 @@ def test_load_depth_repo():
     assert "SAFETY_RULES.md" in dsts
     assert "INSTALL_FOR_AGENTS.md" in dsts
     assert "hooks/pre-push" in dsts
-    assert ".solo-mise/policies/public-repo.json" in dsts
+    assert ".brigade/policies/public-repo.json" in dsts
     # depth baseline does NOT install harness-specific bridge files
     assert "CLAUDE.md" not in dsts
 
@@ -109,8 +109,8 @@ def test_load_harness_openclaw():
     assert m["id"] == "openclaw"
     assert m.get("role") == "reader"
     dsts = [f["dst"] for f in m["files"]]
-    # Reader fragments live under .solo-mise/openclaw/
-    assert any(d.startswith(".solo-mise/openclaw/") for d in dsts)
+    # Reader fragments live under .brigade/openclaw/
+    assert any(d.startswith(".brigade/openclaw/") for d in dsts)
     # No inbox for readers
     assert not any("/memory-handoffs/" in d for d in dsts)
 
@@ -138,5 +138,5 @@ def test_load_include_publisher():
     m = load_include_manifest("publisher")
     assert m["id"] == "publisher"
     dsts = [f["dst"] for f in m["files"]]
-    assert ".solo-mise/policies/public-content.json" in dsts
+    assert ".brigade/policies/public-content.json" in dsts
     assert "memory/cards/content-safety.md" in dsts

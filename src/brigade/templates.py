@@ -16,7 +16,7 @@ def template_root() -> Path:
     """Return the on-disk path to the packaged templates directory.
 
     `templates/` is intentionally not a sub-package (no __init__.py), so we
-    anchor on the solo_mise package and descend.
+    anchor on the brigade package and descend.
 
     Assumes a filesystem-backed install (pip wheel or editable). If we ever
     ship as a zip-importable distribution, callers that do `.read_text()` /

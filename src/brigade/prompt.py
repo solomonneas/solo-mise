@@ -45,7 +45,7 @@ _INCLUDE_LABELS = {
 def prompt_for_selection() -> Selection:
     if not sys.stdin.isatty():
         raise NonInteractiveError(
-            "solo-mise init needs a TTY for the interactive prompt. "
+            "brigade init needs a TTY for the interactive prompt. "
             "Pass --depth and --harnesses for scripting."
         )
 

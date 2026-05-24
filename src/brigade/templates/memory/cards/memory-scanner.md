@@ -26,7 +26,7 @@ sessions               daily session logs       chat archives
               .claude/memory-handoffs/*.md   OR   direct card writes
                                 |                       (only when high-confidence)
                                 v
-                         solo-mise ingest
+                         brigade ingest
                                 |
                                 v
               memory/cards/, TOOLS.md, USER.md, rules/, .learnings/
@@ -80,7 +80,7 @@ Avoid promoting during active sessions because card writes invalidate prefix cac
 
 ## Implementation surface
 
-`solo-mise` ships the contract; it does not ship the scanner agent itself. Wire it as:
+`brigade` ships the contract; it does not ship the scanner agent itself. Wire it as:
 
 - a cron job that spawns an isolated agent session with a "review last 12h and persist durable facts" prompt
 - the prompt should embed the skip-rules and cost controls above

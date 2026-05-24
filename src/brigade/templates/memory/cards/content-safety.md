@@ -6,7 +6,7 @@ tags: [publishing, content-guard, pre-push, scrubber]
 
 # Content Safety
 
-`solo-mise` installs a publish gate so private infrastructure does not leak into public docs, commits, or social drafts.
+`brigade` installs a publish gate so private infrastructure does not leak into public docs, commits, or social drafts.
 
 ## Default blocked classes
 
@@ -21,11 +21,11 @@ tags: [publishing, content-guard, pre-push, scrubber]
 ## Two layers
 
 1. **Pre-push hook.** `hooks/pre-push` runs `content-guard` against the working tree before every `git push`. Blocks on violations. Inline allow-tags exist for intentional examples.
-2. **Deterministic scrub.** `solo-mise scrub --target .` runs the same scanner standalone. Use it before generating public artifacts (blog posts, social drafts, docs PRs).
+2. **Deterministic scrub.** `brigade scrub --target .` runs the same scanner standalone. Use it before generating public artifacts (blog posts, social drafts, docs PRs).
 
 ## Bypass
 
-`git push --no-verify` skips the pre-push hook. Use it only when you understand exactly what you are allowing through. Both `solo-mise scrub` and the hook log every violation so you can audit later.
+`git push --no-verify` skips the pre-push hook. Use it only when you understand exactly what you are allowing through. Both `brigade scrub` and the hook log every violation so you can audit later.
 
 ## Inline allow
 

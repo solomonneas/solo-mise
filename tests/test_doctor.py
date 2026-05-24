@@ -1,4 +1,4 @@
-"""Tests for solo-mise doctor."""
+"""Tests for brigade doctor."""
 from __future__ import annotations
 
 from pathlib import Path

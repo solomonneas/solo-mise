@@ -19,8 +19,8 @@ Replace `<host>:<port>` with your actual service. Common patterns: a local Ollam
 ## Memory Handoff Ingest
 
 ```bash
-solo-mise ingest --target . --dry-run                          # preview
-solo-mise ingest --target . --promote-cards --route-documents  # apply
+brigade ingest --target . --dry-run                          # preview
+brigade ingest --target . --promote-cards --route-documents  # apply
 ```
 
 Wrap in a cron or end-of-day script. See `memory/cards/memory-scanner.md`.
@@ -70,8 +70,8 @@ See `memory/cards/chat-surface-crawlers.md` for the full pattern.
 ## Publish Guard
 
 ```bash
-solo-mise scrub --target . --dry-run               # repo policy
-solo-mise scrub --target . --policy public-content # stricter, for blog/social
+brigade scrub --target . --dry-run               # repo policy
+brigade scrub --target . --policy public-content # stricter, for blog/social
 git push                                            # pre-push hook runs content-guard
 ```
 

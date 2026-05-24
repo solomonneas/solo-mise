@@ -95,7 +95,7 @@ Rules:
 
 - The scanner produces summaries, never quotes. Original messages stay in the crawl archive.
 - Cards promoted from chat archives must not include third-party PII unless the user explicitly approved.
-- Run `solo-mise scrub --policy public-content` over any export of crawl-derived content before publishing.
+- Run `brigade scrub --policy public-content` over any export of crawl-derived content before publishing.
 - The publish gate (`hooks/pre-push` + content-guard) catches accidental leaks at the repo boundary.
 
 ## Not connected to a chat surface?

@@ -1,6 +1,6 @@
 # Install for agents
 
-You have just entered a `solo-mise` workspace. Here is how to operate.
+You have just entered a `brigade` workspace. Here is how to operate.
 
 ## Start here
 
@@ -48,7 +48,7 @@ Some harnesses load a generated `llms.txt` or `llms-full.txt` instead of every b
 git status --short
 find . -maxdepth 2 -name AGENTS.md -o -name CLAUDE.md -o -name SOUL.md
 ls .claude/memory-handoffs/ 2>/dev/null
-solo-mise doctor --target . --harness <openclaw|hermes|generic>
+brigade doctor --target . --harness <openclaw|hermes|generic>
 ```
 
 ## Closeout

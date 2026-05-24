@@ -54,7 +54,7 @@ using the standard format. Do this without waiting to be reminded.
 find . -path "*/.claude/memory-handoffs/*.md" -not -path "*/processed/*" -mtime -7
 
 # Ingest run
-solo-mise ingest --target . --dry-run
+brigade ingest --target . --dry-run
 
 # Cards landed via promotion
 find memory/cards -mtime -7 -name "*.md"

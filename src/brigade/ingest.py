@@ -1,4 +1,4 @@
-"""`solo-mise ingest` — route .claude/memory-handoffs/*.md into canonical memory.
+"""`brigade ingest` — route .claude/memory-handoffs/*.md into canonical memory.
 
 Conservative by design:
   - auto-promote handoffs with safe card filenames + YAML frontmatter
@@ -62,7 +62,7 @@ class IngestStats:
 def _resolve_inbox_paths(target: Path) -> list[Path]:
     """Return handoff inbox directories for `target` in deterministic order.
 
-    Reads `.solo-mise/config.json` when present and returns one inbox per
+    Reads `.brigade/config.json` when present and returns one inbox per
     writer harness in the selection (alphabetical by harness id). Falls back
     to the legacy `.claude/memory-handoffs/` path for pre-v0.3.0 installs.
     """
@@ -98,7 +98,7 @@ def run(
     handoff_dirs = _resolve_inbox_paths(target)
     if not handoff_dirs:
         legacy = target / ".claude" / "memory-handoffs"
-        print(f"solo-mise ingest: no handoff inbox at {legacy}", file=sys.stderr)
+        print(f"brigade ingest: no handoff inbox at {legacy}", file=sys.stderr)
         return 2
 
     stats = IngestStats()

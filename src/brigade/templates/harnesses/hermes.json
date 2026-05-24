@@ -3,10 +3,10 @@
   "role": "reader",
   "description": "Hermes adapter fragments + doctor checks. Experimental.",
   "files": [
-    {"src": "hermes/workspace.harness.json", "dst": ".solo-mise/hermes/workspace.harness.json"},
-    {"src": "hermes/memory-handoff.harness.json", "dst": ".solo-mise/hermes/memory-handoff.harness.json"},
-    {"src": "hermes/model-lanes.harness.json", "dst": ".solo-mise/hermes/model-lanes.harness.json"},
-    {"src": "hermes/README.md", "dst": ".solo-mise/hermes/README.md"}
+    {"src": "hermes/workspace.harness.json", "dst": ".brigade/hermes/workspace.harness.json"},
+    {"src": "hermes/memory-handoff.harness.json", "dst": ".brigade/hermes/memory-handoff.harness.json"},
+    {"src": "hermes/model-lanes.harness.json", "dst": ".brigade/hermes/model-lanes.harness.json"},
+    {"src": "hermes/README.md", "dst": ".brigade/hermes/README.md"}
   ],
   "dirs": [],
   "post_install_notes": [

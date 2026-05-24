@@ -1,4 +1,4 @@
-"""Tests for solo-mise ingest."""
+"""Tests for brigade ingest."""
 from __future__ import annotations
 
 import textwrap
@@ -114,7 +114,7 @@ def test_no_card_handoff_routes_to_tools(tmp_target: Path):
 
         ## Suggested document content
         ### New runbook
-        - run `solo-mise doctor`
+        - run `brigade doctor`
         """,
     )
     rc = ingest_mod.run(target=tmp_target, dry_run=False, promote_cards=True, route_documents=True)

@@ -1,4 +1,4 @@
-"""`solo-mise openclaw-fragments` / `hermes-fragments` — write config fragments.
+"""`brigade openclaw-fragments` / `hermes-fragments` — write config fragments.
 
 These never mutate a live config. They drop JSON fragments into the chosen
 output directory so the user can `jq -s '.[0] * .[1]'` them in by hand.
@@ -30,7 +30,7 @@ HARNESS_FILES = {
 
 def write_fragments(out: Path, harness: str) -> int:
     if harness not in HARNESS_FILES:
-        print(f"solo-mise: unknown harness: {harness}", file=sys.stderr)
+        print(f"brigade: unknown harness: {harness}", file=sys.stderr)
         return 2
 
     out = out.expanduser().resolve()
@@ -40,12 +40,12 @@ def write_fragments(out: Path, harness: str) -> int:
     for name in HARNESS_FILES[harness]:
         src = src_dir / name
         if not src.is_file():
-            print(f"solo-mise: template missing: {src}", file=sys.stderr)
+            print(f"brigade: template missing: {src}", file=sys.stderr)
             return 3
         dest = out / name
         shutil.copyfile(src, dest)
 
-    print(f"solo-mise: wrote {harness} fragments to {out}")
+    print(f"brigade: wrote {harness} fragments to {out}")
     print()
     print("Next steps:")
     print(f"  - inspect each fragment under {out}")
@@ -55,7 +55,7 @@ def write_fragments(out: Path, harness: str) -> int:
             f"{out}/<fragment>.json > /tmp/merged.json"
         )
         print(
-            "  - verify with: solo-mise doctor --target ~/.openclaw/workspace --harness openclaw"
+            "  - verify with: brigade doctor --target ~/.openclaw/workspace --harness openclaw"
         )
     elif harness == "hermes":
         print(

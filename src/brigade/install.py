@@ -2,7 +2,7 @@
 
 Composes a depth manifest + N harness manifests + M include manifests
 into a single deduped file/dir list, then copies+renders into target.
-Persists the Selection to .solo-mise/config.json.
+Persists the Selection to .brigade/config.json.
 """
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from .templates import (
     template_root,
 )
 
-GITIGNORE_BEGIN = "# >>> solo-mise gitignore block >>>"
-GITIGNORE_END = "# <<< solo-mise gitignore block <<<"
+GITIGNORE_BEGIN = "# >>> brigade gitignore block >>>"
+GITIGNORE_END = "# <<< brigade gitignore block <<<"
 
 # Writer harness -> inbox-dir prefix. Only writer harnesses have an inbox.
 _WRITER_INBOX = {
@@ -37,8 +37,8 @@ _WRITER_INBOX = {
 def build_gitignore_block(selection: Selection) -> str:
     lines = [
         GITIGNORE_BEGIN,
-        "# Managed by `solo-mise init`. Edit between the markers to customize.",
-        "# Re-running `solo-mise init` replaces only the content between markers.",
+        "# Managed by `brigade init`. Edit between the markers to customize.",
+        "# Re-running `brigade init` replaces only the content between markers.",
         "",
     ]
     for h in selection.harnesses:
@@ -58,9 +58,9 @@ def build_gitignore_block(selection: Selection) -> str:
         "# Review inbox: ambiguous handoffs awaiting human triage.",
         "memory/handoff-inbox/",
         "",
-        "# solo-mise local state (logs, scrub cache).",
-        ".solo-mise/logs/",
-        ".solo-mise/scrub-cache/",
+        "# brigade local state (logs, scrub cache).",
+        ".brigade/logs/",
+        ".brigade/scrub-cache/",
         GITIGNORE_END,
         "",
     ])
@@ -197,14 +197,14 @@ def install_selection(
     write_config(target, Config(version=1, selection=selection))
 
     result = apply_gitignore(target, selection)
-    print(f"solo-mise: gitignore {result}")
+    print(f"brigade: gitignore {result}")
 
     # Post-install output.
-    print(f"solo-mise: installed depth={selection.depth} harnesses={','.join(selection.harnesses) or '(none)'} -> {target}")
-    print(f"solo-mise: memory owner -> {owner_label}")
+    print(f"brigade: installed depth={selection.depth} harnesses={','.join(selection.harnesses) or '(none)'} -> {target}")
+    print(f"brigade: memory owner -> {owner_label}")
     if "hermes" in selection.harnesses:
         print(
-            "solo-mise: NOTE - the hermes adapter is experimental. "
+            "brigade: NOTE - the hermes adapter is experimental. "
             "Validate against your real Hermes install before relying on it. "
             "See CONTRIBUTING.md for graduation criteria.",
             file=sys.stderr,

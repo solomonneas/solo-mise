@@ -1,4 +1,4 @@
-"""Tests for solo-mise init (CLI + install_selection behavior)."""
+"""Tests for brigade init (CLI + install_selection behavior)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -105,7 +105,7 @@ def test_openclaw_install_extends_workspace(tmp_target: Path):
     # workspace files present
     assert (tmp_target / "MEMORY.md").is_file()
     # openclaw fragments present
-    fragments_dir = tmp_target / ".solo-mise" / "openclaw"
+    fragments_dir = tmp_target / ".brigade" / "openclaw"
     assert (fragments_dir / "model-aliases.openclaw.json").is_file()
     assert (fragments_dir / "ollama-memory-search.openclaw.json").is_file()
     assert (fragments_dir / "acp-escalation.openclaw.json").is_file()
@@ -114,7 +114,7 @@ def test_openclaw_install_extends_workspace(tmp_target: Path):
 def test_hermes_install_writes_experimental_fragments(tmp_target: Path):
     rc = install_selection(tmp_target, _hermes_sel())
     assert rc == 0
-    fragments_dir = tmp_target / ".solo-mise" / "hermes"
+    fragments_dir = tmp_target / ".brigade" / "hermes"
     assert (fragments_dir / "workspace.harness.json").is_file()
     assert (fragments_dir / "memory-handoff.harness.json").is_file()
     assert (fragments_dir / "model-lanes.harness.json").is_file()
@@ -135,8 +135,8 @@ def test_publisher_include_writes_policies(tmp_target: Path):
     rc = install_selection(tmp_target, _publisher_sel())
     assert rc == 0
     assert (tmp_target / "hooks" / "pre-push").is_file()
-    assert (tmp_target / ".solo-mise" / "policies" / "public-repo.json").is_file()
-    assert (tmp_target / ".solo-mise" / "policies" / "public-content.json").is_file()
+    assert (tmp_target / ".brigade" / "policies" / "public-repo.json").is_file()
+    assert (tmp_target / ".brigade" / "policies" / "public-content.json").is_file()
 
 
 def test_dry_run_creates_no_files_or_dirs(tmp_target: Path):

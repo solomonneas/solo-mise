@@ -1,10 +1,10 @@
 {
   "_comment": [
     "Public-repo policy: blocks leaks in any file pushed to a public repo.",
-    "Used by solo-mise pre-push hook and `solo-mise scrub`.",
+    "Used by brigade pre-push hook and `brigade scrub`.",
     "Override by pointing CONTENT_GUARD_POLICY at your own copy of this file."
   ],
-  "_solo_mise_version": "0.1.0",
+  "_brigade_version": "0.1.0",
   "categories": {
     "secret": "block",
     "private-network": "block",

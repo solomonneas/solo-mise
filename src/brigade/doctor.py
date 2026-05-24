@@ -1,4 +1,4 @@
-"""`solo-mise doctor` — verify a target workspace is wired correctly."""
+"""`brigade doctor` — verify a target workspace is wired correctly."""
 from __future__ import annotations
 
 import json
@@ -18,7 +18,7 @@ MANUAL = "MANUAL"
 
 def run(target: Path, harness: str = "generic") -> int:
     target = target.expanduser().resolve()
-    print(f"solo-mise doctor: target {target}")
+    print(f"brigade doctor: target {target}")
 
     from .config import load_config
 
@@ -40,13 +40,13 @@ def run(target: Path, harness: str = "generic") -> int:
         sel = None
         if harness in ("openclaw", "hermes"):
             print(
-                f"  harnesses: (legacy target, no .solo-mise/config.json; "
+                f"  harnesses: (legacy target, no .brigade/config.json; "
                 f"--harness={harness} so assuming claude + {harness})"
             )
             selected_harnesses = ["claude", harness]
         else:
             print(
-                "  harnesses: (legacy target, no .solo-mise/config.json; "
+                "  harnesses: (legacy target, no .brigade/config.json; "
                 "assuming claude)"
             )
             selected_harnesses = ["claude"]
@@ -238,7 +238,7 @@ def _check_publish_gate(target: Path) -> List[CheckResult]:
 
 
 def _check_openclaw() -> List[CheckResult]:
-    """Inspect ~/.openclaw/openclaw.json for the wiring solo-mise expects."""
+    """Inspect ~/.openclaw/openclaw.json for the wiring brigade expects."""
     results: List[CheckResult] = []
     config = Path.home() / ".openclaw" / "openclaw.json"
     if not config.is_file():
@@ -339,7 +339,7 @@ def _format_schedule(schedule) -> str:
 
 def _check_hermes(target: Path) -> List[CheckResult]:
     results: List[CheckResult] = []
-    fragments_dir = target / ".solo-mise" / "hermes"
+    fragments_dir = target / ".brigade" / "hermes"
     expected = [
         "workspace.harness.json",
         "memory-handoff.harness.json",
@@ -350,7 +350,7 @@ def _check_hermes(target: Path) -> List[CheckResult]:
         if path.is_file():
             results.append((OK, f"hermes: {name}", str(path)))
         else:
-            results.append((WARN, f"hermes: {name}", f"missing at {path}; run `solo-mise hermes-fragments`"))
+            results.append((WARN, f"hermes: {name}", f"missing at {path}; run `brigade hermes-fragments`"))
     results.append(
         (MANUAL, "hermes: install validation", "Hermes adapter is experimental; validate against your install")
     )

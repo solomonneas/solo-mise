@@ -1,4 +1,4 @@
-"""Tests for solo-mise scrub policy resolution."""
+"""Tests for brigade scrub policy resolution."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,8 +10,8 @@ from brigade import scrub as scrub_mod
 
 def test_resolve_named_policy_prefers_target(tmp_path: Path):
     target = tmp_path / "ws"
-    (target / ".solo-mise" / "policies").mkdir(parents=True)
-    local = target / ".solo-mise" / "policies" / "public-repo.json"
+    (target / ".brigade" / "policies").mkdir(parents=True)
+    local = target / ".brigade" / "policies" / "public-repo.json"
     local.write_text("{}")
     scanner = tmp_path / "scanner"
     (scanner / "policies").mkdir(parents=True)
@@ -48,7 +48,7 @@ def test_resolve_explicit_path_is_used_verbatim(tmp_path: Path):
 def test_resolve_rejects_traversal_in_bare_name(tmp_path: Path):
     """A bare name (no `/`, no `.json` suffix) containing `..` is rejected.
 
-    Names like `..` would otherwise resolve to `.solo-mise/policies/...json`
+    Names like `..` would otherwise resolve to `.brigade/policies/...json`
     which still ends up inside the policy directory, but cleanly rejecting
     `..` tokens up front matches the documented "simple slug" contract.
     """

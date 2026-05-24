@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-push: block push if content-guard finds public-leak violations.
 #
-# Installed by `solo-mise init`. Activate once with:
+# Installed by `brigade init`. Activate once with:
 #   git config core.hooksPath hooks
 #
 # Bypass only if you know what you are allowing through:

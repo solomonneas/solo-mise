@@ -1,4 +1,4 @@
-"""`solo-mise scrub` — run the content-guard scanner against a target."""
+"""`brigade scrub` — run the content-guard scanner against a target."""
 from __future__ import annotations
 
 import os
@@ -19,11 +19,11 @@ def run(
 
     if not scanner_dir.is_dir():
         print(
-            f"solo-mise scrub: content-guard not found at {scanner_dir}",
+            f"brigade scrub: content-guard not found at {scanner_dir}",
             file=sys.stderr,
         )
         print(
-            "solo-mise scrub: clone https://github.com/solomonneas/content-guard "
+            "brigade scrub: clone https://github.com/solomonneas/content-guard "
             "or set CONTENT_GUARD_DIR",
             file=sys.stderr,
         )
@@ -32,10 +32,10 @@ def run(
     try:
         policy_path = _resolve_policy(target, scanner_dir, policy)
     except ValueError as exc:
-        print(f"solo-mise scrub: {exc}", file=sys.stderr)
+        print(f"brigade scrub: {exc}", file=sys.stderr)
         return 4
     if not policy_path.is_file():
-        print(f"solo-mise scrub: policy not found: {policy_path}", file=sys.stderr)
+        print(f"brigade scrub: policy not found: {policy_path}", file=sys.stderr)
         return 3
 
     cmd = [
@@ -48,7 +48,7 @@ def run(
         str(policy_path),
     ]
     if dry_run:
-        print("solo-mise scrub: would run:")
+        print("brigade scrub: would run:")
         print(" ", " ".join(cmd))
         print(f"  PYTHONPATH={scanner_dir / 'src'}")
         return 0
@@ -68,7 +68,7 @@ def _resolve_policy(target: Path, scanner_dir: Path, policy: str) -> Path:
       1. If `policy` looks like a path (contains `/` or `\\` or ends in `.json`),
          treat it as a literal file path and use it as-is.
       2. Otherwise, treat it as a basename and search the safe lookup chain:
-         `<target>/.solo-mise/policies/<policy>.json`, then
+         `<target>/.brigade/policies/<policy>.json`, then
          `<scanner_dir>/policies/<policy>.json`.
     """
     looks_like_path = "/" in policy or "\\" in policy or policy.endswith(".json")
@@ -81,7 +81,7 @@ def _resolve_policy(target: Path, scanner_dir: Path, policy: str) -> Path:
         raise ValueError(f"unsafe policy name: {policy!r}")
 
     candidates = [
-        target / ".solo-mise" / "policies" / f"{safe}.json",
+        target / ".brigade" / "policies" / f"{safe}.json",
         scanner_dir / "policies" / f"{safe}.json",
     ]
     for c in candidates:

@@ -1,4 +1,4 @@
-"""Tests for the auto-gitignore behavior of `solo-mise init`."""
+"""Tests for the auto-gitignore behavior of `brigade init`."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -126,6 +126,6 @@ def test_install_writes_gitignore_block(tmp_path):
     sel = Selection(depth="repo", harnesses=["claude", "codex"], owner="claude", includes=[])
     install_selection(tmp_path, sel)
     gi = (tmp_path / ".gitignore").read_text()
-    assert "# >>> solo-mise gitignore block >>>" in gi
+    assert "# >>> brigade gitignore block >>>" in gi
     assert ".claude/memory-handoffs/*" in gi
     assert ".codex/memory-handoffs/*" in gi

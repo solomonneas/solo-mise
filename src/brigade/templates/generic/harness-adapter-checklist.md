@@ -1,6 +1,6 @@
 # Harness Adapter Checklist
 
-Use this when wiring a new harness into the `solo-mise` contract.
+Use this when wiring a new harness into the `brigade` contract.
 
 ## 1. Bootstrap loading
 
@@ -22,13 +22,13 @@ Use this when wiring a new harness into the `solo-mise` contract.
 
 ## 4. Routing
 
-- [ ] Confirm `solo-mise ingest --target <workspace> --dry-run` finds the handoffs.
+- [ ] Confirm `brigade ingest --target <workspace> --dry-run` finds the handoffs.
 - [ ] Confirm the auto-promote rules match the handoffs the harness actually writes (filename regex + frontmatter).
 - [ ] Watch `memory/handoff-inbox/` for a week; if it fills up, refine handoff quality, do not loosen the rules.
 
 ## 5. Doctor
 
-- [ ] Run `solo-mise doctor --target <workspace> --harness <harness>`.
+- [ ] Run `brigade doctor --target <workspace> --harness <harness>`.
 - [ ] All checks `OK` or explicitly `MANUAL ACTION NEEDED` with a follow-up step.
 
 ## 6. Publish gate
@@ -48,7 +48,7 @@ ls .claude/memory-handoffs/TEMPLATE.md
 ls memory/cards/
 
 # Ingest loop alive (after writing a sample handoff)
-solo-mise ingest --target . --dry-run
+brigade ingest --target . --dry-run
 
 # Publish gate live
 hooks/pre-push </dev/null || echo "(hook needs git push to exercise)"

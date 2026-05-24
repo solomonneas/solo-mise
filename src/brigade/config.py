@@ -1,4 +1,4 @@
-"""Read/write .solo-mise/config.json - the per-target source of truth."""
+"""Read/write .brigade/config.json - the per-target source of truth."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,9 @@ from typing import Optional
 from .selection import Selection
 
 
-CONFIG_REL_PATH = ".solo-mise/config.json"
+WORKSPACE_DIRNAME = ".brigade"
+LEGACY_WORKSPACE_DIRNAMES = (".solo-mise",)
+CONFIG_REL_PATH = f"{WORKSPACE_DIRNAME}/config.json"
 SUPPORTED_VERSIONS = (1,)
 
 
@@ -40,7 +42,13 @@ def write_config(target: Path, cfg: Config) -> None:
 def load_config(target: Path) -> Optional[Config]:
     path = config_path(target)
     if not path.is_file():
-        return None
+        for legacy in LEGACY_WORKSPACE_DIRNAMES:
+            legacy_path = target / legacy / "config.json"
+            if legacy_path.is_file():
+                path = legacy_path
+                break
+        else:
+            return None
     data = json.loads(path.read_text())
     version = data.get("version")
     if version not in SUPPORTED_VERSIONS:

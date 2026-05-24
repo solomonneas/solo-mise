@@ -2,9 +2,9 @@
   "_comment": [
     "Public-content policy: stricter than public-repo. Applied to blog posts,",
     "social drafts, and docs that will be published, not just pushed.",
-    "Use via: solo-mise scrub --policy public-content"
+    "Use via: brigade scrub --policy public-content"
   ],
-  "_solo_mise_version": "0.1.0",
+  "_brigade_version": "0.1.0",
   "categories": {
     "secret": "block",
     "private-network": "block",

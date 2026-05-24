@@ -1,4 +1,4 @@
-"""Tests for solo-mise handoff-template."""
+"""Tests for brigade handoff-template."""
 from __future__ import annotations
 
 from pathlib import Path

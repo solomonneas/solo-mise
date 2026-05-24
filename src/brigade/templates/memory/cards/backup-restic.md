@@ -31,7 +31,7 @@ Two destinations covers the "one of them is broken" case without raising the rec
 
 Default paths:
 
-- The agent workspace (`~/.solo-mise` or your equivalent)
+- The agent workspace (`~/.brigade` or your equivalent)
 - All repos under `~/repos`
 - Local scripts and bin (`~/bin`)
 - Dotfiles: `.bashrc`, `.profile`, `.gitconfig`, `.ssh`, `.claude`, `.codex`, `.npmrc`
@@ -86,8 +86,8 @@ NAS-side considerations:
 ## Password
 
 ```bash
-echo "<strong-password>" > ~/.solo-mise/.restic-password
-chmod 600 ~/.solo-mise/.restic-password
+echo "<strong-password>" > ~/.brigade/.restic-password
+chmod 600 ~/.brigade/.restic-password
 ```
 
 Never commit this file. Never paste the password in a chat. If the password is lost, the encrypted snapshots are unrecoverable.
@@ -112,7 +112,7 @@ Practice this. A backup you have never restored is a hope, not a backup.
 Log file path:
 
 ```text
-~/.solo-mise/logs/backup-YYYYMMDD.log
+~/.brigade/logs/backup-YYYYMMDD.log
 ```
 
 Worth wiring into the morning report (`memory/cards/pipeline-standups.md`): grep recent logs for `ERROR` and surface in the briefing. A silent backup that has been failing for three weeks is the second-worst kind of bug.

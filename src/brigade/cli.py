@@ -1,4 +1,4 @@
-"""solo-mise command-line entrypoint."""
+"""brigade command-line entrypoint."""
 from __future__ import annotations
 
 import argparse
@@ -11,11 +11,11 @@ from .prompt import prompt_for_selection  # imported here so tests can monkeypat
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="solo-mise",
-        description="Solomon's Mise en Place: installable agent kitchen starter kit.",
+        prog="brigade",
+        description="Brigade: run your agent brigade. Operator-system CLI for agent workspaces.",
     )
     parser.add_argument(
-        "--version", action="version", version=f"solo-mise {__version__}"
+        "--version", action="version", version=f"brigade {__version__}"
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
@@ -78,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_scrub.add_argument(
         "--policy",
         default="public-repo",
-        help="Policy file name (looks under .solo-mise/policies, then content-guard/policies) or path.",
+        help="Policy file name (looks under .brigade/policies, then content-guard/policies) or path.",
     )
     p_scrub.add_argument("--dry-run", action="store_true")
 
@@ -215,7 +215,7 @@ def main(argv=None) -> int:
 
         existing = load_config(args.target)
         if existing is None:
-            print("error: no .solo-mise/config.json in target. Run `solo-mise init` first.", file=sys.stderr)
+            print("error: no .brigade/config.json in target. Run `brigade init` first.", file=sys.stderr)
             return 2
 
         depth = args.depth or existing.selection.depth

@@ -1,6 +1,6 @@
 # Hermes Adapter (Experimental)
 
-`solo-mise` supports Hermes through the same harness contract as OpenClaw. This adapter is **experimental** until it has been validated against a real Hermes install.
+`brigade` supports Hermes through the same harness contract as OpenClaw. This adapter is **experimental** until it has been validated against a real Hermes install.
 
 ## What this gives you
 
@@ -12,11 +12,11 @@
 
 - Validate against the live Hermes config schema
 - Generate Hermes-specific plugin entries
-- Replace `solo-mise hermes doctor` with anything beyond file existence checks
+- Replace `brigade hermes doctor` with anything beyond file existence checks
 
 ## Contributing
 
-If you run Hermes and have working config, open an issue at <https://github.com/solomonneas/solo-mise/issues> with:
+If you run Hermes and have working config, open an issue at <https://github.com/solomonneas/brigade/issues> with:
 
 - the file Hermes loads as its primary bootstrap file
 - the path where Hermes expects memory handoffs (if any)

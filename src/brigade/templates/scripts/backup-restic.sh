@@ -7,8 +7,8 @@
 # Setup once:
 #   1. apt install restic rclone
 #   2. rclone config   # set up `gdrive` remote
-#   3. echo "<strong-password>" > ~/.solo-mise/.restic-password
-#      chmod 600 ~/.solo-mise/.restic-password
+#   3. echo "<strong-password>" > ~/.brigade/.restic-password
+#      chmod 600 ~/.brigade/.restic-password
 #   4. (optional) mount your NAS at $NAS_MOUNT
 #   5. crontab -e:
 #        0 3,15 * * * /path/to/backup-restic.sh
@@ -17,14 +17,14 @@ set -euo pipefail
 
 # ---- Paths ----
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-${HOME}}"
-LOG_FILE="${WORKSPACE_ROOT}/.solo-mise/logs/backup-$(date +%Y%m%d).log"
+LOG_FILE="${WORKSPACE_ROOT}/.brigade/logs/backup-$(date +%Y%m%d).log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
 # ---- Config (edit for your stack) ----
 RESTIC_REPO_GDRIVE="rclone:gdrive:Backup/<your-repo-name>"
-RESTIC_PASSWORD_FILE="${HOME}/.solo-mise/.restic-password"
+RESTIC_PASSWORD_FILE="${HOME}/.brigade/.restic-password"
 NAS_MOUNT="${NAS_MOUNT:-/mnt/nas/backups}"
 RESTIC_REPO_NAS="${NAS_MOUNT}/<your-repo-name>"
 
@@ -36,7 +36,7 @@ KEEP_MONTHLY="${KEEP_MONTHLY:-3}"
 
 # Paths to back up. Replace with your actual roots.
 BACKUP_PATHS=(
-  "${HOME}/.solo-mise"
+  "${HOME}/.brigade"
   "${HOME}/repos"
   "${HOME}/bin"
   "${HOME}/.bashrc"

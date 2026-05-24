@@ -20,7 +20,7 @@ managed workspace A      managed workspace B      repo-local sessions
           staging inboxes on the canonical memory owner
                            |
                            v
-                    solo-mise ingest
+                    brigade ingest
                            |
                            v
               memory/cards/, TOOLS.md, USER.md, rules/, .learnings/
@@ -56,7 +56,7 @@ Then include each staging directory in the ingest loop. Keep remote labels gener
 
 ```bash
 find pipeline/incoming-handoffs -name '*.md' -not -path '*/processed/*'
-solo-mise ingest --target . --dry-run
+brigade ingest --target . --dry-run
 ls memory/handoff-inbox/ 2>/dev/null | wc -l
 ```
 

@@ -1,6 +1,6 @@
 # SAFETY_RULES.md
 
-Hard boundaries. These are not preferences. The content-guard pre-push hook and `solo-mise scrub` enforce some of these mechanically; the rest are agent-side rules.
+Hard boundaries. These are not preferences. The content-guard pre-push hook and `brigade scrub` enforce some of these mechanically; the rest are agent-side rules.
 
 ---
 
@@ -18,7 +18,7 @@ Sanitize before publishing:
 - **Credentials:** Remove entirely or use `<password>` placeholder.
 - **Combined identifiers:** Room numbers + IPs + domain + account name paint a full network map. Sanitize all of them together, not piecemeal.
 
-The pre-push hook runs content-guard with the `public-repo` policy. For publish-ready artifacts (blog posts, social drafts, docs), use the stricter `public-content` policy: `solo-mise scrub --policy public-content`.
+The pre-push hook runs content-guard with the `public-repo` policy. For publish-ready artifacts (blog posts, social drafts, docs), use the stricter `public-content` policy: `brigade scrub --policy public-content`.
 
 ---
 

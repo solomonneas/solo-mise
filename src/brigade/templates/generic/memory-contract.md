@@ -1,6 +1,6 @@
 # Harness Memory Contract
 
-Any harness that wants to plug into `solo-mise` must answer six questions.
+Any harness that wants to plug into `brigade` must answer six questions.
 
 | Contract field | Meaning |
 |----------------|---------|
@@ -35,7 +35,7 @@ If you do not have an orchestrator yet, the contract still works:
 | `memory_owner` | this repo until you wire one |
 | `handoff_inbox` | `.claude/memory-handoffs/` |
 | `routing_targets` | same |
-| `doctor_checks` | `solo-mise doctor --target . --harness generic` |
-| `publish_gate` | `solo-mise scrub` and `hooks/pre-push` |
+| `doctor_checks` | `brigade doctor --target . --harness generic` |
+| `publish_gate` | `brigade scrub` and `hooks/pre-push` |
 
-`solo-mise ingest --target .` is enough on its own; you do not need OpenClaw or Hermes installed to run the loop.
+`brigade ingest --target .` is enough on its own; you do not need OpenClaw or Hermes installed to run the loop.

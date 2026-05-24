@@ -1,4 +1,4 @@
-"""solo-mise reconfigure - adjust an existing install to a new Selection."""
+"""brigade reconfigure - adjust an existing install to a new Selection."""
 from __future__ import annotations
 
 import shutil
@@ -15,8 +15,8 @@ _WRITER_DIRS = {
     "codex": ".codex",
 }
 _READER_DIRS = {
-    "openclaw": ".solo-mise/openclaw",
-    "hermes": ".solo-mise/hermes",
+    "openclaw": ".brigade/openclaw",
+    "hermes": ".brigade/hermes",
 }
 _HARNESS_BRIDGE_FILES = {
     "claude": ["CLAUDE.md"],
@@ -53,9 +53,9 @@ def reconfigure(target: Path, new_selection: Selection, prune: bool) -> int:
             rdir = _READER_DIRS.get(h)
             if rdir and (target / rdir).is_dir():
                 shutil.rmtree(target / rdir)
-            print(f"solo-mise: pruned {h}")
+            print(f"brigade: pruned {h}")
 
-    print(f"solo-mise: reconfigured -> harnesses={','.join(new_selection.harnesses) or '(none)'}")
+    print(f"brigade: reconfigured -> harnesses={','.join(new_selection.harnesses) or '(none)'}")
     if added:
         print(f"  added:   {','.join(sorted(added))}")
     if removed:
