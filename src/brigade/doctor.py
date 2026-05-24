@@ -59,8 +59,13 @@ def guard_station_checks(ctx: DoctorContext) -> List[CheckResult]:
     return _check_publish_gate(ctx.target)
 
 
+def tokens_station_checks(ctx: DoctorContext) -> List[CheckResult]:
+    return []
+
+
 def run(target: Path, harness: str = "generic") -> int:
     from .registry import all_stations
+    from . import managed
 
     ctx = build_context(target, harness)
     print(f"brigade doctor: target {ctx.target}")
@@ -79,6 +84,11 @@ def run(target: Path, harness: str = "generic") -> int:
     for station in all_stations():
         if station.doctor is not None:
             checks.extend(station.doctor(ctx))
+        for tool in managed.for_station(station.name):
+            if tool.detect():
+                checks.extend(tool.doctor(ctx))
+            else:
+                checks.append((MANUAL, f"{station.name}: {tool.name}", f"not installed; run `brigade add {station.name}`"))
     return _report(checks)
 
 

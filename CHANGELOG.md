@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-24
+
+### Added
+- Managed tools: external CLIs that Brigade can install and wire per station via `brigade add <station>`. Brigade shells out to each tool, never importing it in process.
+- `memory-doctor` and `bootstrap-doctor` attached to the `memory` station.
+- `content-guard` attached to the `guard` station.
+- New `tokens` station with `tokenjuice` for output compaction.
+- `brigade doctor` folds installed managed tools into its report and surfaces each tool's own health. Tools that are not installed are reported as non-failing `[todo]` hints, so doctor stays green on a bare host.
+- `memory-doctor` and `bootstrap-doctor` inspect the operator's canonical memory and bootstrap files (host-global), so their findings are labeled operator-scoped and treated as advisory `[warn]`, never failing a workspace `brigade doctor` run.
+
 ## [0.5.0] - 2026-05-24
 
 ### Changed
@@ -115,7 +125,8 @@ Initial release.
 - OpenClaw adapter fragments and harness-aware doctor checks.
 - Experimental Hermes adapter fragments.
 
-[Unreleased]: https://github.com/solomonneas/solo-mise/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/solomonneas/solo-mise/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/solomonneas/solo-mise/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/solomonneas/solo-mise/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/solomonneas/solo-mise/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/solomonneas/solo-mise/compare/v0.2.0...v0.3.0
