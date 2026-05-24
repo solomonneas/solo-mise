@@ -6,7 +6,7 @@
     "as the canonical memory contract."
   ],
   "_solo_mise_version": "0.1.0",
-  "_solo_mise_status": "experimental",
+  "_brigade_status": "experimental",
   "memory_handoff": {
     "inbox_dir": ".claude/memory-handoffs",
     "processed_dir": ".claude/memory-handoffs/processed",

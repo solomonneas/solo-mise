@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from solo_mise import scrub as scrub_mod
+from brigade import scrub as scrub_mod
 
 
 def test_resolve_named_policy_prefers_target(tmp_path: Path):

@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
-from solo_mise.install import resolve_manifests, install_selection
-from solo_mise.selection import Selection
+from brigade.install import resolve_manifests, install_selection
+from brigade.selection import Selection
 
 
 def test_resolve_manifests_repo_claude():
@@ -65,7 +65,7 @@ def test_install_selection_writes_files(tmp_path):
 
 
 def test_install_selection_writes_config(tmp_path):
-    from solo_mise.config import load_config
+    from brigade.config import load_config
     sel = Selection(
         depth="workspace",
         harnesses=["claude", "codex", "openclaw"],

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from solo_mise.install import install_selection
-from solo_mise.selection import Selection
+from brigade.install import install_selection
+from brigade.selection import Selection
 
 
 def _repo_sel() -> Selection:
@@ -199,7 +199,7 @@ def test_owner_override_renders_in_bootstrap(tmp_target: Path):
 
 
 def test_cli_parses_depth_harnesses(monkeypatch, tmp_path):
-    from solo_mise.cli import _build_parser
+    from brigade.cli import _build_parser
     parser = _build_parser()
     ns = parser.parse_args([
         "init",
@@ -216,7 +216,7 @@ def test_cli_parses_depth_harnesses(monkeypatch, tmp_path):
 
 
 def test_cli_rejects_unknown_harness(tmp_path):
-    from solo_mise.cli import main
+    from brigade.cli import main
     rc = main([
         "init", "--target", str(tmp_path),
         "--harnesses", "claude,weird",
@@ -227,8 +227,8 @@ def test_cli_rejects_unknown_harness(tmp_path):
 def test_cli_invokes_prompt_when_no_selection_flags(monkeypatch, tmp_path):
     """init without any selection flags should call prompt_for_selection."""
     called = {}
-    from solo_mise import cli
-    from solo_mise.selection import Selection
+    from brigade import cli
+    from brigade.selection import Selection
 
     def fake_prompt():
         called["yes"] = True
@@ -241,7 +241,7 @@ def test_cli_invokes_prompt_when_no_selection_flags(monkeypatch, tmp_path):
 
 
 def test_cli_skips_prompt_when_depth_given(monkeypatch, tmp_path):
-    from solo_mise import cli
+    from brigade import cli
     def fail():
         raise AssertionError("prompt should not be called")
     monkeypatch.setattr(cli, "prompt_for_selection", fail)

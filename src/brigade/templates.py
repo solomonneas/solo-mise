@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-TEMPLATE_PKG = "solo_mise"
+TEMPLATE_PKG = "brigade"
 
 TEXT_EXTENSIONS = {".md", ".txt"}
 

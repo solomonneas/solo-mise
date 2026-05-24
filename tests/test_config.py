@@ -1,14 +1,14 @@
 import json
 import pytest
 from pathlib import Path
-from solo_mise.config import (
+from brigade.config import (
     Config,
     CONFIG_REL_PATH,
     config_path,
     load_config,
     write_config,
 )
-from solo_mise.selection import Selection
+from brigade.selection import Selection
 
 
 def test_config_rel_path():

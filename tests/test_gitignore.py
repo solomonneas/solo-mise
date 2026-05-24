@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from solo_mise import install as install_mod
-from solo_mise.install import install_selection
-from solo_mise.selection import Selection
+from brigade import install as install_mod
+from brigade.install import install_selection
+from brigade.selection import Selection
 
 
 def _repo_selection() -> Selection:
@@ -97,7 +97,7 @@ def test_workspace_profile_also_adds_block(tmp_target: Path):
 
 
 def test_gitignore_block_includes_claude_section_when_selected():
-    from solo_mise.install import build_gitignore_block
+    from brigade.install import build_gitignore_block
     sel = Selection(depth="repo", harnesses=["claude"], owner="claude", includes=[])
     block = build_gitignore_block(sel)
     assert ".claude/memory-handoffs/*" in block
@@ -106,7 +106,7 @@ def test_gitignore_block_includes_claude_section_when_selected():
 
 
 def test_gitignore_block_includes_codex_section_when_selected():
-    from solo_mise.install import build_gitignore_block
+    from brigade.install import build_gitignore_block
     sel = Selection(depth="repo", harnesses=["claude", "codex"], owner="claude", includes=[])
     block = build_gitignore_block(sel)
     assert ".claude/memory-handoffs/*" in block
@@ -115,14 +115,14 @@ def test_gitignore_block_includes_codex_section_when_selected():
 
 
 def test_gitignore_block_no_inbox_section_for_readers_only():
-    from solo_mise.install import build_gitignore_block
+    from brigade.install import build_gitignore_block
     sel = Selection(depth="workspace", harnesses=["openclaw"], owner="openclaw", includes=[])
     block = build_gitignore_block(sel)
     assert "memory-handoffs" not in block
 
 
 def test_install_writes_gitignore_block(tmp_path):
-    from solo_mise.install import install_selection
+    from brigade.install import install_selection
     sel = Selection(depth="repo", harnesses=["claude", "codex"], owner="claude", includes=[])
     install_selection(tmp_path, sel)
     gi = (tmp_path / ".gitignore").read_text()

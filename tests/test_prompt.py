@@ -1,6 +1,6 @@
 import io
 import pytest
-from solo_mise.prompt import prompt_for_selection, NonInteractiveError
+from brigade.prompt import prompt_for_selection, NonInteractiveError
 
 
 def _run_with_input(text, monkeypatch):

@@ -1,7 +1,7 @@
-from solo_mise.install import install_selection
-from solo_mise.selection import Selection
-from solo_mise.reconfigure import reconfigure
-from solo_mise.config import load_config
+from brigade.install import install_selection
+from brigade.selection import Selection
+from brigade.reconfigure import reconfigure
+from brigade.config import load_config
 
 
 def test_reconfigure_adds_new_harness(tmp_path):

@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from solo_mise import doctor as doctor_mod
-from solo_mise.install import install_selection
-from solo_mise.selection import Selection
+from brigade import doctor as doctor_mod
+from brigade.install import install_selection
+from brigade.selection import Selection
 
 
 def test_doctor_passes_against_workspace_profile(tmp_target: Path, capsys):

@@ -6,7 +6,7 @@
     "knowledge cards and runbooks can talk about lanes without naming providers."
   ],
   "_solo_mise_version": "0.1.0",
-  "_solo_mise_status": "experimental",
+  "_brigade_status": "experimental",
   "model_lanes": {
     "main": "<provider/main-model-id>",
     "coder": "<provider/coder-model-id>",

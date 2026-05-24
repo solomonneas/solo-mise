@@ -1,5 +1,5 @@
 import pytest
-from solo_mise.selection import (
+from brigade.selection import (
     Selection,
     HARNESS_PRIORITY,
     KNOWN_HARNESSES,

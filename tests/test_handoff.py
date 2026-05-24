@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from solo_mise import handoff as handoff_mod
-from solo_mise.install import install_selection
-from solo_mise.selection import Selection
+from brigade import handoff as handoff_mod
+from brigade.install import install_selection
+from brigade.selection import Selection
 
 
 def test_handoff_template_prints_packaged(capsys):

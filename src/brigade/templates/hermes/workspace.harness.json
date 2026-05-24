@@ -9,7 +9,7 @@
     "Replace <hermes-config-path> with your Hermes config location."
   ],
   "_solo_mise_version": "0.1.0",
-  "_solo_mise_status": "experimental",
+  "_brigade_status": "experimental",
   "workspace": {
     "root": "<workspace-root>",
     "bootstrap_files": [
