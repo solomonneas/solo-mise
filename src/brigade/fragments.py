@@ -1,4 +1,4 @@
-"""`brigade openclaw-fragments` / `hermes-fragments` — write config fragments.
+"""`brigade openclaw-fragments` / `hermes-fragments` - write config fragments.
 
 These never mutate a live config. They drop JSON fragments into the chosen
 output directory so the user can `jq -s '.[0] * .[1]'` them in by hand.

@@ -1,4 +1,4 @@
-"""`brigade ingest` — route .claude/memory-handoffs/*.md into canonical memory.
+"""`brigade ingest` - route .claude/memory-handoffs/*.md into canonical memory.
 
 Conservative by design:
   - auto-promote handoffs with safe card filenames + YAML frontmatter

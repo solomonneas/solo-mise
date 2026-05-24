@@ -1,4 +1,4 @@
-"""`brigade handoff-template` — print the handoff TEMPLATE.md to stdout."""
+"""`brigade handoff-template` - print the handoff TEMPLATE.md to stdout."""
 from __future__ import annotations
 
 import sys

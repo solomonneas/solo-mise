@@ -1,4 +1,4 @@
-"""`brigade doctor` — verify a target workspace is wired correctly."""
+"""`brigade doctor` - verify a target workspace is wired correctly."""
 from __future__ import annotations
 
 import json

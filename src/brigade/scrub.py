@@ -1,4 +1,4 @@
-"""`brigade scrub` — run the content-guard scanner against a target."""
+"""`brigade scrub` - run the content-guard scanner against a target."""
 from __future__ import annotations
 
 import os
