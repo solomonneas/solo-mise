@@ -1,11 +1,11 @@
-"""Tests for solo-mise openclaw-fragments / hermes-fragments."""
+"""Tests for brigade openclaw-fragments / hermes-fragments."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from solo_mise import fragments as frag_mod
-from solo_mise.templates import (
+from brigade import fragments as frag_mod
+from brigade.templates import (
     load_depth_manifest,
     load_harness_manifest,
     load_include_manifest,
@@ -41,7 +41,7 @@ def test_hermes_fragments(tmp_path: Path):
     ):
         assert (out / name).is_file()
     data = json.loads((out / "workspace.harness.json").read_text())
-    assert data.get("_solo_mise_status") == "experimental"
+    assert data.get("_brigade_status") == "experimental"
 
 
 def test_unknown_harness_errors(tmp_path: Path):
@@ -57,7 +57,7 @@ def test_load_depth_repo():
     assert "SAFETY_RULES.md" in dsts
     assert "INSTALL_FOR_AGENTS.md" in dsts
     assert "hooks/pre-push" in dsts
-    assert ".solo-mise/policies/public-repo.json" in dsts
+    assert ".brigade/policies/public-repo.json" in dsts
     # depth baseline does NOT install harness-specific bridge files
     assert "CLAUDE.md" not in dsts
 
@@ -109,8 +109,8 @@ def test_load_harness_openclaw():
     assert m["id"] == "openclaw"
     assert m.get("role") == "reader"
     dsts = [f["dst"] for f in m["files"]]
-    # Reader fragments live under .solo-mise/openclaw/
-    assert any(d.startswith(".solo-mise/openclaw/") for d in dsts)
+    # Reader fragments live under .brigade/openclaw/
+    assert any(d.startswith(".brigade/openclaw/") for d in dsts)
     # No inbox for readers
     assert not any("/memory-handoffs/" in d for d in dsts)
 
@@ -122,12 +122,12 @@ def test_load_harness_hermes():
 
 
 def test_codex_template_file_exists():
-    from solo_mise.templates import template_root
+    from brigade.templates import template_root
     assert (template_root() / "codex" / "memory-handoffs" / "TEMPLATE.md").is_file()
 
 
 def test_all_harness_files_exist():
-    from solo_mise.templates import template_root
+    from brigade.templates import template_root
     for h in ("claude", "codex", "openclaw", "hermes"):
         m = load_harness_manifest(h)
         for entry in m["files"]:
@@ -138,5 +138,5 @@ def test_load_include_publisher():
     m = load_include_manifest("publisher")
     assert m["id"] == "publisher"
     dsts = [f["dst"] for f in m["files"]]
-    assert ".solo-mise/policies/public-content.json" in dsts
+    assert ".brigade/policies/public-content.json" in dsts
     assert "memory/cards/content-safety.md" in dsts

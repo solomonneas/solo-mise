@@ -1,0 +1,12 @@
+{
+  "id": "repo",
+  "description": "Repo-local baseline: harness-neutral bootstrap files + publish guard.",
+  "files": [
+    {"src": "workspace/AGENTS.md", "dst": "AGENTS.md"},
+    {"src": "workspace/SAFETY_RULES.md", "dst": "SAFETY_RULES.md"},
+    {"src": "workspace/INSTALL_FOR_AGENTS.md", "dst": "INSTALL_FOR_AGENTS.md"},
+    {"src": "hooks/pre-push", "dst": "hooks/pre-push", "mode": "0755"},
+    {"src": "policies/public-repo.json", "dst": ".brigade/policies/public-repo.json"}
+  ],
+  "dirs": []
+}

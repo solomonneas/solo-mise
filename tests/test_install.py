@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
-from solo_mise.install import resolve_manifests, install_selection
-from solo_mise.selection import Selection
+from brigade.install import resolve_manifests, install_selection
+from brigade.selection import Selection
 
 
 def test_resolve_manifests_repo_claude():
@@ -32,7 +32,7 @@ def test_resolve_manifests_workspace_claude_codex_openclaw():
     # Codex
     assert ".codex/memory-handoffs/TEMPLATE.md" in dsts
     # OpenClaw fragments
-    assert ".solo-mise/openclaw/model-aliases.openclaw.json" in dsts
+    assert ".brigade/openclaw/model-aliases.openclaw.json" in dsts
     # Each dst appears at most once
     assert len(dsts) == len(set(dsts))
 
@@ -50,8 +50,8 @@ def test_resolve_manifests_publisher_include():
     sel = Selection(depth="repo", harnesses=["claude"], owner="claude", includes=["publisher"])
     files, dirs, notes = resolve_manifests(sel)
     dsts = [f["dst"] for f in files]
-    assert ".solo-mise/policies/public-content.json" in dsts
-    assert ".solo-mise/scrub-cache" in dirs
+    assert ".brigade/policies/public-content.json" in dsts
+    assert ".brigade/scrub-cache" in dirs
 
 
 def test_install_selection_writes_files(tmp_path):
@@ -65,7 +65,7 @@ def test_install_selection_writes_files(tmp_path):
 
 
 def test_install_selection_writes_config(tmp_path):
-    from solo_mise.config import load_config
+    from brigade.config import load_config
     sel = Selection(
         depth="workspace",
         harnesses=["claude", "codex", "openclaw"],

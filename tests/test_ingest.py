@@ -1,4 +1,4 @@
-"""Tests for solo-mise ingest."""
+"""Tests for brigade ingest."""
 from __future__ import annotations
 
 import textwrap
@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from solo_mise import ingest as ingest_mod
-from solo_mise.install import install_selection
-from solo_mise.selection import Selection
+from brigade import ingest as ingest_mod
+from brigade.install import install_selection
+from brigade.selection import Selection
 
 
 def _seed(tmp_target: Path) -> Path:
@@ -114,7 +114,7 @@ def test_no_card_handoff_routes_to_tools(tmp_target: Path):
 
         ## Suggested document content
         ### New runbook
-        - run `solo-mise doctor`
+        - run `brigade doctor`
         """,
     )
     rc = ingest_mod.run(target=tmp_target, dry_run=False, promote_cards=True, route_documents=True)
@@ -273,9 +273,9 @@ def test_missing_inbox_returns_error(tmp_target: Path):
 
 
 def test_ingest_scans_multiple_writer_inboxes(tmp_path):
-    from solo_mise.install import install_selection
-    from solo_mise.selection import Selection
-    from solo_mise.ingest import run as ingest_run
+    from brigade.install import install_selection
+    from brigade.selection import Selection
+    from brigade.ingest import run as ingest_run
 
     sel = Selection(depth="workspace", harnesses=["claude", "codex"], owner="this-repo", includes=[])
     install_selection(tmp_path, sel)
