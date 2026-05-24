@@ -124,6 +124,27 @@ Re-running `brigade init` against an existing target is safe. It refuses to over
 
 See [QUICKSTART.md](QUICKSTART.md) for setup, verification, and the ingest flow.
 
+## Managed stations
+
+Some stations can install and wire external tools for you. Run `brigade add <station>` to install any tool attached to that station that is not already on your PATH, then wire its default config. Tools are never imported in process; Brigade shells out to each CLI, so the boundary stays model-neutral and mixed-language.
+
+```bash
+brigade add memory   # memory-doctor + bootstrap-doctor
+brigade add guard    # content-guard
+brigade add tokens   # tokenjuice
+```
+
+The four managed tools:
+
+| Station | Tool | What it does |
+|---|---|---|
+| `memory` | `memory-doctor` | memory index health, dead-link lint, handoff counts |
+| `memory` | `bootstrap-doctor` | bootstrap-file size and limit audit |
+| `guard` | `content-guard` | policy-driven content scanning |
+| `tokens` | `tokenjuice` | output compaction via host hooks |
+
+`brigade doctor` folds installed tools into its report and surfaces each tool's own health. A tool that is not installed is never a failure: it shows up as a non-failing `[todo]` hint telling you to run `brigade add <station>`. That keeps doctor green on a bare host while still pointing you at what is available to add.
+
 ### What a green doctor looks like
 
 ```text
