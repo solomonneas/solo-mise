@@ -15,56 +15,70 @@ WARN = "WARN"
 FAIL = "FAIL"
 MANUAL = "MANUAL"
 
+from .station import DoctorContext
 
-def run(target: Path, harness: str = "generic") -> int:
+
+def build_context(target: Path, harness: str = "generic") -> DoctorContext:
     target = target.expanduser().resolve()
-    print(f"brigade doctor: target {target}")
-
     from .config import load_config
 
-    cfg = None
+    sel = None
     try:
         cfg = load_config(target)
-    except (ValueError, json.JSONDecodeError) as exc:
-        print(f"  [fail] config: {exc}")
-
+    except (ValueError, json.JSONDecodeError):
+        cfg = None
     if cfg is not None:
         sel = cfg.selection
+        harnesses = list(sel.harnesses)
+    elif harness in ("openclaw", "hermes"):
+        harnesses = ["claude", harness]
+    else:
+        harnesses = ["claude"]
+    return DoctorContext(target=target, selection=sel, harnesses=harnesses)
+
+
+def core_station_checks(ctx: DoctorContext) -> List[CheckResult]:
+    checks: List[CheckResult] = []
+    checks.extend(_check_workspace_files(ctx.target))
+    if "openclaw" in ctx.harnesses:
+        checks.extend(_check_openclaw())
+    if "hermes" in ctx.harnesses:
+        checks.extend(_check_hermes(ctx.target))
+    checks.extend(_check_orphan_inboxes(ctx.target, ctx.harnesses))
+    return checks
+
+
+def memory_station_checks(ctx: DoctorContext) -> List[CheckResult]:
+    checks: List[CheckResult] = []
+    checks.extend(_check_handoff_inboxes(ctx.target, ctx.selection, ctx.harnesses))
+    checks.extend(_check_memory_care(ctx.target))
+    return checks
+
+
+def guard_station_checks(ctx: DoctorContext) -> List[CheckResult]:
+    return _check_publish_gate(ctx.target)
+
+
+def run(target: Path, harness: str = "generic") -> int:
+    from .registry import all_stations
+
+    ctx = build_context(target, harness)
+    print(f"brigade doctor: target {ctx.target}")
+    if ctx.selection is not None:
+        sel = ctx.selection
         print(
             f"  harnesses: {', '.join(sel.harnesses) or '(none)'} "
             f"(owner={sel.owner}, depth={sel.depth})"
         )
-        selected_harnesses = list(sel.harnesses)
     else:
-        # Legacy fall-through: no config.json present.
-        sel = None
-        if harness in ("openclaw", "hermes"):
-            print(
-                f"  harnesses: (legacy target, no .brigade/config.json; "
-                f"--harness={harness} so assuming claude + {harness})"
-            )
-            selected_harnesses = ["claude", harness]
-        else:
-            print(
-                "  harnesses: (legacy target, no .brigade/config.json; "
-                "assuming claude)"
-            )
-            selected_harnesses = ["claude"]
+        print(
+            f"  harnesses: (legacy target, no config; assuming {', '.join(ctx.harnesses)})"
+        )
 
     checks: List[CheckResult] = []
-    checks.extend(_check_workspace_files(target))
-    checks.extend(_check_handoff_inboxes(target, sel, selected_harnesses))
-    checks.extend(_check_memory_care(target))
-    checks.extend(_check_publish_gate(target))
-
-    if "openclaw" in selected_harnesses:
-        checks.extend(_check_openclaw())
-    if "hermes" in selected_harnesses:
-        checks.extend(_check_hermes(target))
-
-    # Orphan-inbox warnings.
-    checks.extend(_check_orphan_inboxes(target, selected_harnesses))
-
+    for station in all_stations():
+        if station.doctor is not None:
+            checks.extend(station.doctor(ctx))
     return _report(checks)
 
 
