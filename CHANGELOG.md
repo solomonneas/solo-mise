@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade run --cwd`, `--output-dir`, and default `.brigade/runs/<id>` artifacts for dogfooding auditable runs.
 - `brigade run --handoff` to write a Memory Handoff for successful runs, with `--handoff-inbox` override.
 - Roster-level and per-agent `timeout_seconds` controls for bounded CLI calls.
+- `brigade run --read-only` prompt policy for planning and review runs that should inspect and recommend only.
 
 ## [0.6.0] - 2026-05-24
 

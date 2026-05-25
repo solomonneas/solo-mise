@@ -43,6 +43,7 @@ role = "code"
         cwd=None,
         output_dir=None,
         handoff_inbox=None,
+        read_only=False,
     ):
         seen["task"] = task
         seen["orchestrator"] = loaded_roster.orchestrator
@@ -52,6 +53,7 @@ role = "code"
         seen["cwd"] = cwd
         seen["output_dir"] = output_dir
         seen["handoff_inbox"] = handoff_inbox
+        seen["read_only"] = read_only
         return 0
 
     monkeypatch.setattr(aboyeur, "run", fake_run)
@@ -70,6 +72,7 @@ role = "code"
             "--handoff",
             "--handoff-inbox",
             str(tmp_path / "handoffs"),
+            "--read-only",
         ]
     )
     assert rc == 0
@@ -82,6 +85,7 @@ role = "code"
         "cwd": tmp_path,
         "output_dir": tmp_path / "runs" / "one",
         "handoff_inbox": tmp_path / "handoffs",
+        "read_only": True,
     }
 
 
@@ -105,7 +109,7 @@ role = "code"
     monkeypatch.setattr(
         aboyeur,
         "run",
-        lambda task, loaded_roster, dry_run=False, show_plan=False, verbose=False, cwd=None, output_dir=None, handoff_inbox=None: 0,
+        lambda task, loaded_roster, dry_run=False, show_plan=False, verbose=False, cwd=None, output_dir=None, handoff_inbox=None, read_only=False: 0,
     )
     assert cli.main(["run", json.dumps({"task": "x"}), "--dry-run"]) == 0
 
@@ -159,6 +163,7 @@ role = "code"
         cwd=None,
         output_dir=None,
         handoff_inbox=None,
+        read_only=False,
     ):
         seen["output_dir"] = output_dir
         return 0

@@ -127,9 +127,10 @@ brigade run "review this repo" --show-plan
 brigade run "review this repo" --verbose
 brigade run "review this repo" --cwd /path/to/repo
 brigade run "review this repo" --handoff
+brigade run "review this repo" --read-only
 ```
 
-`--dry-run` prints the planned assignments as JSON and stops before worker dispatch. `--show-plan` prints assignments before a normal run. `--verbose` prints the plan, worker statuses, and synthesis status. `--cwd` sets the working directory for the agent CLI calls and defaults to the current directory. `--handoff` writes a Memory Handoff for a successful non-dry run. The `cli` values are adapters for installed command-line tools: `codex`, `claude`, and `ollama:<model>`. Pick the ones you already use. Brigade shells out to those tools and keeps no provider keys. `brigade roster doctor` validates the roster syntax and reports which CLIs are present on `PATH`.
+`--dry-run` prints the planned assignments as JSON and stops before worker dispatch. `--show-plan` prints assignments before a normal run. `--verbose` prints the plan, worker statuses, and synthesis status. `--cwd` sets the working directory for the agent CLI calls and defaults to the current directory. `--handoff` writes a Memory Handoff for a successful non-dry run. `--read-only` tells the orchestrator and workers to inspect and recommend only, without modifying files or external state. It is a prompt policy, not a host sandbox. The `cli` values are adapters for installed command-line tools: `codex`, `claude`, and `ollama:<model>`. Pick the ones you already use. Brigade shells out to those tools and keeps no provider keys. `brigade roster doctor` validates the roster syntax and reports which CLIs are present on `PATH`.
 
 CLI runs write artifacts by default under `.brigade/runs/<id>` below `--cwd`:
 

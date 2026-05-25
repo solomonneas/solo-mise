@@ -133,6 +133,28 @@ def test_run_uses_roster_timeouts(monkeypatch):
     assert calls == [("codex", 45.0), ("ollama:llama3.3", 12.0), ("codex", 45.0)]
 
 
+def test_read_only_mode_is_in_all_prompts_and_artifacts(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+        calls.append((cli_ref, prompt))
+        if len(calls) == 1:
+            return agents.AgentResult(
+                text=json.dumps({"assignments": [{"worker": "coder", "task": "inspect it"}]}),
+                ok=True,
+            )
+        if cli_ref == "ollama:llama3.3":
+            return agents.AgentResult(text="worker output", ok=True)
+        return agents.AgentResult(text="final answer", ok=True)
+
+    output_dir = tmp_path / "run"
+    monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
+    assert aboyeur.run("inspect feature", _roster(), output_dir=output_dir, read_only=True) == 0
+    assert all("READ-ONLY MODE" in prompt for _, prompt in calls)
+    assert all("Do not modify files" in prompt for _, prompt in calls)
+    assert json.loads((output_dir / "run.json").read_text())["read_only"] is True
+
+
 def test_show_plan_prints_assignments(monkeypatch, capsys):
     def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
         if "assignments" in prompt:
@@ -255,12 +277,22 @@ def test_run_writes_handoff(monkeypatch, tmp_path, capsys):
     output_dir = tmp_path / "run"
     monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
 
-    assert aboyeur.run("build feature\n## task heading", _roster(), output_dir=output_dir, handoff_inbox=inbox) == 0
+    assert (
+        aboyeur.run(
+            "build feature\n## task heading",
+            _roster(),
+            output_dir=output_dir,
+            handoff_inbox=inbox,
+            read_only=True,
+        )
+        == 0
+    )
     handoffs = list(inbox.glob("*-brigade-run-build-feature-task-heading.md"))
     assert len(handoffs) == 1
     body = handoffs[0].read_text()
     assert "## Recommended memory action\n\nno-card" in body
     assert "## Target document\n\n.learnings/LEARNINGS.md" in body
+    assert "- mode: read-only" in body
     assert "final answer" in body
     assert "\n## task heading" not in body
     assert "\n## model heading" not in body

@@ -30,7 +30,12 @@ class WorkerResult:
     detail: str = ""
 
 
-def build_plan_prompt(task: str, roster: Roster, corrective_note: str | None = None) -> str:
+def build_plan_prompt(
+    task: str,
+    roster: Roster,
+    corrective_note: str | None = None,
+    read_only: bool = False,
+) -> str:
     worker_lines = "\n".join(
         f"- {agent.name}: cli={agent.cli}; role={agent.role}" for agent in workers(roster)
     )
@@ -38,6 +43,7 @@ def build_plan_prompt(task: str, roster: Roster, corrective_note: str | None = N
         worker_lines = "- no workers configured"
 
     note = f"\nCorrection needed: {corrective_note}\n" if corrective_note else ""
+    policy = f"\n\n{_read_only_rules()}\n" if read_only else ""
     return (
         "You are the Brigade aboyeur. Split the user's task across the available workers.\n"
         "Return exactly one JSON object, with no prose outside JSON:\n"
@@ -48,6 +54,7 @@ def build_plan_prompt(task: str, roster: Roster, corrective_note: str | None = N
         f"Rules:\n- Use at most {roster.max_workers} assignments.\n"
         "- Assign only listed workers.\n"
         "- Use zero assignments only if no worker is useful."
+        f"{policy}"
     )
 
 
@@ -122,6 +129,7 @@ def write_run_handoff(
     assignments: list[Assignment],
     worker_results: list[WorkerResult],
     final_text: str,
+    read_only: bool = False,
     now: datetime | None = None,
 ) -> Path:
     timestamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d-%H%M")
@@ -137,11 +145,13 @@ def write_run_handoff(
     ) or "- no worker assignments"
     artifact_line = f"- artifacts: `{output_dir}`" if output_dir is not None else "- artifacts: none"
     cwd_line = f"- cwd: `{cwd}`" if cwd is not None else "- cwd: not set"
+    mode_line = "- mode: read-only" if read_only else "- mode: normal"
     document_content = _safe_document_content(
         f"""### Brigade run: {_slug(safe_task)}
 - task: {safe_task}
 {artifact_line}
 {cwd_line}
+{mode_line}
 
 Final answer:
 {final_text}
@@ -166,6 +176,7 @@ Brigade completed a bounded plan-dispatch-synthesize run and produced a final an
 - task: {safe_task}
 {cwd_line}
 {artifact_line}
+{mode_line}
 - orchestrated assignments:
 {assignment_summary}
 - worker status:
@@ -191,6 +202,16 @@ no-card
     inbox.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
     return path
+
+
+def _read_only_rules() -> str:
+    return (
+        "READ-ONLY MODE:\n"
+        "- Do not modify files.\n"
+        "- Do not install packages, change configuration, commit, push, or call external write APIs.\n"
+        "- You may inspect, reason, summarize, and recommend exact next steps.\n"
+        "- If a task appears to require changes, describe the proposed changes instead of making them."
+    )
 
 
 def parse_plan(text: str, roster: Roster) -> list[Assignment]:
@@ -241,14 +262,18 @@ def _run_orchestrator(roster: Roster, prompt: str, cwd: Path | None = None) -> a
     return agents.run_agent(orchestrator.cli, prompt, timeout=timeout_for(orchestrator, roster), cwd=cwd)
 
 
-def plan(task: str, roster: Roster, cwd: Path | None = None) -> list[Assignment]:
-    first = _run_orchestrator(roster, build_plan_prompt(task, roster), cwd=cwd)
+def plan(task: str, roster: Roster, cwd: Path | None = None, read_only: bool = False) -> list[Assignment]:
+    first = _run_orchestrator(roster, build_plan_prompt(task, roster, read_only=read_only), cwd=cwd)
     if not first.ok:
         raise RuntimeError(f"orchestrator failed during plan: {first.detail}")
     try:
         return parse_plan(first.text, roster)
     except ValueError as exc:
-        second = _run_orchestrator(roster, build_plan_prompt(task, roster, corrective_note=str(exc)), cwd=cwd)
+        second = _run_orchestrator(
+            roster,
+            build_plan_prompt(task, roster, corrective_note=str(exc), read_only=read_only),
+            cwd=cwd,
+        )
         if not second.ok:
             raise RuntimeError(f"orchestrator failed during plan correction: {second.detail}") from exc
         try:
@@ -257,16 +282,23 @@ def plan(task: str, roster: Roster, cwd: Path | None = None) -> list[Assignment]
             raise RuntimeError(f"orchestrator returned an invalid plan: {second_exc}") from second_exc
 
 
-def _worker_prompt(agent: Agent, assignment: Assignment) -> str:
+def _worker_prompt(agent: Agent, assignment: Assignment, read_only: bool = False) -> str:
+    policy = f"\n\n{_read_only_rules()}" if read_only else ""
     return (
         f"You are Brigade worker {agent.name}.\n"
         f"Role:\n{agent.role}\n\n"
         f"Sub-task:\n{assignment.task}\n\n"
         "Return a concise, complete result for the orchestrator to synthesize."
+        f"{policy}"
     )
 
 
-def dispatch(assignments: list[Assignment], roster: Roster, cwd: Path | None = None) -> list[WorkerResult]:
+def dispatch(
+    assignments: list[Assignment],
+    roster: Roster,
+    cwd: Path | None = None,
+    read_only: bool = False,
+) -> list[WorkerResult]:
     def run_one(assignment: Assignment) -> WorkerResult:
         agent = roster.agents[assignment.worker]
         if not is_cli_allowed(agent.cli, roster):
@@ -279,7 +311,7 @@ def dispatch(assignments: list[Assignment], roster: Roster, cwd: Path | None = N
             )
         result = agents.run_agent(
             agent.cli,
-            _worker_prompt(agent, assignment),
+            _worker_prompt(agent, assignment, read_only=read_only),
             timeout=timeout_for(agent, roster),
             cwd=cwd,
         )
@@ -318,7 +350,7 @@ def dispatch(assignments: list[Assignment], roster: Roster, cwd: Path | None = N
     return [results_by_index[index] for index in range(len(assignments))]
 
 
-def build_synth_prompt(task: str, results: list[WorkerResult]) -> str:
+def build_synth_prompt(task: str, results: list[WorkerResult], read_only: bool = False) -> str:
     if results:
         rendered = "\n\n".join(
             "\n".join(
@@ -336,11 +368,13 @@ def build_synth_prompt(task: str, results: list[WorkerResult]) -> str:
     else:
         rendered = "(No workers were assigned.)"
 
+    policy = f"\n\n{_read_only_rules()}" if read_only else ""
     return (
         "You are the Brigade orchestrator. Synthesize the final answer for the user.\n"
         "Account for worker failures if any are present. Do not include implementation chatter.\n\n"
         f"Original task:\n{task}\n\n"
         f"Worker results:\n{rendered}\n"
+        f"{policy}"
     )
 
 
@@ -394,6 +428,7 @@ def run(
     cwd: Path | None = None,
     output_dir: Path | None = None,
     handoff_inbox: Path | None = None,
+    read_only: bool = False,
 ) -> int:
     cwd = cwd.expanduser().resolve() if cwd is not None else None
     output_dir = output_dir.expanduser() if output_dir is not None else None
@@ -407,12 +442,13 @@ def run(
                 "cwd": str(cwd) if cwd is not None else None,
                 "orchestrator": roster.orchestrator,
                 "dry_run": dry_run,
+                "read_only": read_only,
                 "status": "started",
             },
         )
 
     try:
-        assignments = plan(task, roster, cwd=cwd)
+        assignments = plan(task, roster, cwd=cwd, read_only=read_only)
     except RuntimeError as exc:
         if output_dir is not None:
             _write_json(
@@ -422,6 +458,7 @@ def run(
                     "cwd": str(cwd) if cwd is not None else None,
                     "orchestrator": roster.orchestrator,
                     "dry_run": dry_run,
+                    "read_only": read_only,
                     "status": "failed",
                     "error": str(exc),
                 },
@@ -442,6 +479,7 @@ def run(
                     "cwd": str(cwd) if cwd is not None else None,
                     "orchestrator": roster.orchestrator,
                     "dry_run": dry_run,
+                    "read_only": read_only,
                     "status": "dry-run",
                     "artifacts": str(output_dir),
                 },
@@ -452,7 +490,7 @@ def run(
     if show_plan or verbose:
         _print_plan(assignments)
 
-    worker_results = dispatch(assignments, roster, cwd=cwd)
+    worker_results = dispatch(assignments, roster, cwd=cwd, read_only=read_only)
     if output_dir is not None:
         _write_json(output_dir / "worker-results.json", {"results": _worker_payload(worker_results)})
     if verbose:
@@ -460,7 +498,7 @@ def run(
         print("synthesis:")
         print(f"  -> {roster.orchestrator}")
 
-    final = _run_orchestrator(roster, build_synth_prompt(task, worker_results), cwd=cwd)
+    final = _run_orchestrator(roster, build_synth_prompt(task, worker_results, read_only=read_only), cwd=cwd)
     if not final.ok:
         if output_dir is not None:
             _write_json(
@@ -470,6 +508,7 @@ def run(
                     "cwd": str(cwd) if cwd is not None else None,
                     "orchestrator": roster.orchestrator,
                     "dry_run": dry_run,
+                    "read_only": read_only,
                     "status": "failed",
                     "error": final.detail,
                     "artifacts": str(output_dir),
@@ -486,6 +525,7 @@ def run(
                 "cwd": str(cwd) if cwd is not None else None,
                 "orchestrator": roster.orchestrator,
                 "dry_run": dry_run,
+                "read_only": read_only,
                 "status": "ok",
                 "artifacts": str(output_dir),
             },
@@ -499,6 +539,7 @@ def run(
             assignments=assignments,
             worker_results=worker_results,
             final_text=final.text,
+            read_only=read_only,
         )
         print(f"handoff: {handoff}", file=sys.stderr)
     print(final.text)

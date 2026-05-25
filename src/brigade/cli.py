@@ -94,6 +94,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--show-plan", action="store_true", help="Print parsed assignments before dispatch.")
     p_run.add_argument("--verbose", action="store_true", help="Print plan, worker status, and synthesis status.")
     p_run.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Tell agents to inspect and recommend only, without modifying files or external state.",
+    )
+    p_run.add_argument(
         "--cwd",
         type=Path,
         default=Path("."),
@@ -297,6 +302,7 @@ def main(argv=None) -> int:
             cwd=run_cwd,
             output_dir=output_dir,
             handoff_inbox=handoff_inbox,
+            read_only=args.read_only,
         )
         if output_dir is not None:
             print(f"artifacts: {output_dir}", file=sys.stderr)
