@@ -81,6 +81,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("station", help="Station to add tools for (e.g. memory, guard, tokens).")
     p_add.add_argument("--target", "-t", type=Path, default=Path("."))
 
+    # run
+    p_run = sub.add_parser("run", help="Run a bounded cross-model orchestration task.")
+    p_run.add_argument("task", help="Task for the aboyeur to plan, dispatch, and synthesize.")
+    p_run.add_argument(
+        "--roster",
+        type=Path,
+        default=None,
+        help="Path to roster.toml. Defaults to .brigade/roster.toml under the current directory.",
+    )
+    p_run.add_argument("--dry-run", action="store_true", help="Print the plan without dispatching workers.")
+    p_run.add_argument("--show-plan", action="store_true", help="Print parsed assignments before dispatch.")
+    p_run.add_argument("--verbose", action="store_true", help="Print plan, worker status, and synthesis status.")
+
+    # roster
+    p_roster = sub.add_parser("roster", help="Create and check aboyeur rosters.")
+    roster_sub = p_roster.add_subparsers(dest="roster_command", metavar="<roster-command>")
+    roster_sub.required = True
+    p_roster_init = roster_sub.add_parser("init", help="Write a starter .brigade/roster.toml.")
+    p_roster_init.add_argument("--target", "-t", type=Path, default=Path("."))
+    p_roster_init.add_argument("--force", action="store_true", help="Overwrite an existing roster.")
+    p_roster_init.add_argument(
+        "--ollama-model",
+        default="llama3.3",
+        help="Default local researcher model for the starter roster.",
+    )
+    p_roster_init.add_argument("--max-workers", type=int, default=4)
+    p_roster_doctor = roster_sub.add_parser("doctor", help="Validate roster syntax and installed CLIs.")
+    p_roster_doctor.add_argument("--target", "-t", type=Path, default=Path("."))
+    p_roster_doctor.add_argument(
+        "--roster",
+        type=Path,
+        default=None,
+        help="Path to roster.toml. Defaults to .brigade/roster.toml under --target.",
+    )
+
     # scrub
     p_scrub = sub.add_parser("scrub", help="Run content-guard against a target.")
     p_scrub.add_argument("--target", "-t", type=Path, default=Path("."))
@@ -200,6 +235,43 @@ def main(argv=None) -> int:
         from . import add as add_mod
 
         return add_mod.run(target=args.target, station=args.station)
+    if cmd == "run":
+        from . import aboyeur as aboyeur_mod
+        from . import roster as roster_mod
+
+        roster_path = args.roster or (Path(".") / ".brigade" / "roster.toml")
+        try:
+            loaded_roster = roster_mod.load_roster(roster_path)
+        except FileNotFoundError:
+            print(
+                f"error: roster not found: {roster_path}. Create .brigade/roster.toml or pass --roster.",
+                file=sys.stderr,
+            )
+            return 2
+        except ValueError as exc:
+            print(f"error: invalid roster: {exc}", file=sys.stderr)
+            return 2
+        return aboyeur_mod.run(
+            args.task,
+            loaded_roster,
+            dry_run=args.dry_run,
+            show_plan=args.show_plan,
+            verbose=args.verbose,
+        )
+    if cmd == "roster":
+        from . import roster_cmd
+
+        if args.roster_command == "init":
+            return roster_cmd.init(
+                target=args.target,
+                force=args.force,
+                ollama_model=args.ollama_model,
+                max_workers=args.max_workers,
+            )
+        if args.roster_command == "doctor":
+            return roster_cmd.doctor(target=args.target, roster_path=args.roster)
+        parser.error(f"unknown roster command: {args.roster_command}")
+        return 2
     if cmd == "scrub":
         from . import scrub as scrub_mod
 
