@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import agents
-from .roster import Agent, Roster, is_cli_allowed, workers
+from .roster import Agent, Roster, is_cli_allowed, timeout_for, workers
 
 
 @dataclass(frozen=True)
@@ -238,7 +238,7 @@ def _run_orchestrator(roster: Roster, prompt: str, cwd: Path | None = None) -> a
             ok=False,
             detail=f"{orchestrator.cli} is not allowed by limits.allow_models",
         )
-    return agents.run_agent(orchestrator.cli, prompt, cwd=cwd)
+    return agents.run_agent(orchestrator.cli, prompt, timeout=timeout_for(orchestrator, roster), cwd=cwd)
 
 
 def plan(task: str, roster: Roster, cwd: Path | None = None) -> list[Assignment]:
@@ -277,7 +277,12 @@ def dispatch(assignments: list[Assignment], roster: Roster, cwd: Path | None = N
                 ok=False,
                 detail=f"{agent.cli} is not allowed by limits.allow_models",
             )
-        result = agents.run_agent(agent.cli, _worker_prompt(agent, assignment), cwd=cwd)
+        result = agents.run_agent(
+            agent.cli,
+            _worker_prompt(agent, assignment),
+            timeout=timeout_for(agent, roster),
+            cwd=cwd,
+        )
         return WorkerResult(
             worker=assignment.worker,
             task=assignment.task,

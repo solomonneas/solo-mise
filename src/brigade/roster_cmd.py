@@ -31,6 +31,7 @@ role = "Research locally and summarize useful findings."
 
 [limits]
 max_workers = {max_workers}
+timeout_seconds = 600
 allow_models = ["codex", "ollama:*"]
 """
 
@@ -72,6 +73,7 @@ def doctor(target: Path, *, roster_path: Path | None = None) -> int:
     checks.append((doctor_mod.OK, "roster: file", str(path)))
     checks.append((doctor_mod.OK, "roster: orchestrator", loaded.orchestrator))
     checks.append((doctor_mod.OK, "roster: max_workers", str(loaded.max_workers)))
+    checks.append((doctor_mod.OK, "roster: timeout_seconds", str(loaded.timeout_seconds)))
     if loaded.allow_models:
         checks.append((doctor_mod.OK, "roster: allow_models", ", ".join(loaded.allow_models)))
     else:
@@ -79,10 +81,11 @@ def doctor(target: Path, *, roster_path: Path | None = None) -> int:
 
     for name, agent in loaded.agents.items():
         binary = agents.command_for(agent.cli)
+        timeout = roster_mod.timeout_for(agent, loaded)
         if agents.detect(agent.cli):
-            checks.append((doctor_mod.OK, f"agent: {name}", f"{agent.cli} via {binary}"))
+            checks.append((doctor_mod.OK, f"agent: {name}", f"{agent.cli} via {binary}; timeout={timeout:g}s"))
         else:
-            detail = f"{agent.cli} needs `{binary}` on PATH"
+            detail = f"{agent.cli} needs `{binary}` on PATH; timeout={timeout:g}s"
             if agent.cli == "claude":
                 detail += "; Claude is optional, edit the roster if you are not using it"
             checks.append((doctor_mod.WARN, f"agent: {name}", detail))

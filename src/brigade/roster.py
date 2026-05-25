@@ -19,6 +19,7 @@ class Agent:
     name: str
     cli: str
     role: str
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Roster:
     agents: dict[str, Agent]
     max_workers: int = 4
     allow_models: tuple[str, ...] = ()
+    timeout_seconds: float = 600.0
 
 
 def _as_str(value: object, field: str) -> str:
@@ -35,8 +37,18 @@ def _as_str(value: object, field: str) -> str:
     return value.strip()
 
 
+def _as_positive_number(value: object, field: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field} must be a positive number")
+    return float(value)
+
+
 def is_cli_allowed(cli_ref: str, roster: Roster) -> bool:
     return _allowed(cli_ref, roster.allow_models)
+
+
+def timeout_for(agent: Agent, roster: Roster) -> float:
+    return agent.timeout_seconds if agent.timeout_seconds is not None else roster.timeout_seconds
 
 
 def _allowed(cli_ref: str, patterns: tuple[str, ...]) -> bool:
@@ -108,6 +120,7 @@ def load_roster(path: Path) -> Roster:
     max_workers = limits.get("max_workers", 4)
     if not isinstance(max_workers, int) or max_workers < 1:
         raise ValueError("limits.max_workers must be a positive integer")
+    timeout_seconds = _as_positive_number(limits.get("timeout_seconds", 600.0), "limits.timeout_seconds")
 
     raw_allow_models = limits.get("allow_models", [])
     if raw_allow_models is None:
@@ -123,11 +136,22 @@ def load_roster(path: Path) -> Roster:
         agent_name = _as_str(name, "agent name")
         cli = _as_str(raw_agent.get("cli"), f"agents.{agent_name}.cli")
         role = _as_str(raw_agent.get("role"), f"agents.{agent_name}.role")
+        agent_timeout = raw_agent.get("timeout_seconds")
+        timeout_seconds_for_agent = (
+            None
+            if agent_timeout is None
+            else _as_positive_number(agent_timeout, f"agents.{agent_name}.timeout_seconds")
+        )
         if not agent_adapters.is_known(cli):
             raise ValueError(f"agents.{agent_name}.cli is unknown: {cli!r}")
         if not _allowed(cli, allow_models):
             raise ValueError(f"agents.{agent_name}.cli is not allowed by limits.allow_models: {cli!r}")
-        parsed_agents[agent_name] = Agent(name=agent_name, cli=cli, role=role)
+        parsed_agents[agent_name] = Agent(
+            name=agent_name,
+            cli=cli,
+            role=role,
+            timeout_seconds=timeout_seconds_for_agent,
+        )
 
     if orchestrator not in parsed_agents:
         raise ValueError(f"orchestrator {orchestrator!r} is not defined in [agents]")
@@ -137,6 +161,7 @@ def load_roster(path: Path) -> Roster:
         agents=parsed_agents,
         max_workers=max_workers,
         allow_models=allow_models,
+        timeout_seconds=timeout_seconds,
     )
 
 

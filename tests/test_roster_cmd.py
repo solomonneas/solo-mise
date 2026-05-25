@@ -13,6 +13,7 @@ def test_roster_init_writes_default_roster(tmp_target, capsys):
     assert 'orchestrator = "chef"' in text
     assert 'cli = "codex"' in text
     assert 'cli = "ollama:llama3.3"' in text
+    assert "timeout_seconds = 600" in text
     assert str(path) in out
 
 
@@ -45,7 +46,9 @@ def test_roster_doctor_validates_agents(monkeypatch, tmp_target, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "roster: orchestrator" in out
+    assert "roster: timeout_seconds" in out
     assert "agent: chef" in out
+    assert "timeout=600s" in out
     assert "agent: local_researcher" in out
     assert "ollama" in out
     assert "[warn]" in out

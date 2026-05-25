@@ -12,9 +12,11 @@ role = "plan and synthesize"
 [agents.coder]
 cli = "ollama:llama3.3"
 role = "write code"
+timeout_seconds = 120
 
 [limits]
 max_workers = 4
+timeout_seconds = 300
 allow_models = ["codex", "ollama:*"]
 """
 
@@ -30,7 +32,11 @@ def test_load_valid_roster(tmp_path):
     assert r.orchestrator == "chef"
     assert set(r.agents) == {"chef", "coder"}
     assert r.max_workers == 4
+    assert r.timeout_seconds == 300.0
     assert r.agents["coder"].cli == "ollama:llama3.3"
+    assert r.agents["coder"].timeout_seconds == 120.0
+    assert roster_mod.timeout_for(r.agents["chef"], r) == 300.0
+    assert roster_mod.timeout_for(r.agents["coder"], r) == 120.0
     assert roster_mod.is_cli_allowed("codex", r)
     assert roster_mod.is_cli_allowed("ollama:anything", r)
     assert not roster_mod.is_cli_allowed("claude", r)
@@ -63,6 +69,18 @@ def test_load_rejects_unknown_cli(tmp_path):
 def test_load_rejects_bad_limits(tmp_path):
     text = VALID.replace("max_workers = 4", "max_workers = 0")
     with pytest.raises(ValueError, match="positive"):
+        roster_mod.load_roster(_write(tmp_path, text))
+
+
+def test_load_rejects_bad_timeout(tmp_path):
+    text = VALID.replace("timeout_seconds = 300", "timeout_seconds = 0")
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        roster_mod.load_roster(_write(tmp_path, text))
+
+
+def test_load_rejects_bad_agent_timeout(tmp_path):
+    text = VALID.replace("timeout_seconds = 120", "timeout_seconds = -1")
+    with pytest.raises(ValueError, match="agents.coder.timeout_seconds"):
         roster_mod.load_roster(_write(tmp_path, text))
 
 

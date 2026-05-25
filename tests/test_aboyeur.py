@@ -17,6 +17,18 @@ def _roster():
     )
 
 
+def _timeout_roster():
+    return Roster(
+        orchestrator="chef",
+        agents={
+            "chef": Agent("chef", "codex", "plan and synthesize", timeout_seconds=45.0),
+            "coder": Agent("coder", "ollama:llama3.3", "write code"),
+        },
+        max_workers=1,
+        timeout_seconds=12.0,
+    )
+
+
 def _restricted_roster():
     return Roster(
         orchestrator="chef",
@@ -100,6 +112,25 @@ def test_run_dispatches_and_synthesizes(monkeypatch, capsys):
     assert rc == 0
     assert out.strip() == "final answer"
     assert [call[0] for call in calls] == ["codex", "ollama:llama3.3", "codex"]
+
+
+def test_run_uses_roster_timeouts(monkeypatch):
+    calls = []
+
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+        calls.append((cli_ref, timeout))
+        if len(calls) == 1:
+            return agents.AgentResult(
+                text=json.dumps({"assignments": [{"worker": "coder", "task": "implement it"}]}),
+                ok=True,
+            )
+        if cli_ref == "ollama:llama3.3":
+            return agents.AgentResult(text="worker output", ok=True)
+        return agents.AgentResult(text="final answer", ok=True)
+
+    monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
+    assert aboyeur.run("build feature", _timeout_roster()) == 0
+    assert calls == [("codex", 45.0), ("ollama:llama3.3", 12.0), ("codex", 45.0)]
 
 
 def test_show_plan_prints_assignments(monkeypatch, capsys):

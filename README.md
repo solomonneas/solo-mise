@@ -106,6 +106,7 @@ role = "Plan the work, choose useful workers, and synthesize the final answer."
 [agents.local_researcher]
 cli = "ollama:llama3.3"
 role = "Research locally and summarize useful findings."
+timeout_seconds = 300
 
 [agents.coder]
 cli = "codex"
@@ -113,10 +114,11 @@ role = "Make precise code changes and report what changed."
 
 [limits]
 max_workers = 4
+timeout_seconds = 600
 allow_models = ["codex", "ollama:*"]
 ```
 
-Edit the roles and CLI refs to match the tools on your machine. Then run:
+Edit the roles, CLI refs, and timeouts to match the tools on your machine. `limits.timeout_seconds` is the default per-agent timeout; `agents.<name>.timeout_seconds` overrides it for one agent. Then run:
 
 ```bash
 brigade run "review this repo and suggest the next implementation step"
