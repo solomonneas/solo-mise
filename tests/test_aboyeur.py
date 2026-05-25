@@ -77,7 +77,7 @@ def test_parse_plan_rejects_orchestrator_assignment():
 def test_run_dry_run_stops_after_plan(monkeypatch, capsys):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, prompt))
         return agents.AgentResult(
             text=json.dumps({"assignments": [{"worker": "coder", "task": "implement it"}]}),
@@ -95,7 +95,7 @@ def test_run_dry_run_stops_after_plan(monkeypatch, capsys):
 def test_run_dispatches_and_synthesizes(monkeypatch, capsys):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, prompt))
         if len(calls) == 1:
             return agents.AgentResult(
@@ -117,7 +117,7 @@ def test_run_dispatches_and_synthesizes(monkeypatch, capsys):
 def test_run_uses_roster_timeouts(monkeypatch):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, timeout))
         if len(calls) == 1:
             return agents.AgentResult(
@@ -136,8 +136,8 @@ def test_run_uses_roster_timeouts(monkeypatch):
 def test_read_only_mode_is_in_all_prompts_and_artifacts(monkeypatch, tmp_path):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
-        calls.append((cli_ref, prompt))
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
+        calls.append((cli_ref, prompt, read_only))
         if len(calls) == 1:
             return agents.AgentResult(
                 text=json.dumps({"assignments": [{"worker": "coder", "task": "inspect it"}]}),
@@ -150,13 +150,14 @@ def test_read_only_mode_is_in_all_prompts_and_artifacts(monkeypatch, tmp_path):
     output_dir = tmp_path / "run"
     monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
     assert aboyeur.run("inspect feature", _roster(), output_dir=output_dir, read_only=True) == 0
-    assert all("READ-ONLY MODE" in prompt for _, prompt in calls)
-    assert all("Do not modify files" in prompt for _, prompt in calls)
+    assert all("READ-ONLY MODE" in prompt for _, prompt, _ in calls)
+    assert all("Do not modify files" in prompt for _, prompt, _ in calls)
+    assert all(read_only for _, _, read_only in calls)
     assert json.loads((output_dir / "run.json").read_text())["read_only"] is True
 
 
 def test_show_plan_prints_assignments(monkeypatch, capsys):
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         if "assignments" in prompt:
             return agents.AgentResult(
                 text=json.dumps({"assignments": [{"worker": "coder", "task": "implement it"}]}),
@@ -176,7 +177,7 @@ def test_show_plan_prints_assignments(monkeypatch, capsys):
 
 
 def test_verbose_prints_worker_status(monkeypatch, capsys):
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         if "assignments" in prompt:
             return agents.AgentResult(
                 text=json.dumps({"assignments": [{"worker": "coder", "task": "implement it"}]}),
@@ -198,7 +199,7 @@ def test_verbose_prints_worker_status(monkeypatch, capsys):
 def test_worker_failure_is_sent_to_synthesis(monkeypatch):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, prompt))
         if len(calls) == 1:
             return agents.AgentResult(
@@ -217,7 +218,7 @@ def test_worker_failure_is_sent_to_synthesis(monkeypatch):
 def test_run_writes_artifacts(monkeypatch, tmp_path):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, prompt, cwd))
         if len(calls) == 1:
             return agents.AgentResult(
@@ -244,7 +245,7 @@ def test_run_writes_artifacts(monkeypatch, tmp_path):
 
 
 def test_dry_run_writes_plan_artifact(monkeypatch, tmp_path):
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         return agents.AgentResult(
             text=json.dumps({"assignments": [{"worker": "coder", "task": "implement it"}]}),
             ok=True,
@@ -262,7 +263,7 @@ def test_dry_run_writes_plan_artifact(monkeypatch, tmp_path):
 def test_run_writes_handoff(monkeypatch, tmp_path, capsys):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, prompt))
         if len(calls) == 1:
             return agents.AgentResult(
@@ -303,7 +304,7 @@ def test_run_writes_handoff(monkeypatch, tmp_path, capsys):
 def test_disallowed_worker_is_recorded_not_run(monkeypatch):
     calls = []
 
-    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None):
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         calls.append((cli_ref, prompt))
         if len(calls) == 1:
             return agents.AgentResult(

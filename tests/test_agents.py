@@ -9,6 +9,23 @@ def test_build_argv_for_known_clis():
     assert agents.build_argv("ollama:llama3.3", "hi") == ["ollama", "run", "llama3.3", "hi"]
 
 
+def test_build_argv_for_read_only_codex():
+    assert agents.build_argv("codex", "hi", read_only=True) == [
+        "codex",
+        "exec",
+        "--sandbox",
+        "read-only",
+        "hi",
+    ]
+    assert agents.build_argv("claude", "hi", read_only=True) == ["claude", "-p", "hi"]
+    assert agents.build_argv("ollama:llama3.3", "hi", read_only=True) == [
+        "ollama",
+        "run",
+        "llama3.3",
+        "hi",
+    ]
+
+
 def test_build_argv_unknown_raises():
     with pytest.raises(ValueError):
         agents.build_argv("nope", "hi")

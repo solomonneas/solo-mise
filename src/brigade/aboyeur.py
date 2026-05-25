@@ -251,7 +251,12 @@ def parse_plan(text: str, roster: Roster) -> list[Assignment]:
     return assignments
 
 
-def _run_orchestrator(roster: Roster, prompt: str, cwd: Path | None = None) -> agents.AgentResult:
+def _run_orchestrator(
+    roster: Roster,
+    prompt: str,
+    cwd: Path | None = None,
+    read_only: bool = False,
+) -> agents.AgentResult:
     orchestrator = roster.agents[roster.orchestrator]
     if not is_cli_allowed(orchestrator.cli, roster):
         return agents.AgentResult(
@@ -259,11 +264,22 @@ def _run_orchestrator(roster: Roster, prompt: str, cwd: Path | None = None) -> a
             ok=False,
             detail=f"{orchestrator.cli} is not allowed by limits.allow_models",
         )
-    return agents.run_agent(orchestrator.cli, prompt, timeout=timeout_for(orchestrator, roster), cwd=cwd)
+    return agents.run_agent(
+        orchestrator.cli,
+        prompt,
+        timeout=timeout_for(orchestrator, roster),
+        cwd=cwd,
+        read_only=read_only,
+    )
 
 
 def plan(task: str, roster: Roster, cwd: Path | None = None, read_only: bool = False) -> list[Assignment]:
-    first = _run_orchestrator(roster, build_plan_prompt(task, roster, read_only=read_only), cwd=cwd)
+    first = _run_orchestrator(
+        roster,
+        build_plan_prompt(task, roster, read_only=read_only),
+        cwd=cwd,
+        read_only=read_only,
+    )
     if not first.ok:
         raise RuntimeError(f"orchestrator failed during plan: {first.detail}")
     try:
@@ -273,6 +289,7 @@ def plan(task: str, roster: Roster, cwd: Path | None = None, read_only: bool = F
             roster,
             build_plan_prompt(task, roster, corrective_note=str(exc), read_only=read_only),
             cwd=cwd,
+            read_only=read_only,
         )
         if not second.ok:
             raise RuntimeError(f"orchestrator failed during plan correction: {second.detail}") from exc
@@ -314,6 +331,7 @@ def dispatch(
             _worker_prompt(agent, assignment, read_only=read_only),
             timeout=timeout_for(agent, roster),
             cwd=cwd,
+            read_only=read_only,
         )
         return WorkerResult(
             worker=assignment.worker,
@@ -498,7 +516,12 @@ def run(
         print("synthesis:")
         print(f"  -> {roster.orchestrator}")
 
-    final = _run_orchestrator(roster, build_synth_prompt(task, worker_results, read_only=read_only), cwd=cwd)
+    final = _run_orchestrator(
+        roster,
+        build_synth_prompt(task, worker_results, read_only=read_only),
+        cwd=cwd,
+        read_only=read_only,
+    )
     if not final.ok:
         if output_dir is not None:
             _write_json(
