@@ -226,6 +226,48 @@ def test_work_latest_reports_no_sessions(tmp_path, capsys):
     assert "no work sessions found" in capsys.readouterr().err
 
 
+def test_work_recap_summarizes_recent_sessions(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 25, 13, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 13, 0, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    dogfood_cmd.init(target=tmp_path)
+    run_dir = tmp_path / ".brigade" / "runs" / "latest"
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir / "run.json", {"started_at": "2026-05-26T11:00:00Z", "status": "ok", "task": "review"})
+    (run_dir / "final.txt").write_text("Done.\n\nNext step: Build recap.\n")
+
+    assert work_cmd.start(target=tmp_path, title="Older Session") == 0
+    assert work_cmd.end(target=tmp_path, note="old note") == 0
+    assert work_cmd.start(target=tmp_path, title="Newer Session") == 0
+    assert work_cmd.end(target=tmp_path, note="new note", handoff=True, handoff_inbox=tmp_path / "handoffs") == 0
+
+    assert work_cmd.recap(target=tmp_path, since="2026-05-26", limit=5) == 0
+    out = capsys.readouterr().out
+    assert "work recap:" in out
+    assert "since: 2026-05-26" in out
+    assert "sessions: 1" in out
+    assert "branches:" in out
+    assert "handoffs: 1" in out
+    assert "Newer Session" in out
+    assert "Older Session" not in out
+    assert "note: new note" in out
+    assert "next: Build recap." in out
+
+
+def test_work_recap_rejects_bad_since(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+
+    assert work_cmd.recap(target=tmp_path, since="05-26-2026") == 2
+    assert "--since must use YYYY-MM-DD" in capsys.readouterr().err
+
+
 def test_work_status_cli(tmp_path, monkeypatch):
     seen = {}
 
@@ -299,15 +341,22 @@ def test_work_inspection_cli(tmp_path, monkeypatch):
         seen.append(("show", kwargs))
         return 0
 
+    def fake_recap(**kwargs):
+        seen.append(("recap", kwargs))
+        return 0
+
     monkeypatch.setattr(work_cmd, "list_sessions", fake_list)
     monkeypatch.setattr(work_cmd, "latest", fake_latest)
     monkeypatch.setattr(work_cmd, "show", fake_show)
+    monkeypatch.setattr(work_cmd, "recap", fake_recap)
 
     assert cli.main(["work", "list", "--target", str(tmp_path), "--limit", "2"]) == 0
     assert cli.main(["work", "latest", "--target", str(tmp_path)]) == 0
     assert cli.main(["work", "show", "abc123", "--target", str(tmp_path)]) == 0
+    assert cli.main(["work", "recap", "--target", str(tmp_path), "--since", "2026-05-26", "--limit", "3"]) == 0
     assert seen == [
         ("list", {"target": tmp_path, "limit": 2}),
         ("latest", {"target": tmp_path}),
         ("show", {"target": tmp_path, "session": "abc123"}),
+        ("recap", {"target": tmp_path, "limit": 3, "since": "2026-05-26"}),
     ]
