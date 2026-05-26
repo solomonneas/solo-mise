@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade runs latest` to show the newest run summary without copying a run path from `brigade runs list`.
 - `brigade runs show <run-dir>` to print a readable summary of one run artifact directory.
 - `brigade work status` to report the current repo branch, dirty files, dogfood readiness, latest run, and extracted next step for daily work sessions.
+- `brigade work start` and `brigade work end` to create local `.brigade/work/` session artifacts for normal daily work loops.
 - Roster-level and per-agent `timeout_seconds` controls for bounded CLI calls.
 - `brigade run --read-only` prompt policy for planning and review runs that should inspect and recommend only, with native `codex exec --sandbox read-only` enforcement for Codex agents.
 

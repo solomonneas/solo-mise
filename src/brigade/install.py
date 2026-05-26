@@ -58,11 +58,12 @@ def build_gitignore_block(selection: Selection) -> str:
         "# Review inbox: ambiguous handoffs awaiting human triage.",
         "memory/handoff-inbox/",
         "",
-        "# brigade local state (logs, scrub cache, dogfood runs).",
+        "# brigade local state (logs, scrub cache, dogfood runs, work sessions).",
         ".brigade/dogfood.toml",
         ".brigade/logs/",
         ".brigade/runs/",
         ".brigade/scrub-cache/",
+        ".brigade/work/",
         GITIGNORE_END,
         "",
     ])
