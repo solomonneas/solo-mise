@@ -517,6 +517,7 @@ def _run_payload(
     started_at: datetime,
     finished_at: datetime | None = None,
     output_dir: Path | None = None,
+    handoff_path: Path | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
@@ -533,6 +534,8 @@ def _run_payload(
         payload["duration_seconds"] = max(0.0, round((finished_at - started_at).total_seconds(), 3))
     if output_dir is not None:
         payload["artifacts"] = str(output_dir)
+    if handoff_path is not None:
+        payload["handoff"] = str(handoff_path)
     if error is not None:
         payload["error"] = error
     return payload
@@ -695,5 +698,22 @@ def run(
             read_only=read_only,
         )
         print(f"handoff: {handoff}", file=sys.stderr)
+        if output_dir is not None:
+            finished_at = datetime.now(timezone.utc)
+            _write_json(
+                output_dir / "run.json",
+                _run_payload(
+                    task=task,
+                    cwd=cwd,
+                    roster=roster,
+                    dry_run=dry_run,
+                    read_only=read_only,
+                    status="ok",
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    output_dir=output_dir,
+                    handoff_path=handoff,
+                ),
+            )
     print(final.text)
     return 0

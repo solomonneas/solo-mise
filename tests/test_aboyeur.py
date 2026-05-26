@@ -380,6 +380,10 @@ def test_run_writes_handoff(monkeypatch, tmp_path, capsys):
     )
     handoffs = list(inbox.glob("*-brigade-run-build-feature-task-heading.md"))
     assert len(handoffs) == 1
+    run_meta = json.loads((output_dir / "run.json").read_text())
+    assert run_meta["status"] == "ok"
+    assert run_meta["handoff"] == str(handoffs[0])
+    assert run_meta["artifacts"] == str(output_dir)
     body = handoffs[0].read_text()
     assert "## Recommended memory action\n\nno-card" in body
     assert "## Target document\n\n.learnings/LEARNINGS.md" in body
