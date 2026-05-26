@@ -219,6 +219,11 @@ def _display_session(path: Path, payload: dict[str, Any]) -> None:
         print(f"ended: {payload['ended_at']}")
     if payload.get("note"):
         print(f"note: {payload['note']}")
+    notes = payload.get("notes")
+    if isinstance(notes, list):
+        print(f"notes: {len(notes)}")
+        if notes and isinstance(notes[-1], dict) and notes[-1].get("text"):
+            print(f"latest_note: {_short(str(notes[-1]['text']))}")
     if payload.get("handoff"):
         print(f"handoff: {payload['handoff']}")
 
@@ -453,6 +458,56 @@ def end(*, target: Path, note: str | None = None, handoff: bool = False, handoff
     return 0
 
 
+def note(*, target: Path, text: str) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    rendered = text.strip()
+    if not rendered:
+        print("error: note text is required", file=sys.stderr)
+        return 2
+
+    current = _current_path(target)
+    if not current.exists():
+        print(f"error: no active work session in {_work_root(target)}", file=sys.stderr)
+        return 1
+    session_id = current.read_text().strip()
+    session_dir = _work_root(target) / session_id
+    session_json = session_dir / "session.json"
+    try:
+        payload = json.loads(session_json.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: invalid active work session: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("error: invalid active work session: session.json must contain an object", file=sys.stderr)
+        return 2
+
+    entry = {
+        "created_at": _now().isoformat(),
+        "text": rendered,
+    }
+    notes = payload.setdefault("notes", [])
+    if not isinstance(notes, list):
+        print("error: invalid active work session: notes must be a list", file=sys.stderr)
+        return 2
+    notes.append(entry)
+    _write_json(session_json, payload)
+
+    notes_path = session_dir / "notes.md"
+    prefix = "" if notes_path.exists() and notes_path.read_text().endswith("\n") else "\n"
+    with notes_path.open("a") as handle:
+        if notes_path.stat().st_size == 0:
+            handle.write("# Brigade Work Session Notes\n")
+        else:
+            handle.write(prefix)
+        handle.write(f"\n## {entry['created_at']}\n\n{rendered}\n")
+    print(f"session: {session_dir}")
+    print(f"note: {_short(rendered)}")
+    return 0
+
+
 def list_sessions(*, target: Path, limit: int = 10) -> int:
     if limit < 1:
         print("error: --limit must be a positive integer", file=sys.stderr)
@@ -591,6 +646,11 @@ def _print_resume_session(label: str, path: Path, payload: dict[str, Any]) -> No
         print(f"{label}_ended: {payload['ended_at']}")
     if payload.get("note"):
         print(f"{label}_note: {_short(str(payload['note']))}")
+    notes = payload.get("notes")
+    if isinstance(notes, list):
+        print(f"{label}_notes: {len(notes)}")
+        if notes and isinstance(notes[-1], dict) and notes[-1].get("text"):
+            print(f"{label}_latest_note: {_short(str(notes[-1]['text']))}")
     if payload.get("handoff"):
         print(f"{label}_handoff: {payload['handoff']}")
 

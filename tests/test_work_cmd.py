@@ -102,6 +102,50 @@ def test_work_start_refuses_existing_session_without_force(tmp_path, monkeypatch
     assert "already active" in capsys.readouterr().err
 
 
+def test_work_note_appends_to_active_session(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 30, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 45, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    assert work_cmd.start(target=tmp_path, title="Build Work Loop") == 0
+
+    assert work_cmd.note(target=tmp_path, text="wired parser") == 0
+    assert work_cmd.note(target=tmp_path, text="added tests") == 0
+    out = capsys.readouterr().out
+    assert "note: wired parser" in out
+    assert "note: added tests" in out
+    session_dir = tmp_path / ".brigade" / "work" / "20260526-120000-build-work-loop"
+    payload = json.loads((session_dir / "session.json").read_text())
+    assert payload["status"] == "active"
+    assert payload["notes"] == [
+        {"created_at": "2026-05-26T12:30:00+00:00", "text": "wired parser"},
+        {"created_at": "2026-05-26T12:45:00+00:00", "text": "added tests"},
+    ]
+    notes = (session_dir / "notes.md").read_text()
+    assert "# Brigade Work Session Notes" in notes
+    assert "wired parser" in notes
+    assert "added tests" in notes
+
+
+def test_work_note_reports_no_active_session(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+
+    assert work_cmd.note(target=tmp_path, text="checkpoint") == 1
+    assert "no active work session" in capsys.readouterr().err
+
+
+def test_work_note_rejects_empty_note(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+
+    assert work_cmd.note(target=tmp_path, text="  ") == 2
+    assert "note text is required" in capsys.readouterr().err
+
+
 def test_work_end_closes_active_session(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     times = iter(
@@ -503,6 +547,19 @@ def test_work_start_and_end_cli(tmp_path, monkeypatch):
             },
         ),
     ]
+
+
+def test_work_note_cli(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_note(**kwargs):
+        seen.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(work_cmd, "note", fake_note)
+
+    assert cli.main(["work", "note", "wired", "tests", "--target", str(tmp_path)]) == 0
+    assert seen == {"target": tmp_path, "text": "wired tests"}
 
 
 def test_work_run_cli(tmp_path, monkeypatch):

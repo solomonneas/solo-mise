@@ -152,6 +152,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_start.add_argument("title", nargs="*", help="Optional session title.")
     p_work_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
     p_work_start.add_argument("--force", action="store_true", help="Replace an existing active session pointer.")
+    p_work_note = work_sub.add_parser("note", help="Append a note to the active Brigade work session.")
+    p_work_note.add_argument("text", nargs="+", help="Note text.")
+    p_work_note.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
     p_work_end = work_sub.add_parser("end", help="End the active local Brigade work session.")
     p_work_end.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
     p_work_end.add_argument("--note", default=None, help="Optional closing note.")
@@ -462,6 +465,8 @@ def main(argv=None) -> int:
         if args.work_command == "start":
             title = " ".join(args.title) if args.title else None
             return work_cmd.start(target=args.target, title=title, force=args.force)
+        if args.work_command == "note":
+            return work_cmd.note(target=args.target, text=" ".join(args.text))
         if args.work_command == "end":
             return work_cmd.end(
                 target=args.target,
