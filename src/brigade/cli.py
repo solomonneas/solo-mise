@@ -114,6 +114,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_status = work_sub.add_parser("status", help="Show current repo and dogfood work state.")
     p_work_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_status.add_argument("--limit", type=int, default=12, help="Maximum dirty file entries to show.")
+    p_work_start = work_sub.add_parser("start", help="Start a local Brigade work session.")
+    p_work_start.add_argument("title", nargs="*", help="Optional session title.")
+    p_work_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
+    p_work_start.add_argument("--force", action="store_true", help="Replace an existing active session pointer.")
+    p_work_end = work_sub.add_parser("end", help="End the active local Brigade work session.")
+    p_work_end.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
+    p_work_end.add_argument("--note", default=None, help="Optional closing note.")
 
     # run
     p_run = sub.add_parser("run", help="Run a bounded cross-model orchestration task.")
@@ -386,6 +393,11 @@ def main(argv=None) -> int:
 
         if args.work_command == "status":
             return work_cmd.status(target=args.target, limit=args.limit)
+        if args.work_command == "start":
+            title = " ".join(args.title) if args.title else None
+            return work_cmd.start(target=args.target, title=title, force=args.force)
+        if args.work_command == "end":
+            return work_cmd.end(target=args.target, note=args.note)
         parser.error(f"unknown work command: {args.work_command}")
         return 2
     if cmd == "run":

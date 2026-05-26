@@ -59,11 +59,12 @@ memory/20[0-9][0-9]-[0-1][0-9]-[0-3][0-9].md
 # Review inbox: ambiguous handoffs awaiting human triage. Private.
 memory/handoff-inbox/
 
-# brigade local state (logs, scrub cache, dogfood runs).
+# brigade local state (logs, scrub cache, dogfood runs, work sessions).
 .brigade/dogfood.toml
 .brigade/logs/
 .brigade/runs/
 .brigade/scrub-cache/
+.brigade/work/
 .solo-mise/logs/
 .solo-mise/scrub-cache/
 # <<< brigade gitignore block <<<
