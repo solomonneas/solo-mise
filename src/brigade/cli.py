@@ -95,7 +95,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--handoff-inbox",
         type=Path,
         default=None,
-        help="Memory Handoff inbox. Defaults to .claude/memory-handoffs under --target.",
+        help="Memory Handoff inbox. Defaults to .codex/memory-handoffs under the effective target.",
     )
     p_dogfood.add_argument("--force", action="store_true", help="Overwrite an existing dogfood config during init.")
     p_dogfood.add_argument("--no-handoff", action="store_true", help="Do not write a Memory Handoff.")
@@ -158,7 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--handoff-inbox",
         type=Path,
         default=None,
-        help="Memory Handoff inbox. Defaults to configured dogfood inbox or .claude/memory-handoffs.",
+        help="Memory Handoff inbox. Defaults to configured dogfood inbox or .codex/memory-handoffs.",
     )
 
     # run
@@ -285,7 +285,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ingest
-    p_ing = sub.add_parser("ingest", help="Process .claude/memory-handoffs/*.md into canonical memory.")
+    p_ing = sub.add_parser("ingest", help="Process writer memory-handoff inboxes into canonical memory.")
     p_ing.add_argument("--target", "-t", type=Path, default=Path("."))
     p_ing.add_argument("--dry-run", action="store_true")
     p_ing.add_argument(

@@ -17,6 +17,7 @@ from .roster import Agent, Roster
 DEFAULT_TASK = "Review this repo and recommend the next implementation slice."
 DEFAULT_TIMEOUT_SECONDS = 600.0
 CONFIG_REL_PATH = ".brigade/dogfood.toml"
+DEFAULT_HANDOFF_INBOX_REL_PATH = ".codex/memory-handoffs"
 NEXT_LABELS = (
     "next practical slice",
     "smallest follow-up slice",
@@ -122,6 +123,10 @@ def _as_positive_float(value: object, field: str) -> float:
 
 def config_path(target: Path) -> Path:
     return target / CONFIG_REL_PATH
+
+
+def default_handoff_inbox(target: Path) -> Path:
+    return target / DEFAULT_HANDOFF_INBOX_REL_PATH
 
 
 def load_config(target: Path) -> DogfoodConfig | None:
@@ -314,7 +319,7 @@ def status(*, target: Path) -> int:
     handoff_inbox = (
         cfg.handoff_inbox
         if cfg and cfg.handoff_inbox is not None
-        else effective_target / ".claude" / "memory-handoffs"
+        else default_handoff_inbox(effective_target)
     )
     inspect = cfg.inspect if cfg else True
     native = cfg.native_read_only_sandbox if cfg else False
@@ -403,7 +408,7 @@ def init(
 
     chosen_artifacts_dir = artifacts_dir.expanduser() if artifacts_dir is not None else target / ".brigade" / "runs"
     chosen_handoff_inbox = (
-        handoff_inbox.expanduser() if handoff_inbox is not None else target / ".claude" / "memory-handoffs"
+        handoff_inbox.expanduser() if handoff_inbox is not None else default_handoff_inbox(target)
     )
     payload = {
         "target": str(target),
@@ -473,7 +478,7 @@ def run(
             if handoff_inbox is not None
             else cfg.handoff_inbox
             if cfg and cfg.handoff_inbox is not None
-            else effective_target / ".claude" / "memory-handoffs"
+            else default_handoff_inbox(effective_target)
         )
 
     rc = aboyeur.run(

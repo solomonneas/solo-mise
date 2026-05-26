@@ -1,10 +1,10 @@
-"""`brigade ingest` - route .claude/memory-handoffs/*.md into canonical memory.
+"""`brigade ingest` - route writer memory handoffs into canonical memory.
 
 Conservative by design:
   - auto-promote handoffs with safe card filenames + YAML frontmatter
   - append-only routing for TOOLS.md, USER.md, rules/*.md, .learnings/*.md
   - everything ambiguous lands in memory/handoff-inbox/ for manual review
-  - processed files move to .claude/memory-handoffs/processed/
+  - processed files move to the writer inbox's processed/ directory
 """
 from __future__ import annotations
 

@@ -152,6 +152,23 @@ def test_work_end_can_write_handoff(tmp_path, monkeypatch, capsys):
     assert payload["handoff"] == str(handoffs[0])
 
 
+def test_work_end_defaults_handoff_to_codex_inbox(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 13, 0, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    assert work_cmd.start(target=tmp_path, title="Build Work Loop") == 0
+
+    assert work_cmd.end(target=tmp_path, note="done for now", handoff=True) == 0
+    session_dir = tmp_path / ".brigade" / "work" / "20260526-120000-build-work-loop"
+    payload = json.loads((session_dir / "session.json").read_text())
+    assert payload["handoff"].startswith(str(tmp_path / ".codex" / "memory-handoffs"))
+
+
 def test_work_end_reports_no_active_session(tmp_path, capsys):
     _init_git_repo(tmp_path)
 

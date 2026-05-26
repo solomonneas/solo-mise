@@ -51,7 +51,7 @@ def test_dogfood_runs_default_codex_workflow(tmp_path, monkeypatch, capsys):
     assert seen["show_plan"] is True
     assert seen["cwd"] == tmp_path.resolve()
     assert seen["output_dir"].parent == tmp_path / ".brigade" / "runs"
-    assert seen["handoff_inbox"] == tmp_path / ".claude" / "memory-handoffs"
+    assert seen["handoff_inbox"] == tmp_path / ".codex" / "memory-handoffs"
     assert seen["read_only"] is True
     assert seen["sandbox_read_only"] is None
     assert seen["sandbox"] == "danger-full-access"
@@ -167,6 +167,14 @@ def test_dogfood_init_writes_local_config(tmp_path, capsys):
     assert loaded.inspect is False
     assert loaded.timeout_seconds == 12
     assert f"wrote {config}" in capsys.readouterr().out
+
+
+def test_dogfood_init_defaults_handoff_inbox_to_codex_writer(tmp_path):
+    assert dogfood_cmd.init(target=tmp_path) == 0
+
+    loaded = dogfood_cmd.load_config(tmp_path)
+    assert loaded is not None
+    assert loaded.handoff_inbox == tmp_path / ".codex" / "memory-handoffs"
 
 
 def test_dogfood_init_refuses_existing_without_force(tmp_path, capsys):

@@ -84,7 +84,11 @@ def _dogfood_snapshot(target: Path) -> dict[str, Any]:
         "config": str(dogfood_cmd.config_path(target)),
         "target": str(effective_target),
         "artifacts_dir": str(artifacts_dir),
-        "handoff_inbox": str(cfg.handoff_inbox) if cfg and cfg.handoff_inbox is not None else None,
+        "handoff_inbox": str(
+            cfg.handoff_inbox
+            if cfg and cfg.handoff_inbox is not None
+            else dogfood_cmd.default_handoff_inbox(effective_target)
+        ),
     }
     if latest is None:
         snapshot["latest_run"] = None
@@ -284,7 +288,7 @@ def _handoff_inbox(target: Path, payload: dict[str, Any], override: Path | None)
     configured = dogfood.get("handoff_inbox")
     if isinstance(configured, str) and configured:
         return Path(configured).expanduser()
-    return target / ".claude" / "memory-handoffs"
+    return dogfood_cmd.default_handoff_inbox(target)
 
 
 def _write_work_handoff(target: Path, session_dir: Path, payload: dict[str, Any], inbox: Path) -> Path:
@@ -666,7 +670,7 @@ def status(*, target: Path, limit: int = 12) -> int:
     print(f"dogfood_artifacts: {artifacts_dir}")
     print(f"codex: {codex_path or 'missing'}")
     if cfg and cfg.handoff:
-        handoff_inbox = cfg.handoff_inbox or effective_target / ".claude" / "memory-handoffs"
+        handoff_inbox = cfg.handoff_inbox or dogfood_cmd.default_handoff_inbox(effective_target)
         print(f"handoff_inbox: {handoff_inbox}")
 
     latest = dogfood_cmd._latest_run(artifacts_dir)
