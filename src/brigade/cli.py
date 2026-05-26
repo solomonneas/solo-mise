@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .dogfood_cmd import DEFAULT_TIMEOUT_SECONDS
 from .prompt import prompt_for_selection  # imported here so tests can monkeypatch cli.prompt_for_selection
 
 
@@ -84,10 +85,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # dogfood
     p_dogfood = sub.add_parser("dogfood", help="Run a safe Codex-only Brigade dogfood review.")
     p_dogfood.add_argument(
-        "task",
-        nargs="?",
-        default=None,
-        help="Dogfood task. Defaults to recommending the next implementation slice.",
+        "dogfood_args",
+        nargs="*",
+        help="Dogfood task, or `init` to write local dogfood defaults.",
     )
     p_dogfood.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_dogfood.add_argument("--output-dir", type=Path, default=None, help="Directory for run artifacts.")
@@ -97,6 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Memory Handoff inbox. Defaults to .claude/memory-handoffs under --target.",
     )
+    p_dogfood.add_argument("--force", action="store_true", help="Overwrite an existing dogfood config during init.")
     p_dogfood.add_argument("--no-handoff", action="store_true", help="Do not write a Memory Handoff.")
     p_dogfood.add_argument("--no-inspect", action="store_true", help="Do not print the artifact summary afterward.")
     p_dogfood.add_argument(
@@ -104,7 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use Codex's native read-only sandbox instead of dogfood's default trusted-workspace danger-full-access setting.",
     )
-    p_dogfood.add_argument("--timeout-seconds", type=float, default=180.0, help="Per-agent timeout.")
+    p_dogfood.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="Per-agent timeout.")
 
     # run
     p_run = sub.add_parser("run", help="Run a bounded cross-model orchestration task.")
@@ -318,8 +319,24 @@ def main(argv=None) -> int:
     if cmd == "dogfood":
         from . import dogfood_cmd
 
+        dogfood_args = list(args.dogfood_args)
+        if dogfood_args and dogfood_args[0] == "init":
+            if len(dogfood_args) > 1:
+                print("error: dogfood init does not accept a task argument", file=sys.stderr)
+                return 2
+            return dogfood_cmd.init(
+                target=args.target,
+                artifacts_dir=args.output_dir,
+                handoff_inbox=args.handoff_inbox,
+                force=args.force,
+                handoff=not args.no_handoff,
+                inspect=not args.no_inspect,
+                native_read_only_sandbox=args.native_read_only_sandbox,
+                timeout_seconds=args.timeout_seconds,
+            )
+        task = " ".join(dogfood_args) if dogfood_args else None
         return dogfood_cmd.run(
-            args.task,
+            task,
             target=args.target,
             output_dir=args.output_dir,
             handoff=not args.no_handoff,
