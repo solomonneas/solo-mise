@@ -236,6 +236,7 @@ def test_run_writes_artifacts(monkeypatch, tmp_path):
 
     assert aboyeur.run("build feature", _roster(), cwd=run_cwd, output_dir=output_dir) == 0
     assert (output_dir / "plan.json").is_file()
+    assert (output_dir / "plan-attempts.json").is_file()
     assert (output_dir / "roster.json").is_file()
     assert (output_dir / "worker-results.json").is_file()
     assert (output_dir / "final.txt").read_text() == "final answer\n"
@@ -247,6 +248,10 @@ def test_run_writes_artifacts(monkeypatch, tmp_path):
     assert roster_meta["max_workers"] == 2
     assert roster_meta["allow_models"] == []
     assert roster_meta["agents"]["coder"]["cli"] == "ollama:llama3.3"
+    plan_attempts = json.loads((output_dir / "plan-attempts.json").read_text())["attempts"]
+    assert plan_attempts[0]["stage"] == "initial"
+    assert plan_attempts[0]["parsed"] is True
+    assert "implement it" in plan_attempts[0]["text"]
     assert {call[2] for call in calls} == {run_cwd}
 
 
@@ -262,9 +267,32 @@ def test_dry_run_writes_plan_artifact(monkeypatch, tmp_path):
 
     assert aboyeur.run("build feature", _roster(), dry_run=True, output_dir=output_dir) == 0
     assert json.loads((output_dir / "plan.json").read_text())["assignments"][0]["worker"] == "coder"
+    assert json.loads((output_dir / "plan-attempts.json").read_text())["attempts"][0]["parsed"] is True
     assert json.loads((output_dir / "run.json").read_text())["status"] == "dry-run"
     assert json.loads((output_dir / "roster.json").read_text())["agents"]["chef"]["cli"] == "codex"
     assert not (output_dir / "worker-results.json").exists()
+
+
+def test_invalid_plan_writes_attempt_artifact(monkeypatch, tmp_path, capsys):
+    calls = []
+
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
+        calls.append((cli_ref, prompt))
+        return agents.AgentResult(text="not json", ok=True)
+
+    output_dir = tmp_path / "run"
+    monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
+
+    assert aboyeur.run("build feature", _roster(), output_dir=output_dir) == 2
+    assert "invalid plan" in capsys.readouterr().err
+    assert len(calls) == 2
+    assert json.loads((output_dir / "run.json").read_text())["status"] == "failed"
+    attempts = json.loads((output_dir / "plan-attempts.json").read_text())["attempts"]
+    assert [attempt["stage"] for attempt in attempts] == ["initial", "correction"]
+    assert [attempt["parsed"] for attempt in attempts] == [False, False]
+    assert all(attempt["text"] == "not json" for attempt in attempts)
+    assert all("plan is not valid JSON" in attempt["parse_error"] for attempt in attempts)
+    assert not (output_dir / "plan.json").exists()
 
 
 def test_run_writes_handoff(monkeypatch, tmp_path, capsys):

@@ -251,6 +251,28 @@ def parse_plan(text: str, roster: Roster) -> list[Assignment]:
     return assignments
 
 
+def _record_plan_attempt(
+    attempts: list[dict[str, object]] | None,
+    *,
+    stage: str,
+    result: agents.AgentResult,
+    parsed: bool = False,
+    parse_error: str | None = None,
+) -> None:
+    if attempts is None:
+        return
+    payload: dict[str, object] = {
+        "stage": stage,
+        "ok": result.ok,
+        "parsed": parsed,
+        "detail": result.detail,
+        "text": result.text,
+    }
+    if parse_error is not None:
+        payload["parse_error"] = parse_error
+    attempts.append(payload)
+
+
 def _run_orchestrator(
     roster: Roster,
     prompt: str,
@@ -273,7 +295,13 @@ def _run_orchestrator(
     )
 
 
-def plan(task: str, roster: Roster, cwd: Path | None = None, read_only: bool = False) -> list[Assignment]:
+def plan(
+    task: str,
+    roster: Roster,
+    cwd: Path | None = None,
+    read_only: bool = False,
+    attempts: list[dict[str, object]] | None = None,
+) -> list[Assignment]:
     first = _run_orchestrator(
         roster,
         build_plan_prompt(task, roster, read_only=read_only),
@@ -281,10 +309,14 @@ def plan(task: str, roster: Roster, cwd: Path | None = None, read_only: bool = F
         read_only=read_only,
     )
     if not first.ok:
+        _record_plan_attempt(attempts, stage="initial", result=first)
         raise RuntimeError(f"orchestrator failed during plan: {first.detail}")
     try:
-        return parse_plan(first.text, roster)
+        assignments = parse_plan(first.text, roster)
+        _record_plan_attempt(attempts, stage="initial", result=first, parsed=True)
+        return assignments
     except ValueError as exc:
+        _record_plan_attempt(attempts, stage="initial", result=first, parse_error=str(exc))
         second = _run_orchestrator(
             roster,
             build_plan_prompt(task, roster, corrective_note=str(exc), read_only=read_only),
@@ -292,10 +324,19 @@ def plan(task: str, roster: Roster, cwd: Path | None = None, read_only: bool = F
             read_only=read_only,
         )
         if not second.ok:
+            _record_plan_attempt(attempts, stage="correction", result=second)
             raise RuntimeError(f"orchestrator failed during plan correction: {second.detail}") from exc
         try:
-            return parse_plan(second.text, roster)
+            assignments = parse_plan(second.text, roster)
+            _record_plan_attempt(attempts, stage="correction", result=second, parsed=True)
+            return assignments
         except ValueError as second_exc:
+            _record_plan_attempt(
+                attempts,
+                stage="correction",
+                result=second,
+                parse_error=str(second_exc),
+            )
             raise RuntimeError(f"orchestrator returned an invalid plan: {second_exc}") from second_exc
 
 
@@ -483,10 +524,12 @@ def run(
             },
         )
 
+    plan_attempts: list[dict[str, object]] | None = [] if output_dir is not None else None
     try:
-        assignments = plan(task, roster, cwd=cwd, read_only=read_only)
+        assignments = plan(task, roster, cwd=cwd, read_only=read_only, attempts=plan_attempts)
     except RuntimeError as exc:
         if output_dir is not None:
+            _write_json(output_dir / "plan-attempts.json", {"attempts": plan_attempts or []})
             _write_json(
                 output_dir / "run.json",
                 {
@@ -503,6 +546,7 @@ def run(
         return 2
 
     if output_dir is not None:
+        _write_json(output_dir / "plan-attempts.json", {"attempts": plan_attempts or []})
         _write_json(output_dir / "plan.json", {"assignments": _assignment_payload(assignments)})
 
     if dry_run:
