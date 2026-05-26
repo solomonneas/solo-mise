@@ -159,6 +159,73 @@ def test_work_end_reports_no_active_session(tmp_path, capsys):
     assert "no active work session" in capsys.readouterr().err
 
 
+def test_work_list_prints_recent_sessions(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 30, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 13, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 13, 30, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    assert work_cmd.start(target=tmp_path, title="Older Session") == 0
+    assert work_cmd.end(target=tmp_path) == 0
+    assert work_cmd.start(target=tmp_path, title="Newer Session") == 0
+    assert work_cmd.end(target=tmp_path) == 0
+
+    assert work_cmd.list_sessions(target=tmp_path, limit=10) == 0
+    out = capsys.readouterr().out
+    assert out.index("Newer Session") < out.index("Older Session")
+    assert "[ended]" in out
+    assert "dirty=" in out
+
+
+def test_work_latest_shows_latest_session(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 13, 0, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    assert work_cmd.start(target=tmp_path, title="Build Work Loop") == 0
+    assert work_cmd.end(target=tmp_path, note="done") == 0
+
+    assert work_cmd.latest(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "session:" in out
+    assert "title: Build Work Loop" in out
+    assert "status: ended" in out
+    assert "note: done" in out
+    assert "git:" in out
+    assert "dogfood:" in out
+
+
+def test_work_show_accepts_session_id(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    assert work_cmd.start(target=tmp_path, title="Build Work Loop") == 0
+
+    assert work_cmd.show(target=tmp_path, session="20260526-120000-build-work-loop") == 0
+    out = capsys.readouterr().out
+    assert "id: 20260526-120000-build-work-loop" in out
+    assert "status: active" in out
+
+
+def test_work_latest_reports_no_sessions(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+
+    assert work_cmd.latest(target=tmp_path) == 1
+    assert "no work sessions found" in capsys.readouterr().err
+
+
 def test_work_status_cli(tmp_path, monkeypatch):
     seen = {}
 
@@ -214,4 +281,33 @@ def test_work_start_and_end_cli(tmp_path, monkeypatch):
                 "handoff_inbox": tmp_path / "handoffs",
             },
         ),
+    ]
+
+
+def test_work_inspection_cli(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_list(**kwargs):
+        seen.append(("list", kwargs))
+        return 0
+
+    def fake_latest(**kwargs):
+        seen.append(("latest", kwargs))
+        return 0
+
+    def fake_show(**kwargs):
+        seen.append(("show", kwargs))
+        return 0
+
+    monkeypatch.setattr(work_cmd, "list_sessions", fake_list)
+    monkeypatch.setattr(work_cmd, "latest", fake_latest)
+    monkeypatch.setattr(work_cmd, "show", fake_show)
+
+    assert cli.main(["work", "list", "--target", str(tmp_path), "--limit", "2"]) == 0
+    assert cli.main(["work", "latest", "--target", str(tmp_path)]) == 0
+    assert cli.main(["work", "show", "abc123", "--target", str(tmp_path)]) == 0
+    assert seen == [
+        ("list", {"target": tmp_path, "limit": 2}),
+        ("latest", {"target": tmp_path}),
+        ("show", {"target": tmp_path, "session": "abc123"}),
     ]

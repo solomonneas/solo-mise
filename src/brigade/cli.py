@@ -114,6 +114,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_status = work_sub.add_parser("status", help="Show current repo and dogfood work state.")
     p_work_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_status.add_argument("--limit", type=int, default=12, help="Maximum dirty file entries to show.")
+    p_work_list = work_sub.add_parser("list", help="List recent Brigade work sessions.")
+    p_work_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_list.add_argument("--limit", type=int, default=10, help="Maximum sessions to show.")
+    p_work_latest = work_sub.add_parser("latest", help="Show the latest Brigade work session.")
+    p_work_latest.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_show = work_sub.add_parser("show", help="Show one Brigade work session.")
+    p_work_show.add_argument("session", help="Session id or path.")
+    p_work_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_start = work_sub.add_parser("start", help="Start a local Brigade work session.")
     p_work_start.add_argument("title", nargs="*", help="Optional session title.")
     p_work_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
@@ -400,6 +408,12 @@ def main(argv=None) -> int:
 
         if args.work_command == "status":
             return work_cmd.status(target=args.target, limit=args.limit)
+        if args.work_command == "list":
+            return work_cmd.list_sessions(target=args.target, limit=args.limit)
+        if args.work_command == "latest":
+            return work_cmd.latest(target=args.target)
+        if args.work_command == "show":
+            return work_cmd.show(target=args.target, session=args.session)
         if args.work_command == "start":
             title = " ".join(args.title) if args.title else None
             return work_cmd.start(target=args.target, title=title, force=args.force)

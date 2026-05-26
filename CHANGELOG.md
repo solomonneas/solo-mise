@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade work status` to report the current repo branch, dirty files, dogfood readiness, latest run, and extracted next step for daily work sessions.
 - `brigade work start` and `brigade work end` to create local `.brigade/work/` session artifacts for normal daily work loops.
 - `brigade work end --handoff` to write a Memory Handoff from closed work session artifacts.
+- `brigade work list`, `brigade work latest`, and `brigade work show` to inspect local work session artifacts.
 - Roster-level and per-agent `timeout_seconds` controls for bounded CLI calls.
 - `brigade run --read-only` prompt policy for planning and review runs that should inspect and recommend only, with native `codex exec --sandbox read-only` enforcement for Codex agents.
 

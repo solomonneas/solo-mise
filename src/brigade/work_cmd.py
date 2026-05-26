@@ -112,6 +112,90 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def _read_session(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads((path / "session.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _session_sort_key(item: tuple[Path, dict[str, Any]]) -> str:
+    path, payload = item
+    return str(payload.get("ended_at") or payload.get("started_at") or path.name)
+
+
+def _collect_sessions(root: Path) -> tuple[list[tuple[Path, dict[str, Any]]], int]:
+    sessions: list[tuple[Path, dict[str, Any]]] = []
+    skipped = 0
+    if not root.is_dir():
+        return sessions, skipped
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        payload = _read_session(child)
+        if payload is None:
+            skipped += 1
+            continue
+        sessions.append((child, payload))
+    sessions.sort(key=_session_sort_key, reverse=True)
+    return sessions, skipped
+
+
+def _resolve_session(target: Path, session: str | Path) -> Path:
+    candidate = Path(session).expanduser()
+    if candidate.is_dir():
+        return candidate
+    return _work_root(target) / str(session)
+
+
+def _dirty_count(snapshot: dict[str, Any]) -> int:
+    git = snapshot.get("git")
+    if not isinstance(git, dict):
+        return 0
+    dirty = git.get("dirty_files")
+    return len(dirty) if isinstance(dirty, list) else 0
+
+
+def _display_session(path: Path, payload: dict[str, Any]) -> None:
+    print(f"session: {path}")
+    print(f"id: {payload.get('id', path.name)}")
+    print(f"status: {payload.get('status', 'unknown')}")
+    if payload.get("title"):
+        print(f"title: {payload['title']}")
+    print(f"target: {payload.get('target', '')}")
+    print(f"started: {payload.get('started_at', '')}")
+    if payload.get("ended_at"):
+        print(f"ended: {payload['ended_at']}")
+    if payload.get("note"):
+        print(f"note: {payload['note']}")
+    if payload.get("handoff"):
+        print(f"handoff: {payload['handoff']}")
+
+    start_snapshot = payload.get("start") if isinstance(payload.get("start"), dict) else {}
+    end_snapshot = payload.get("end") if isinstance(payload.get("end"), dict) else {}
+    snapshot = end_snapshot or start_snapshot
+    git = snapshot.get("git") if isinstance(snapshot, dict) else {}
+    if isinstance(git, dict) and git.get("available"):
+        print("git:")
+        print(f"  branch: {git.get('branch')}")
+        dirty = git.get("dirty_files") if isinstance(git.get("dirty_files"), list) else []
+        print(f"  dirty_files: {len(dirty)}")
+        for item in dirty[:20]:
+            print(f"    {item}")
+    dogfood = snapshot.get("dogfood") if isinstance(snapshot, dict) else {}
+    if isinstance(dogfood, dict):
+        print("dogfood:")
+        print(f"  ready: {dogfood.get('ready')}")
+        latest = dogfood.get("latest_run")
+        if isinstance(latest, dict):
+            print(f"  latest_run: {latest.get('started_at')} [{latest.get('status')}] {latest.get('path')}")
+            if latest.get("task"):
+                print(f"  latest_task: {_short(str(latest['task']))}")
+        if dogfood.get("next"):
+            print(f"  next: {_short(str(dogfood['next']))}")
+
+
 def _write_session_markdown(path: Path, *, title: str, payload: dict[str, Any], key: str) -> None:
     snapshot = payload[key]
     git = snapshot.get("git", {})
@@ -316,6 +400,68 @@ def end(*, target: Path, note: str | None = None, handoff: bool = False, handoff
     if handoff:
         print(f"handoff: {payload['handoff']}")
     print("status: ended")
+    return 0
+
+
+def list_sessions(*, target: Path, limit: int = 10) -> int:
+    if limit < 1:
+        print("error: --limit must be a positive integer", file=sys.stderr)
+        return 2
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    root = _work_root(target)
+    sessions, skipped = _collect_sessions(root)
+    for path, payload in sessions[:limit]:
+        snapshot = payload.get("end") if isinstance(payload.get("end"), dict) else payload.get("start", {})
+        dirty = _dirty_count(snapshot) if isinstance(snapshot, dict) else 0
+        title = _short(str(payload.get("title") or ""))
+        ended = payload.get("ended_at") or "active"
+        print(
+            f"{payload.get('started_at', path.name)} [{payload.get('status', 'unknown')}] "
+            f"dirty={dirty} ended={ended} {path}"
+        )
+        if title:
+            print(f"  {title}")
+    if not sessions:
+        print(f"no work sessions found in {root}")
+    if skipped:
+        print(f"skipped {skipped} invalid work session{'s' if skipped != 1 else ''}", file=sys.stderr)
+    return 0
+
+
+def latest(*, target: Path) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    root = _work_root(target)
+    sessions, skipped = _collect_sessions(root)
+    if skipped:
+        print(f"skipped {skipped} invalid work session{'s' if skipped != 1 else ''}", file=sys.stderr)
+    if not sessions:
+        print(f"error: no work sessions found in {root}", file=sys.stderr)
+        return 1
+    path, payload = sessions[0]
+    _display_session(path, payload)
+    return 0
+
+
+def show(*, target: Path, session: str | Path) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    path = _resolve_session(target, session)
+    if not path.is_dir():
+        print(f"error: work session not found: {path}", file=sys.stderr)
+        return 2
+    payload = _read_session(path)
+    if payload is None:
+        print(f"error: session.json not found or invalid in {path}", file=sys.stderr)
+        return 2
+    _display_session(path, payload)
     return 0
 
 
