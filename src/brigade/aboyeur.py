@@ -477,6 +477,14 @@ def _worker_payload(results: list[WorkerResult]) -> list[dict[str, object]]:
     ]
 
 
+def _agent_result_payload(result: agents.AgentResult) -> dict[str, object]:
+    return {
+        "ok": result.ok,
+        "detail": result.detail,
+        "text": result.text,
+    }
+
+
 def _roster_payload(roster: Roster) -> dict[str, object]:
     return {
         "orchestrator": roster.orchestrator,
@@ -584,6 +592,14 @@ def run(
         cwd=cwd,
         read_only=read_only,
     )
+    if output_dir is not None:
+        _write_json(
+            output_dir / "synthesis.json",
+            {
+                "orchestrator": roster.orchestrator,
+                "result": _agent_result_payload(final),
+            },
+        )
     if not final.ok:
         if output_dir is not None:
             _write_json(

@@ -239,6 +239,7 @@ def test_run_writes_artifacts(monkeypatch, tmp_path):
     assert (output_dir / "plan-attempts.json").is_file()
     assert (output_dir / "roster.json").is_file()
     assert (output_dir / "worker-results.json").is_file()
+    assert (output_dir / "synthesis.json").is_file()
     assert (output_dir / "final.txt").read_text() == "final answer\n"
     run_meta = json.loads((output_dir / "run.json").read_text())
     assert run_meta["status"] == "ok"
@@ -252,6 +253,10 @@ def test_run_writes_artifacts(monkeypatch, tmp_path):
     assert plan_attempts[0]["stage"] == "initial"
     assert plan_attempts[0]["parsed"] is True
     assert "implement it" in plan_attempts[0]["text"]
+    synthesis = json.loads((output_dir / "synthesis.json").read_text())
+    assert synthesis["orchestrator"] == "chef"
+    assert synthesis["result"]["ok"] is True
+    assert synthesis["result"]["text"] == "final answer"
     assert {call[2] for call in calls} == {run_cwd}
 
 
@@ -271,6 +276,7 @@ def test_dry_run_writes_plan_artifact(monkeypatch, tmp_path):
     assert json.loads((output_dir / "run.json").read_text())["status"] == "dry-run"
     assert json.loads((output_dir / "roster.json").read_text())["agents"]["chef"]["cli"] == "codex"
     assert not (output_dir / "worker-results.json").exists()
+    assert not (output_dir / "synthesis.json").exists()
 
 
 def test_invalid_plan_writes_attempt_artifact(monkeypatch, tmp_path, capsys):
@@ -293,6 +299,36 @@ def test_invalid_plan_writes_attempt_artifact(monkeypatch, tmp_path, capsys):
     assert all(attempt["text"] == "not json" for attempt in attempts)
     assert all("plan is not valid JSON" in attempt["parse_error"] for attempt in attempts)
     assert not (output_dir / "plan.json").exists()
+
+
+def test_synthesis_failure_writes_artifact(monkeypatch, tmp_path, capsys):
+    calls = []
+
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
+        calls.append((cli_ref, prompt))
+        if len(calls) == 1:
+            return agents.AgentResult(
+                text=json.dumps({"assignments": [{"worker": "coder", "task": "implement it"}]}),
+                ok=True,
+            )
+        if cli_ref == "ollama:llama3.3":
+            return agents.AgentResult(text="worker output", ok=True)
+        return agents.AgentResult(text="partial synthesis", ok=False, detail="synthesis failed")
+
+    output_dir = tmp_path / "run"
+    monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
+
+    assert aboyeur.run("build feature", _roster(), output_dir=output_dir) == 2
+    assert "synthesis failed" in capsys.readouterr().err
+    assert json.loads((output_dir / "run.json").read_text())["status"] == "failed"
+    synthesis = json.loads((output_dir / "synthesis.json").read_text())
+    assert synthesis["orchestrator"] == "chef"
+    assert synthesis["result"] == {
+        "ok": False,
+        "detail": "synthesis failed",
+        "text": "partial synthesis",
+    }
+    assert not (output_dir / "final.txt").exists()
 
 
 def test_run_writes_handoff(monkeypatch, tmp_path, capsys):

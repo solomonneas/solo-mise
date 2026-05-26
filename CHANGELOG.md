@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade run --cwd`, `--output-dir`, and default `.brigade/runs/<id>` artifacts for dogfooding auditable runs.
 - `roster.json` run artifacts that capture the effective orchestrator, agents, limits, allow-list, and timeouts for later review.
 - `plan-attempts.json` run artifacts that capture raw planner outputs and parse errors for debugging failed planning runs.
+- `synthesis.json` run artifacts that capture orchestrator synthesis status, detail, and raw text for non-dry runs.
 - `brigade run --handoff` to write a Memory Handoff for successful runs, with `--handoff-inbox` override.
 - Roster-level and per-agent `timeout_seconds` controls for bounded CLI calls.
 - `brigade run --read-only` prompt policy for planning and review runs that should inspect and recommend only, with native `codex exec --sandbox read-only` enforcement for Codex agents.
