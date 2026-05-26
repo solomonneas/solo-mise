@@ -126,6 +126,32 @@ def test_work_end_closes_active_session(tmp_path, monkeypatch, capsys):
     assert "done for now" in (session_dir / "end.md").read_text()
 
 
+def test_work_end_can_write_handoff(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 13, 0, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    assert work_cmd.start(target=tmp_path, title="Build Work Loop") == 0
+
+    inbox = tmp_path / "handoffs"
+    assert work_cmd.end(target=tmp_path, note="done for now", handoff=True, handoff_inbox=inbox) == 0
+    out = capsys.readouterr().out
+    assert "handoff:" in out
+    handoffs = list(inbox.glob("*-brigade-work-build-work-loop-*.md"))
+    assert len(handoffs) == 1
+    handoff = handoffs[0].read_text()
+    assert "# Memory Handoff" in handoff
+    assert "Brigade work session ended" in handoff
+    assert "done for now" in handoff
+    session_dir = tmp_path / ".brigade" / "work" / "20260526-120000-build-work-loop"
+    payload = json.loads((session_dir / "session.json").read_text())
+    assert payload["handoff"] == str(handoffs[0])
+
+
 def test_work_end_reports_no_active_session(tmp_path, capsys):
     _init_git_repo(tmp_path)
 
@@ -161,8 +187,31 @@ def test_work_start_and_end_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(work_cmd, "end", fake_end)
 
     assert cli.main(["work", "start", "Build", "Loop", "--target", str(tmp_path), "--force"]) == 0
-    assert cli.main(["work", "end", "--target", str(tmp_path), "--note", "done"]) == 0
+    assert (
+        cli.main(
+            [
+                "work",
+                "end",
+                "--target",
+                str(tmp_path),
+                "--note",
+                "done",
+                "--handoff",
+                "--handoff-inbox",
+                str(tmp_path / "handoffs"),
+            ]
+        )
+        == 0
+    )
     assert seen == [
         ("start", {"target": tmp_path, "title": "Build Loop", "force": True}),
-        ("end", {"target": tmp_path, "note": "done"}),
+        (
+            "end",
+            {
+                "target": tmp_path,
+                "note": "done",
+                "handoff": True,
+                "handoff_inbox": tmp_path / "handoffs",
+            },
+        ),
     ]
