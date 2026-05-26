@@ -122,6 +122,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_show = work_sub.add_parser("show", help="Show one Brigade work session.")
     p_work_show.add_argument("session", help="Session id or path.")
     p_work_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_recap = work_sub.add_parser("recap", help="Summarize recent Brigade work sessions.")
+    p_work_recap.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_recap.add_argument("--limit", type=int, default=5, help="Maximum sessions to include.")
+    p_work_recap.add_argument("--since", default=None, help="Only include sessions since YYYY-MM-DD.")
     p_work_start = work_sub.add_parser("start", help="Start a local Brigade work session.")
     p_work_start.add_argument("title", nargs="*", help="Optional session title.")
     p_work_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
@@ -414,6 +418,8 @@ def main(argv=None) -> int:
             return work_cmd.latest(target=args.target)
         if args.work_command == "show":
             return work_cmd.show(target=args.target, session=args.session)
+        if args.work_command == "recap":
+            return work_cmd.recap(target=args.target, limit=args.limit, since=args.since)
         if args.work_command == "start":
             title = " ".join(args.title) if args.title else None
             return work_cmd.start(target=args.target, title=title, force=args.force)

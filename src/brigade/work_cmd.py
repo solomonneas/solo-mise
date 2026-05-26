@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -125,6 +125,29 @@ def _session_sort_key(item: tuple[Path, dict[str, Any]]) -> str:
     return str(payload.get("ended_at") or payload.get("started_at") or path.name)
 
 
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_since(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed_date = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("--since must use YYYY-MM-DD") from exc
+    return datetime.combine(parsed_date, time.min, tzinfo=timezone.utc)
+
+
 def _collect_sessions(root: Path) -> tuple[list[tuple[Path, dict[str, Any]]], int]:
     sessions: list[tuple[Path, dict[str, Any]]] = []
     skipped = 0
@@ -155,6 +178,28 @@ def _dirty_count(snapshot: dict[str, Any]) -> int:
         return 0
     dirty = git.get("dirty_files")
     return len(dirty) if isinstance(dirty, list) else 0
+
+
+def _snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload.get("end"), dict):
+        return payload["end"]
+    if isinstance(payload.get("start"), dict):
+        return payload["start"]
+    return {}
+
+
+def _branch(snapshot: dict[str, Any]) -> str | None:
+    git = snapshot.get("git")
+    if isinstance(git, dict) and isinstance(git.get("branch"), str):
+        return git["branch"]
+    return None
+
+
+def _next_step(snapshot: dict[str, Any]) -> str | None:
+    dogfood = snapshot.get("dogfood")
+    if isinstance(dogfood, dict) and isinstance(dogfood.get("next"), str):
+        return dogfood["next"]
+    return None
 
 
 def _display_session(path: Path, payload: dict[str, Any]) -> None:
@@ -462,6 +507,72 @@ def show(*, target: Path, session: str | Path) -> int:
         print(f"error: session.json not found or invalid in {path}", file=sys.stderr)
         return 2
     _display_session(path, payload)
+    return 0
+
+
+def recap(*, target: Path, limit: int = 5, since: str | None = None) -> int:
+    if limit < 1:
+        print("error: --limit must be a positive integer", file=sys.stderr)
+        return 2
+    try:
+        since_dt = _parse_since(since)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    root = _work_root(target)
+    sessions, skipped = _collect_sessions(root)
+    if since_dt is not None:
+        sessions = [
+            (path, payload)
+            for path, payload in sessions
+            if (_parse_iso_datetime(payload.get("ended_at") or payload.get("started_at")) or datetime.min.replace(tzinfo=timezone.utc))
+            >= since_dt
+        ]
+    sessions = sessions[:limit]
+
+    print(f"work recap: {target}")
+    if since:
+        print(f"since: {since}")
+    print(f"sessions: {len(sessions)}")
+    if skipped:
+        print(f"skipped: {skipped}", file=sys.stderr)
+    if not sessions:
+        print(f"no work sessions found in {root}")
+        return 0
+
+    branches = sorted({branch for _, payload in sessions if (branch := _branch(_snapshot(payload)))})
+    if branches:
+        print(f"branches: {', '.join(branches)}")
+    handoffs = [str(payload.get("handoff")) for _, payload in sessions if payload.get("handoff")]
+    if handoffs:
+        print(f"handoffs: {len(handoffs)}")
+
+    print("items:")
+    for path, payload in sessions:
+        snapshot = _snapshot(payload)
+        title = str(payload.get("title") or payload.get("id") or path.name)
+        print(f"- {title}")
+        print(f"  id: {payload.get('id', path.name)}")
+        print(f"  status: {payload.get('status', 'unknown')}")
+        print(f"  started: {payload.get('started_at', '')}")
+        if payload.get("ended_at"):
+            print(f"  ended: {payload['ended_at']}")
+        branch = _branch(snapshot)
+        if branch:
+            print(f"  branch: {branch}")
+        print(f"  dirty_files: {_dirty_count(snapshot)}")
+        if payload.get("note"):
+            print(f"  note: {_short(str(payload['note']))}")
+        if payload.get("handoff"):
+            print(f"  handoff: {payload['handoff']}")
+        next_text = _next_step(snapshot)
+        if next_text:
+            print(f"  next: {_short(next_text)}")
     return 0
 
 
