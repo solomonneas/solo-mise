@@ -145,6 +145,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to roster.toml. Defaults to .brigade/roster.toml under --target.",
     )
 
+    # runs
+    p_runs = sub.add_parser("runs", help="Inspect Brigade run artifacts.")
+    runs_sub = p_runs.add_subparsers(dest="runs_command", metavar="<runs-command>")
+    runs_sub.required = True
+    p_runs_show = runs_sub.add_parser("show", help="Show a readable summary of one run directory.")
+    p_runs_show.add_argument("run_dir", type=Path, help="Path to a Brigade run artifact directory.")
+
     # scrub
     p_scrub = sub.add_parser("scrub", help="Run content-guard against a target.")
     p_scrub.add_argument("--target", "-t", type=Path, default=Path("."))
@@ -320,6 +327,13 @@ def main(argv=None) -> int:
         if args.roster_command == "doctor":
             return roster_cmd.doctor(target=args.target, roster_path=args.roster)
         parser.error(f"unknown roster command: {args.roster_command}")
+        return 2
+    if cmd == "runs":
+        from . import runs_cmd
+
+        if args.runs_command == "show":
+            return runs_cmd.show(args.run_dir)
+        parser.error(f"unknown runs command: {args.runs_command}")
         return 2
     if cmd == "scrub":
         from . import scrub as scrub_mod
