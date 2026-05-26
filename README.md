@@ -129,9 +129,12 @@ brigade run "review this repo" --cwd /path/to/repo
 brigade run "review this repo" --handoff
 brigade run "review this repo" --read-only
 brigade run "review this repo" --read-only --inspect
+brigade dogfood --target /path/to/repo
 ```
 
 `--dry-run` prints the planned assignments as JSON and stops before worker dispatch. `--show-plan` prints assignments before a normal run. `--verbose` prints the plan, worker statuses, and synthesis status. `--cwd` sets the working directory for the agent CLI calls and defaults to the current directory. `--handoff` writes a Memory Handoff for a successful non-dry run. `--inspect` prints the same readable artifact summary as `brigade runs show` after the run completes. `--read-only` tells the orchestrator and workers to inspect and recommend only, without modifying files or external state. For `codex` agents, Brigade also passes `codex exec --sandbox read-only`; other adapters receive the prompt policy only. The `cli` values are adapters for installed command-line tools: `codex`, `claude`, and `ollama:<model>`. Pick the ones you already use. Brigade shells out to those tools and keeps no provider keys. `brigade roster doctor` validates the roster syntax and reports which CLIs are present on `PATH`.
+
+`brigade dogfood` is the shortcut for using Brigade on itself or another trusted repo. It uses a built-in Codex-only roster, runs with prompt-level read-only instructions, shows the plan, writes normal run artifacts, writes a Memory Handoff by default, and prints the artifact summary afterward. By default it passes Codex's `danger-full-access` sandbox setting for trusted-workspace use so repo inspection works on hosts where native read-only sandboxing blocks shell inspection. Use `--no-handoff` or `--no-inspect` to turn off those last two steps. Use `--native-read-only-sandbox` when the host supports Codex's native read-only sandbox and you want that additional enforcement.
 
 CLI runs write artifacts by default under `.brigade/runs/<id>` below `--cwd`:
 

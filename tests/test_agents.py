@@ -26,6 +26,23 @@ def test_build_argv_for_read_only_codex():
     ]
 
 
+def test_build_argv_can_set_codex_sandbox():
+    assert agents.build_argv("codex", "hi", sandbox="danger-full-access") == [
+        "codex",
+        "exec",
+        "--sandbox",
+        "danger-full-access",
+        "hi",
+    ]
+    assert agents.build_argv("codex", "hi", read_only=True, sandbox="workspace-write") == [
+        "codex",
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "hi",
+    ]
+
+
 def test_build_argv_unknown_raises():
     with pytest.raises(ValueError):
         agents.build_argv("nope", "hi")

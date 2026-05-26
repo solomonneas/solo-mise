@@ -282,6 +282,8 @@ def _run_orchestrator(
     prompt: str,
     cwd: Path | None = None,
     read_only: bool = False,
+    sandbox_read_only: bool | None = None,
+    sandbox: str | None = None,
 ) -> agents.AgentResult:
     orchestrator = roster.agents[roster.orchestrator]
     if not is_cli_allowed(orchestrator.cli, roster):
@@ -290,13 +292,14 @@ def _run_orchestrator(
             ok=False,
             detail=f"{orchestrator.cli} is not allowed by limits.allow_models",
         )
-    return agents.run_agent(
-        orchestrator.cli,
-        prompt,
-        timeout=timeout_for(orchestrator, roster),
-        cwd=cwd,
-        read_only=read_only,
-    )
+    kwargs: dict[str, object] = {
+        "timeout": timeout_for(orchestrator, roster),
+        "cwd": cwd,
+        "read_only": read_only if sandbox_read_only is None else sandbox_read_only,
+    }
+    if sandbox is not None:
+        kwargs["sandbox"] = sandbox
+    return agents.run_agent(orchestrator.cli, prompt, **kwargs)
 
 
 def plan(
@@ -304,6 +307,8 @@ def plan(
     roster: Roster,
     cwd: Path | None = None,
     read_only: bool = False,
+    sandbox_read_only: bool | None = None,
+    sandbox: str | None = None,
     attempts: list[dict[str, object]] | None = None,
 ) -> list[Assignment]:
     first = _run_orchestrator(
@@ -311,6 +316,8 @@ def plan(
         build_plan_prompt(task, roster, read_only=read_only),
         cwd=cwd,
         read_only=read_only,
+        sandbox_read_only=sandbox_read_only,
+        sandbox=sandbox,
     )
     if not first.ok:
         _record_plan_attempt(attempts, stage="initial", result=first)
@@ -326,6 +333,8 @@ def plan(
             build_plan_prompt(task, roster, corrective_note=str(exc), read_only=read_only),
             cwd=cwd,
             read_only=read_only,
+            sandbox_read_only=sandbox_read_only,
+            sandbox=sandbox,
         )
         if not second.ok:
             _record_plan_attempt(attempts, stage="correction", result=second)
@@ -360,6 +369,8 @@ def dispatch(
     roster: Roster,
     cwd: Path | None = None,
     read_only: bool = False,
+    sandbox_read_only: bool | None = None,
+    sandbox: str | None = None,
 ) -> list[WorkerResult]:
     def run_one(assignment: Assignment) -> WorkerResult:
         agent = roster.agents[assignment.worker]
@@ -371,13 +382,14 @@ def dispatch(
                 ok=False,
                 detail=f"{agent.cli} is not allowed by limits.allow_models",
             )
-        result = agents.run_agent(
-            agent.cli,
-            _worker_prompt(agent, assignment, read_only=read_only),
-            timeout=timeout_for(agent, roster),
-            cwd=cwd,
-            read_only=read_only,
-        )
+        kwargs: dict[str, object] = {
+            "timeout": timeout_for(agent, roster),
+            "cwd": cwd,
+            "read_only": read_only if sandbox_read_only is None else sandbox_read_only,
+        }
+        if sandbox is not None:
+            kwargs["sandbox"] = sandbox
+        result = agents.run_agent(agent.cli, _worker_prompt(agent, assignment, read_only=read_only), **kwargs)
         return WorkerResult(
             worker=assignment.worker,
             task=assignment.task,
@@ -552,6 +564,8 @@ def run(
     output_dir: Path | None = None,
     handoff_inbox: Path | None = None,
     read_only: bool = False,
+    sandbox_read_only: bool | None = None,
+    sandbox: str | None = None,
 ) -> int:
     started_at = datetime.now(timezone.utc)
     cwd = cwd.expanduser().resolve() if cwd is not None else None
@@ -576,7 +590,15 @@ def run(
 
     plan_attempts: list[dict[str, object]] | None = [] if output_dir is not None else None
     try:
-        assignments = plan(task, roster, cwd=cwd, read_only=read_only, attempts=plan_attempts)
+        assignments = plan(
+            task,
+            roster,
+            cwd=cwd,
+            read_only=read_only,
+            sandbox_read_only=sandbox_read_only,
+            sandbox=sandbox,
+            attempts=plan_attempts,
+        )
     except RuntimeError as exc:
         if output_dir is not None:
             finished_at = datetime.now(timezone.utc)
@@ -627,7 +649,14 @@ def run(
     if show_plan or verbose:
         _print_plan(assignments)
 
-    worker_results = dispatch(assignments, roster, cwd=cwd, read_only=read_only)
+    worker_results = dispatch(
+        assignments,
+        roster,
+        cwd=cwd,
+        read_only=read_only,
+        sandbox_read_only=sandbox_read_only,
+        sandbox=sandbox,
+    )
     if output_dir is not None:
         _write_json(output_dir / "worker-results.json", {"results": _worker_payload(worker_results)})
     if verbose:
@@ -640,6 +669,8 @@ def run(
         build_synth_prompt(task, worker_results, read_only=read_only),
         cwd=cwd,
         read_only=read_only,
+        sandbox_read_only=sandbox_read_only,
+        sandbox=sandbox,
     )
     if output_dir is not None:
         _write_json(

@@ -156,6 +156,46 @@ def test_read_only_mode_is_in_all_prompts_and_artifacts(monkeypatch, tmp_path):
     assert json.loads((output_dir / "run.json").read_text())["read_only"] is True
 
 
+def test_prompt_read_only_can_disable_native_sandbox(monkeypatch):
+    calls = []
+
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
+        calls.append((cli_ref, prompt, read_only))
+        if len(calls) == 1:
+            return agents.AgentResult(
+                text=json.dumps({"assignments": [{"worker": "coder", "task": "inspect it"}]}),
+                ok=True,
+            )
+        if cli_ref == "ollama:llama3.3":
+            return agents.AgentResult(text="worker output", ok=True)
+        return agents.AgentResult(text="final answer", ok=True)
+
+    monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
+    assert aboyeur.run("inspect feature", _roster(), read_only=True, sandbox_read_only=False) == 0
+    assert all("READ-ONLY MODE" in prompt for _, prompt, _ in calls)
+    assert all(read_only is False for _, _, read_only in calls)
+
+
+def test_prompt_read_only_can_set_explicit_sandbox(monkeypatch):
+    calls = []
+
+    def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False, sandbox=None):
+        calls.append((cli_ref, prompt, read_only, sandbox))
+        if len(calls) == 1:
+            return agents.AgentResult(
+                text=json.dumps({"assignments": [{"worker": "coder", "task": "inspect it"}]}),
+                ok=True,
+            )
+        if cli_ref == "ollama:llama3.3":
+            return agents.AgentResult(text="worker output", ok=True)
+        return agents.AgentResult(text="final answer", ok=True)
+
+    monkeypatch.setattr(aboyeur.agents, "run_agent", fake_run_agent)
+    assert aboyeur.run("inspect feature", _roster(), read_only=True, sandbox="danger-full-access") == 0
+    assert all("READ-ONLY MODE" in prompt for _, prompt, _, _ in calls)
+    assert all(sandbox == "danger-full-access" for _, _, _, sandbox in calls)
+
+
 def test_show_plan_prints_assignments(monkeypatch, capsys):
     def fake_run_agent(cli_ref, prompt, timeout=600.0, cwd=None, read_only=False):
         if "assignments" in prompt:

@@ -81,6 +81,31 @@ def _build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("station", help="Station to add tools for (e.g. memory, guard, tokens).")
     p_add.add_argument("--target", "-t", type=Path, default=Path("."))
 
+    # dogfood
+    p_dogfood = sub.add_parser("dogfood", help="Run a safe Codex-only Brigade dogfood review.")
+    p_dogfood.add_argument(
+        "task",
+        nargs="?",
+        default=None,
+        help="Dogfood task. Defaults to recommending the next implementation slice.",
+    )
+    p_dogfood.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_dogfood.add_argument("--output-dir", type=Path, default=None, help="Directory for run artifacts.")
+    p_dogfood.add_argument(
+        "--handoff-inbox",
+        type=Path,
+        default=None,
+        help="Memory Handoff inbox. Defaults to .claude/memory-handoffs under --target.",
+    )
+    p_dogfood.add_argument("--no-handoff", action="store_true", help="Do not write a Memory Handoff.")
+    p_dogfood.add_argument("--no-inspect", action="store_true", help="Do not print the artifact summary afterward.")
+    p_dogfood.add_argument(
+        "--native-read-only-sandbox",
+        action="store_true",
+        help="Use Codex's native read-only sandbox instead of dogfood's default trusted-workspace danger-full-access setting.",
+    )
+    p_dogfood.add_argument("--timeout-seconds", type=float, default=180.0, help="Per-agent timeout.")
+
     # run
     p_run = sub.add_parser("run", help="Run a bounded cross-model orchestration task.")
     p_run.add_argument("task", help="Task for the aboyeur to plan, dispatch, and synthesize.")
@@ -290,6 +315,19 @@ def main(argv=None) -> int:
         from . import add as add_mod
 
         return add_mod.run(target=args.target, station=args.station)
+    if cmd == "dogfood":
+        from . import dogfood_cmd
+
+        return dogfood_cmd.run(
+            args.task,
+            target=args.target,
+            output_dir=args.output_dir,
+            handoff=not args.no_handoff,
+            handoff_inbox=args.handoff_inbox,
+            inspect=not args.no_inspect,
+            native_read_only_sandbox=args.native_read_only_sandbox,
+            timeout_seconds=args.timeout_seconds,
+        )
     if cmd == "run":
         from . import aboyeur as aboyeur_mod
         from . import roster as roster_mod
