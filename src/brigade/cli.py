@@ -121,6 +121,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_end = work_sub.add_parser("end", help="End the active local Brigade work session.")
     p_work_end.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace for the session.")
     p_work_end.add_argument("--note", default=None, help="Optional closing note.")
+    p_work_end.add_argument("--handoff", action="store_true", help="Write a Memory Handoff for the ended session.")
+    p_work_end.add_argument(
+        "--handoff-inbox",
+        type=Path,
+        default=None,
+        help="Memory Handoff inbox. Defaults to configured dogfood inbox or .claude/memory-handoffs.",
+    )
 
     # run
     p_run = sub.add_parser("run", help="Run a bounded cross-model orchestration task.")
@@ -397,7 +404,12 @@ def main(argv=None) -> int:
             title = " ".join(args.title) if args.title else None
             return work_cmd.start(target=args.target, title=title, force=args.force)
         if args.work_command == "end":
-            return work_cmd.end(target=args.target, note=args.note)
+            return work_cmd.end(
+                target=args.target,
+                note=args.note,
+                handoff=args.handoff,
+                handoff_inbox=args.handoff_inbox,
+            )
         parser.error(f"unknown work command: {args.work_command}")
         return 2
     if cmd == "run":

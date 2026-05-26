@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from . import dogfood_cmd
 
@@ -147,6 +148,95 @@ def _write_session_markdown(path: Path, *, title: str, payload: dict[str, Any], 
     path.write_text("\n".join(lines) + "\n")
 
 
+def _handoff_inbox(target: Path, payload: dict[str, Any], override: Path | None) -> Path:
+    if override is not None:
+        return override.expanduser()
+    dogfood = payload.get("end", {}).get("dogfood", {})
+    configured = dogfood.get("handoff_inbox")
+    if isinstance(configured, str) and configured:
+        return Path(configured).expanduser()
+    return target / ".claude" / "memory-handoffs"
+
+
+def _write_work_handoff(target: Path, session_dir: Path, payload: dict[str, Any], inbox: Path) -> Path:
+    ended = payload.get("ended_at") or _now().isoformat()
+    ended_slug = re.sub(r"[^0-9]", "", str(ended))[:12] or _now().strftime("%Y%m%d%H%M")
+    title = payload.get("title") or payload.get("id") or "work-session"
+    path = inbox / f"{ended_slug}-brigade-work-{_slug(str(title))}-{uuid4().hex[:6]}.md"
+    end_snapshot = payload.get("end", {})
+    git = end_snapshot.get("git", {})
+    dogfood = end_snapshot.get("dogfood", {})
+    dirty = git.get("dirty_files") if isinstance(git, dict) else []
+    dirty_lines = "\n".join(f"  - `{item}`" for item in dirty[:20]) if isinstance(dirty, list) else "  - unavailable"
+    latest = dogfood.get("latest_run") if isinstance(dogfood, dict) else None
+    latest_line = "- latest run: none"
+    if isinstance(latest, dict):
+        latest_line = f"- latest run: `{latest.get('path')}` ({latest.get('status')})"
+    next_step = dogfood.get("next") if isinstance(dogfood, dict) else None
+    next_line = f"- next: {next_step}" if next_step else "- next: none extracted"
+    note = payload.get("note") or ""
+    document_content = f"""### Brigade work session: {payload.get('id')}
+- target: `{target}`
+- session artifacts: `{session_dir}`
+- branch: {git.get('branch') if isinstance(git, dict) else 'unknown'}
+- dirty files: {len(dirty) if isinstance(dirty, list) else 'unknown'}
+{latest_line}
+{next_line}
+"""
+    if note:
+        document_content += f"- note: {note}\n"
+    body = f"""# Memory Handoff
+
+## Type
+
+workflow
+
+## Title
+
+Brigade work session ended: {_slug(str(title))}
+
+## Summary
+
+A Brigade work session was ended and local session artifacts were written. This handoff captures the session path, final git state, latest dogfood run, and extracted next step so the memory owner can route durable workflow context.
+
+## Durable facts
+
+- session: `{payload.get('id')}`
+- target: `{target}`
+- session artifacts: `{session_dir}`
+- status: {payload.get('status')}
+- started: {payload.get('started_at')}
+- ended: {payload.get('ended_at')}
+- note: {note or 'none'}
+- branch: {git.get('branch') if isinstance(git, dict) else 'unknown'}
+- dirty files:
+{dirty_lines}
+{latest_line}
+{next_line}
+
+## Evidence
+
+- session.json: `{session_dir / 'session.json'}`
+- start summary: `{session_dir / 'start.md'}`
+- end summary: `{session_dir / 'end.md'}`
+
+## Recommended memory action
+
+no-card
+
+## Target document
+
+.learnings/LEARNINGS.md
+
+## Suggested document content
+
+{document_content.strip()}
+"""
+    inbox.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    return path
+
+
 def _print_dirty(lines: list[str], *, limit: int) -> None:
     print(f"dirty_files: {len(lines)}")
     for line in lines[:limit]:
@@ -188,7 +278,7 @@ def start(*, target: Path, title: str | None = None, force: bool = False) -> int
     return 0
 
 
-def end(*, target: Path, note: str | None = None) -> int:
+def end(*, target: Path, note: str | None = None, handoff: bool = False, handoff_inbox: Path | None = None) -> int:
     target = target.expanduser().resolve()
     if not target.is_dir():
         print(f"error: --target is not a directory: {target}", file=sys.stderr)
@@ -216,8 +306,15 @@ def end(*, target: Path, note: str | None = None) -> int:
     payload["end"] = _session_snapshot(target)
     _write_json(session_json, payload)
     _write_session_markdown(session_dir / "end.md", title="Brigade Work Session End", payload=payload, key="end")
+    if handoff:
+        inbox = _handoff_inbox(target, payload, handoff_inbox)
+        handoff_path = _write_work_handoff(target, session_dir, payload, inbox)
+        payload["handoff"] = str(handoff_path)
+        _write_json(session_json, payload)
     current.unlink()
     print(f"session: {session_dir}")
+    if handoff:
+        print(f"handoff: {payload['handoff']}")
     print("status: ended")
     return 0
 
