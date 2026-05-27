@@ -61,6 +61,7 @@ def build_gitignore_block(selection: Selection) -> str:
         "memory/handoff-inbox/",
         "",
         "# brigade local state (logs, scrub cache, dogfood runs, work sessions).",
+        ".brigade/backups.toml",
         ".brigade/dogfood.toml",
         ".brigade/handoff-sources.json",
         ".brigade/scanners.toml",

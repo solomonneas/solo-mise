@@ -173,6 +173,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_inbox.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_inbox.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_inbox.add_argument("--limit", type=int, default=20, help="Maximum imports to show.")
+    p_work_backup = work_sub.add_parser("backup", help="Inspect local backup health summaries.")
+    backup_sub = p_work_backup.add_subparsers(dest="backup_command", metavar="<backup-command>")
+    backup_sub.required = True
+    p_work_backup_init = backup_sub.add_parser("init", help="Write a local backup health config.")
+    p_work_backup_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_backup_init.add_argument("--force", action="store_true", help="Overwrite an existing backup config.")
+    p_work_backup_init.add_argument("--no-gitignore", action="store_true", help="Do not update the target .gitignore.")
+    p_work_backup_status = backup_sub.add_parser("status", help="Show local backup health status.")
+    p_work_backup_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_backup_status.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_backup_doctor = backup_sub.add_parser("doctor", help="Check local backup health summaries.")
+    p_work_backup_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_backup_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_backup_import = backup_sub.add_parser("import-issues", help="Import backup health issues into the work inbox.")
+    p_work_backup_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_backup_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_scanners = work_sub.add_parser("scanners", help="Inspect local scanner registry and schedule plans.")
     scanners_sub = p_work_scanners.add_subparsers(dest="scanners_command", metavar="<scanners-command>")
     scanners_sub.required = True
@@ -803,6 +819,21 @@ def main(argv=None) -> int:
             return work_cmd.brief(target=args.target, limit=args.limit, json_output=args.json)
         if args.work_command == "inbox":
             return work_cmd.inbox(target=args.target, json_output=args.json, limit=args.limit)
+        if args.work_command == "backup":
+            if args.backup_command == "init":
+                return work_cmd.backup_init(
+                    target=args.target,
+                    force=args.force,
+                    update_gitignore=not args.no_gitignore,
+                )
+            if args.backup_command == "status":
+                return work_cmd.backup_status(target=args.target, json_output=args.json)
+            if args.backup_command == "doctor":
+                return work_cmd.backup_doctor(target=args.target, json_output=args.json)
+            if args.backup_command == "import-issues":
+                return work_cmd.backup_import_issues(target=args.target, json_output=args.json)
+            parser.error(f"unknown backup command: {args.backup_command}")
+            return 2
         if args.work_command == "scanners":
             if args.scanners_command == "init":
                 return work_cmd.scanners_init(

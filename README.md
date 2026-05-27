@@ -168,6 +168,10 @@ brigade work brief
 brigade work brief --json
 brigade work inbox
 brigade work inbox --json
+brigade work backup init
+brigade work backup status
+brigade work backup doctor
+brigade work backup import-issues
 brigade work scanners init
 brigade work scanners list
 brigade work scanners show chat-memory-sweep
@@ -283,6 +287,7 @@ Start-of-day commands:
 - `brigade work doctor` checks dogfood config, security config, evidence bundles, Codex CLI, artifact paths, handoff inbox, task acceptance, issue-backed tasks, stale active sessions, ignore coverage, and latest run context.
 - `brigade work resume` shows the active or latest session, latest dogfood run, extracted next step, and suggested command.
 - `brigade work inbox` groups pending scanner imports by source, kind, priority, age, and acceptance coverage, then suggests plan, promote, dismiss, or run commands.
+- `brigade work backup status` reads local backup health summaries and reports snapshot, check, prune, and restore rehearsal risk without running backup commands.
 - `brigade work scanners plan` inspects the local scanner registry and suggests staggered run windows without executing scanners.
 - `brigade work next` prints only the next task. Add `--json` for wrappers.
 
@@ -331,6 +336,14 @@ Scanner registry commands:
 - `brigade work scanners doctor --import-issues` reports missing config, disabled required producers, bad commands, missing or stale output paths, and schedule conflicts, then can import those health issues as local task imports.
 
 The scanner registry is a planner and health surface only. Brigade does not install cron jobs, start a daemon, run scanners automatically, or promote scanner output automatically.
+
+Backup health commands:
+
+- `brigade work backup init` writes gitignored `.brigade/backups.toml` with local NAS and cloud destination examples.
+- `brigade work backup status` and `doctor` read local JSON summaries for latest snapshot, check, prune, and restore rehearsal status.
+- `brigade work backup import-issues` turns stale snapshots, failed checks, stale prunes, missing summaries, overdue restore rehearsals, and unsafe summary fields into local `backup-health` work imports.
+
+Backup health summaries are local and read-only. Brigade does not run `restic`, mount storage, prune, restore, send webhooks, or mutate remote backup state. Keep real hostnames, remotes, mount paths, repo paths, webhook URLs, channel ids, and backup passwords out of public templates and summary records.
 
 Run the daily loop with `brigade work run`.
 It opens a work session, resolves the next task, runs `brigade dogfood`, and closes completed ledger tasks after successful runs.

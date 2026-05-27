@@ -94,6 +94,51 @@ ACTIVE_SESSION_STALE_HOURS = 24
 IMPORT_STALE_HOURS = 72
 DISMISSED_SOURCE_WARN_THRESHOLD = 5
 PRIORITY_RANK = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+BACKUP_CONFIG_REL_PATH = ".brigade/backups.toml"
+BACKUP_UNSAFE_FIELDS = {
+    "backup_password",
+    "channel_id",
+    "host",
+    "hostname",
+    "mount",
+    "mount_path",
+    "password",
+    "remote",
+    "remote_name",
+    "repo",
+    "repo_path",
+    "repository",
+    "repository_url",
+    "secret",
+    "token",
+    "url",
+    "webhook",
+    "webhook_url",
+}
+BACKUP_DEFAULTS = (
+    {
+        "id": "nas",
+        "kind": "nas",
+        "command_label": "local backup summary producer",
+        "summary_path": ".brigade/backups/nas-summary.json",
+        "snapshot_stale_hours": 36,
+        "check_stale_hours": 168,
+        "prune_stale_hours": 168,
+        "restore_rehearsal_stale_days": 90,
+        "enabled": True,
+    },
+    {
+        "id": "cloud",
+        "kind": "cloud",
+        "command_label": "cloud backup summary producer",
+        "summary_path": ".brigade/backups/cloud-summary.json",
+        "snapshot_stale_hours": 36,
+        "check_stale_hours": 168,
+        "prune_stale_hours": 168,
+        "restore_rehearsal_stale_days": 90,
+        "enabled": True,
+    },
+)
 SCANNER_CONFIG_REL_PATH = ".brigade/scanners.toml"
 SCANNER_OUTPUT_STALE_HOURS = 48
 SCANNER_REQUIRED_IDS = ("chat-memory-sweep", "memory-refresh", "handoff-ingest", "security-findings")
@@ -127,6 +172,16 @@ SCANNER_DEFAULTS = (
         "timeout": 180,
         "output_path": ".brigade/handoff-sources.json",
         "conflict_window": "00:10-00:25",
+    },
+    {
+        "id": "backup-health",
+        "source": "backup-health",
+        "command": "brigade work backup import-issues --json",
+        "cadence": "daily@04:00",
+        "enabled": False,
+        "timeout": 180,
+        "output_path": ".brigade/backups",
+        "conflict_window": "04:00-04:20",
     },
     {
         "id": "security-findings",
@@ -222,6 +277,10 @@ def _tasks_path(target: Path) -> Path:
 
 def _imports_path(target: Path) -> Path:
     return _work_root(target) / "imports" / "inbox.jsonl"
+
+
+def _backup_config_path(target: Path) -> Path:
+    return target / BACKUP_CONFIG_REL_PATH
 
 
 def _scanner_config_path(target: Path) -> Path:
@@ -1294,6 +1353,272 @@ def _parse_since(value: str | None) -> datetime | None:
     return datetime.combine(parsed_date, time.min, tzinfo=timezone.utc)
 
 
+def _format_backup_toml(destinations: tuple[dict[str, Any], ...] = BACKUP_DEFAULTS) -> str:
+    lines = [
+        "# Local backup health registry. Store only safe labels and local summary paths here.",
+        "",
+    ]
+    for destination in destinations:
+        lines.append("[[destination]]")
+        for key in (
+            "id",
+            "kind",
+            "command_label",
+            "summary_path",
+            "snapshot_stale_hours",
+            "check_stale_hours",
+            "prune_stale_hours",
+            "restore_rehearsal_stale_days",
+            "enabled",
+        ):
+            lines.append(f"{key} = {dogfood_cmd._format_toml_value(destination[key])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _load_backup_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    path = _backup_config_path(target)
+    if not path.is_file():
+        return [], [f"backup config missing: {path}"]
+    if tomllib is None:
+        return [], ["backup config requires Python tomllib support"]
+    try:
+        payload = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:  # type: ignore[union-attr]
+        return [], [f"invalid backup config: {exc}"]
+    values = payload.get("destination")
+    if not isinstance(values, list):
+        return [], ["backup config must contain [[destination]] entries"]
+    destinations: list[dict[str, Any]] = []
+    errors: list[str] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(values, start=1):
+        label = f"backup destination {index}"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be a table")
+            continue
+        destination: dict[str, Any] = {}
+        for field in ("id", "kind", "command_label", "summary_path"):
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{label}: {field} must be a non-empty string")
+            else:
+                destination[field] = value.strip()
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            errors.append(f"{label}: enabled must be true or false")
+        else:
+            destination["enabled"] = enabled
+        for field in ("snapshot_stale_hours", "check_stale_hours", "prune_stale_hours", "restore_rehearsal_stale_days"):
+            value = item.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+                errors.append(f"{label}: {field} must be a positive number")
+            else:
+                destination[field] = float(value)
+        destination_id = destination.get("id")
+        if isinstance(destination_id, str):
+            if destination_id in seen_ids:
+                errors.append(f"{label}: duplicate id {destination_id}")
+            seen_ids.add(destination_id)
+        if destination:
+            destinations.append(destination)
+    return destinations, errors
+
+
+def _backup_summary_path(target: Path, destination: dict[str, Any]) -> Path:
+    path = Path(str(destination.get("summary_path") or "")).expanduser()
+    return path if path.is_absolute() else target / path
+
+
+def _backup_summary_unsafe_fields(payload: object, prefix: str = "") -> list[str]:
+    unsafe: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            rendered = str(key)
+            normalized = rendered.strip().casefold()
+            path = f"{prefix}.{rendered}" if prefix else rendered
+            if normalized in BACKUP_UNSAFE_FIELDS or any(token in normalized for token in ("password", "secret", "token", "webhook")):
+                unsafe.append(path)
+                continue
+            unsafe.extend(_backup_summary_unsafe_fields(value, path))
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload, start=1):
+            unsafe.extend(_backup_summary_unsafe_fields(value, f"{prefix}[{index}]"))
+    return unsafe
+
+
+def _backup_result_ok(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip().casefold() in {"ok", "success", "passed", "pass"}
+
+
+def _backup_age_hours(value: object, now: datetime) -> float | None:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return None
+    return (now - parsed).total_seconds() / 3600
+
+
+def _backup_issue(
+    destination: dict[str, Any],
+    issue_type: str,
+    detail: str,
+    *,
+    severity: str = WARN,
+    summary: str | None = None,
+    evidence_path: str | None = None,
+    unsafe_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    destination_id = str(destination.get("id") or "unknown")
+    payload: dict[str, Any] = {
+        "status": severity,
+        "name": f"backup_{issue_type}",
+        "destination": destination_id,
+        "kind": destination.get("kind"),
+        "issue_type": issue_type,
+        "detail": detail,
+    }
+    if summary:
+        payload["summary"] = summary
+    if evidence_path:
+        payload["evidence_path"] = evidence_path
+    if unsafe_fields:
+        payload["unsafe_fields"] = unsafe_fields
+    return payload
+
+
+def _backup_destination_checks(target: Path, destination: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    path = _backup_summary_path(target, destination)
+    if not path.is_file():
+        return [_backup_issue(destination, "missing_summary", f"missing summary: {path}")]
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return [_backup_issue(destination, "invalid_summary", f"invalid summary JSON: {exc}")]
+    if not isinstance(payload, dict):
+        return [_backup_issue(destination, "invalid_summary", "summary must be a JSON object")]
+    unsafe_fields = _backup_summary_unsafe_fields(payload)
+    safe_summary = _string_field(payload.get("summary")) or _string_field(payload.get("safe_summary"))
+    evidence_path = _string_field(payload.get("evidence_path"))
+    destination_label = _string_field(payload.get("destination_label")) or str(destination.get("id"))
+    if unsafe_fields:
+        checks.append(
+            _backup_issue(
+                destination,
+                "unsafe_summary_fields",
+                f"{destination_label} contains unsafe private field names: {', '.join(unsafe_fields[:8])}",
+                summary=safe_summary,
+                evidence_path=evidence_path,
+                unsafe_fields=unsafe_fields,
+            )
+        )
+    snapshot_age = _backup_age_hours(payload.get("latest_snapshot_at"), now)
+    if snapshot_age is None:
+        checks.append(_backup_issue(destination, "snapshot_missing", f"{destination_label} latest snapshot time is missing", summary=safe_summary, evidence_path=evidence_path))
+    elif snapshot_age > float(destination.get("snapshot_stale_hours", 36)):
+        checks.append(_backup_issue(destination, "snapshot_stale", f"{destination_label} latest snapshot is {snapshot_age:.1f}h old", summary=safe_summary, evidence_path=evidence_path))
+    check_result = payload.get("latest_check_result")
+    check_age = _backup_age_hours(payload.get("latest_check_at"), now)
+    if not _backup_result_ok(check_result):
+        checks.append(_backup_issue(destination, "check_failed", f"{destination_label} latest check result is {check_result or 'missing'}", summary=safe_summary, evidence_path=evidence_path))
+    elif check_age is None:
+        checks.append(_backup_issue(destination, "check_missing", f"{destination_label} latest check time is missing", summary=safe_summary, evidence_path=evidence_path))
+    elif check_age > float(destination.get("check_stale_hours", 168)):
+        checks.append(_backup_issue(destination, "check_stale", f"{destination_label} latest check is {check_age:.1f}h old", summary=safe_summary, evidence_path=evidence_path))
+    prune_result = payload.get("latest_prune_result")
+    prune_age = _backup_age_hours(payload.get("latest_prune_at"), now)
+    if not _backup_result_ok(prune_result):
+        checks.append(_backup_issue(destination, "prune_failed", f"{destination_label} latest prune result is {prune_result or 'missing'}", summary=safe_summary, evidence_path=evidence_path))
+    elif prune_age is None:
+        checks.append(_backup_issue(destination, "prune_missing", f"{destination_label} latest prune time is missing", summary=safe_summary, evidence_path=evidence_path))
+    elif prune_age > float(destination.get("prune_stale_hours", 168)):
+        checks.append(_backup_issue(destination, "prune_stale", f"{destination_label} latest prune is {prune_age:.1f}h old", summary=safe_summary, evidence_path=evidence_path))
+    restore_result = payload.get("latest_restore_rehearsal_result")
+    restore_age = _backup_age_hours(payload.get("latest_restore_rehearsal_at"), now)
+    if not _backup_result_ok(restore_result):
+        checks.append(_backup_issue(destination, "restore_rehearsal_failed", f"{destination_label} latest restore rehearsal result is {restore_result or 'missing'}", summary=safe_summary, evidence_path=evidence_path))
+    elif restore_age is None:
+        checks.append(_backup_issue(destination, "restore_rehearsal_missing", f"{destination_label} latest restore rehearsal time is missing", summary=safe_summary, evidence_path=evidence_path))
+    elif restore_age > float(destination.get("restore_rehearsal_stale_days", 90)) * 24:
+        checks.append(_backup_issue(destination, "restore_rehearsal_overdue", f"{destination_label} latest restore rehearsal is {restore_age / 24:.1f}d old", summary=safe_summary, evidence_path=evidence_path))
+    return checks
+
+
+def _backup_health(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    destinations, errors = _load_backup_config(target)
+    checks: list[dict[str, Any]] = []
+    if errors:
+        status = WARN if not _backup_config_path(target).is_file() else FAIL
+        checks.append({"status": status, "name": "backup_config", "detail": "; ".join(errors)})
+    else:
+        checks.append({"status": OK, "name": "backup_config", "detail": str(_backup_config_path(target))})
+    now = _now() if destinations else None
+    for destination in destinations:
+        if not destination.get("enabled", True):
+            continue
+        if now is not None:
+            checks.extend(_backup_destination_checks(target, destination, now))
+    issues = [check for check in checks if check.get("status") != OK]
+    return {
+        "target": str(target),
+        "config_path": str(_backup_config_path(target)),
+        "valid": not errors,
+        "destinations": destinations,
+        "checks": checks,
+        "issues": issues,
+        "issue_count": len(issues),
+        "top_issue": issues[0] if issues else None,
+    }
+
+
+def _backup_issue_records(target: Path) -> list[dict[str, Any]]:
+    health = _backup_health(target)
+    records: list[dict[str, Any]] = []
+    for issue in health["issues"]:
+        name = str(issue.get("name") or "backup_issue")
+        destination = str(issue.get("destination") or "config")
+        issue_type = str(issue.get("issue_type") or name)
+        detail = str(issue.get("detail") or "")
+        metadata = {
+            "backup_destination": destination,
+            "backup_issue_type": issue_type,
+            "backup_issue_detail": detail,
+            "source_item_key": f"backup-health:{destination}:{issue_type}",
+            "source_fingerprint": _stable_hash(
+                {
+                    "destination": destination,
+                    "issue_type": issue_type,
+                    "detail": detail,
+                    "summary": issue.get("summary"),
+                    "evidence_path": issue.get("evidence_path"),
+                    "unsafe_fields": issue.get("unsafe_fields"),
+                }
+            ),
+        }
+        if issue.get("summary"):
+            metadata["safe_summary"] = issue["summary"]
+        if issue.get("evidence_path"):
+            metadata["evidence_path"] = issue["evidence_path"]
+        if issue.get("unsafe_fields"):
+            metadata["unsafe_fields"] = issue["unsafe_fields"]
+        records.append(
+            {
+                "text": f"Repair backup health issue {destination}/{issue_type}: {detail}",
+                "kind": "task" if issue_type in {"missing_summary", "unsafe_summary_fields"} else "incident",
+                "source": "backup-health",
+                "type": "workflow",
+                "priority": "high" if issue_type in {"snapshot_stale", "check_failed", "restore_rehearsal_failed"} else "normal",
+                "template": "bugfix",
+                "acceptance": [f"`brigade work backup doctor` no longer reports {destination}/{issue_type}."],
+                "metadata": metadata,
+            }
+        )
+    return records
+
+
 def _format_scanner_toml(scanners: tuple[dict[str, Any], ...] = SCANNER_DEFAULTS) -> str:
     lines = [
         "# Local scanner registry. Brigade plans and inspects these commands but does not run them automatically.",
@@ -2067,6 +2392,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     pending_import_counts = _import_counts(pending_imports)
     scanner_candidate = _scanner_candidate(pending_imports)
     scanner_health = _scanner_health(target)
+    backup_health = _backup_health(target)
     handoff_issues = handoff_cmd.collect_issues(target)
     known_handoff_issue_ids = handoff_cmd._known_local_issue_ids(target)
     new_handoff_issues = [issue for issue in handoff_issues if issue.id not in known_handoff_issue_ids]
@@ -2087,6 +2413,12 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "config_path": scanner_health["config_path"],
             "checks": scanner_health["checks"],
             "next_run": scanner_health["next_run"],
+        },
+        "backup_health": {
+            "config_path": backup_health["config_path"],
+            "issue_count": backup_health["issue_count"],
+            "top_issue": backup_health["top_issue"],
+            "valid": backup_health["valid"],
         },
         "handoff_issues": {
             "count": len(new_handoff_issues),
@@ -2623,6 +2955,18 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
             print(
                 "scanner_next_run: "
                 f"{next_scanner.get('id')} {next_scanner.get('start')} {next_scanner.get('cadence')}"
+            )
+
+    backup_health = payload.get("backup_health") if isinstance(payload.get("backup_health"), dict) else {}
+    if backup_health:
+        print(f"backup_config: {backup_health.get('config_path')}")
+        print(f"backup_health: {'ok' if backup_health.get('issue_count') == 0 else f'{backup_health.get('issue_count')} issue(s)'}")
+        top_backup = backup_health.get("top_issue") if isinstance(backup_health.get("top_issue"), dict) else None
+        if top_backup:
+            print(
+                "backup_top_issue: "
+                f"{top_backup.get('destination')}/{top_backup.get('issue_type')} "
+                f"{_short(str(top_backup.get('detail', '')))}"
             )
 
     handoff_issues = payload.get("handoff_issues")
@@ -3918,6 +4262,110 @@ def import_dismiss(
     return 0
 
 
+def backup_init(*, target: Path, force: bool = False, update_gitignore: bool = True) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    path = _backup_config_path(target)
+    if path.exists() and not force:
+        print(f"error: backup config already exists: {path}", file=sys.stderr)
+        return 2
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_format_backup_toml())
+    print(f"backup_config: {path}")
+    print(f"destinations: {len(BACKUP_DEFAULTS)}")
+    if update_gitignore:
+        result = apply_gitignore(target, _work_selection(target, dogfood_cmd.default_handoff_inbox(target)))
+        print(f"gitignore: {result}")
+    else:
+        print("gitignore: skipped")
+    print("next_command: brigade work backup status")
+    return 0
+
+
+def backup_status(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    health = _backup_health(target)
+    if json_output:
+        print(json.dumps(health, indent=2, sort_keys=True))
+        return 0 if health["valid"] else 1
+    print(f"work backup status: {target}")
+    print(f"config_path: {health['config_path']}")
+    if not health["valid"]:
+        for check in health["checks"]:
+            if check.get("name") == "backup_config":
+                print(f"error: {check.get('detail')}")
+        return 1
+    destinations = health.get("destinations") if isinstance(health.get("destinations"), list) else []
+    print(f"destinations: {len(destinations)}")
+    for destination in destinations:
+        if not isinstance(destination, dict):
+            continue
+        status = "enabled" if destination.get("enabled", True) else "disabled"
+        destination_issues = [
+            issue for issue in health["issues"] if issue.get("destination") == destination.get("id")
+        ]
+        print(f"- {destination.get('id')} [{status}] {destination.get('kind')} issues={len(destination_issues)}")
+        print(f"  summary: {destination.get('summary_path')}")
+    top_issue = health.get("top_issue")
+    if isinstance(top_issue, dict):
+        print(f"top_issue: {top_issue.get('destination')}/{top_issue.get('issue_type')} {top_issue.get('detail')}")
+    else:
+        print("top_issue: none")
+    return 0
+
+
+def backup_doctor(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    health = _backup_health(target)
+    if json_output:
+        print(json.dumps(health, indent=2, sort_keys=True))
+        return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
+    print(f"work backup doctor: {target}")
+    print(f"config_path: {health['config_path']}")
+    for check in health["checks"]:
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+    print(f"backup_issues: {health['issue_count']}")
+    return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
+
+
+def backup_import_issues(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    records = _backup_issue_records(target)
+    imported, skipped, skipped_dismissed = _append_import_records(target, records)
+    payload = {
+        "target": str(target),
+        "imports_path": str(_imports_path(target)),
+        "issues": len(records),
+        "created": len(imported),
+        "skipped": len(skipped),
+        "dismissed": len(skipped_dismissed),
+        "imports": imported,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"backup issue imports: {target}")
+    print(f"imports_path: {payload['imports_path']}")
+    print(f"issues: {len(records)}")
+    print(f"created: {len(imported)}")
+    print(f"skipped: {len(skipped)}")
+    print(f"dismissed: {len(skipped_dismissed)}")
+    for item in imported:
+        print(f"- {item.get('id')} [{item.get('kind')}] {_short(str(item.get('text', '')))}")
+    return 0
+
+
 def scanners_init(*, target: Path, force: bool = False, update_gitignore: bool = True) -> int:
     target = target.expanduser().resolve()
     if not target.is_dir():
@@ -4629,6 +5077,12 @@ def doctor(*, target: Path) -> int:
             failures += 1
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
 
+    backup_health = _backup_health(effective_target)
+    for check in backup_health["checks"]:
+        if check.get("status") == FAIL:
+            failures += 1
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+
     handoff_inbox = (
         cfg.handoff_inbox
         if cfg and cfg.handoff_inbox is not None
@@ -4642,6 +5096,8 @@ def doctor(*, target: Path) -> int:
     _doctor_line(_doctor_ignore_level(artifacts_ignored), "artifacts_ignored", artifacts_ignored)
     security_ignored = dogfood_cmd._check_git_ignored(effective_target, security_artifacts)
     _doctor_line(_doctor_ignore_level(security_ignored), "security_ignored", security_ignored)
+    backup_config_ignored = dogfood_cmd._check_git_ignored(effective_target, _backup_config_path(effective_target))
+    _doctor_line(_doctor_ignore_level(backup_config_ignored), "backup_config_ignored", backup_config_ignored)
     scanner_config_ignored = dogfood_cmd._check_git_ignored(effective_target, _scanner_config_path(effective_target))
     _doctor_line(_doctor_ignore_level(scanner_config_ignored), "scanner_config_ignored", scanner_config_ignored)
     work_ignored = dogfood_cmd._check_git_ignored(effective_target, work_root)
