@@ -63,6 +63,7 @@ def build_gitignore_block(selection: Selection) -> str:
         "# brigade local state (logs, scrub cache, dogfood runs, work sessions).",
         ".brigade/dogfood.toml",
         ".brigade/handoff-sources.json",
+        ".brigade/scanners.toml",
         ".brigade/security.toml",
         ".brigade/logs/",
         ".brigade/runs/",

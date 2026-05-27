@@ -173,6 +173,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_inbox.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_inbox.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_inbox.add_argument("--limit", type=int, default=20, help="Maximum imports to show.")
+    p_work_scanners = work_sub.add_parser("scanners", help="Inspect local scanner registry and schedule plans.")
+    scanners_sub = p_work_scanners.add_subparsers(dest="scanners_command", metavar="<scanners-command>")
+    scanners_sub.required = True
+    p_work_scanners_init = scanners_sub.add_parser("init", help="Write a local scanner registry config.")
+    p_work_scanners_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_scanners_init.add_argument("--force", action="store_true", help="Overwrite an existing scanner config.")
+    p_work_scanners_init.add_argument("--no-gitignore", action="store_true", help="Do not update the target .gitignore.")
+    p_work_scanners_list = scanners_sub.add_parser("list", help="List configured local scanners.")
+    p_work_scanners_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_scanners_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_show = scanners_sub.add_parser("show", help="Show one configured scanner.")
+    p_work_scanners_show.add_argument("scanner_id", help="Scanner id.")
+    p_work_scanners_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_scanners_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_plan = scanners_sub.add_parser("plan", help="Plan scanner run windows without executing scanners.")
+    p_work_scanners_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_scanners_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_doctor = scanners_sub.add_parser("doctor", help="Check scanner registry health.")
+    p_work_scanners_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_scanners_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_doctor.add_argument("--import-issues", action="store_true", help="Import scanner health issues into the work inbox.")
     p_work_next = work_sub.add_parser("next", help="Show the next daily work task and suggested command.")
     p_work_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_next.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -782,6 +803,27 @@ def main(argv=None) -> int:
             return work_cmd.brief(target=args.target, limit=args.limit, json_output=args.json)
         if args.work_command == "inbox":
             return work_cmd.inbox(target=args.target, json_output=args.json, limit=args.limit)
+        if args.work_command == "scanners":
+            if args.scanners_command == "init":
+                return work_cmd.scanners_init(
+                    target=args.target,
+                    force=args.force,
+                    update_gitignore=not args.no_gitignore,
+                )
+            if args.scanners_command == "list":
+                return work_cmd.scanners_list(target=args.target, json_output=args.json)
+            if args.scanners_command == "show":
+                return work_cmd.scanners_show(target=args.target, scanner_id=args.scanner_id, json_output=args.json)
+            if args.scanners_command == "plan":
+                return work_cmd.scanners_plan(target=args.target, json_output=args.json)
+            if args.scanners_command == "doctor":
+                return work_cmd.scanners_doctor(
+                    target=args.target,
+                    json_output=args.json,
+                    import_issues=args.import_issues,
+                )
+            parser.error(f"unknown scanners command: {args.scanners_command}")
+            return 2
         if args.work_command == "next":
             return work_cmd.next(target=args.target, json_output=args.json)
         if args.work_command == "tasks":

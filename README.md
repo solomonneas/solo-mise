@@ -168,6 +168,11 @@ brigade work brief
 brigade work brief --json
 brigade work inbox
 brigade work inbox --json
+brigade work scanners init
+brigade work scanners list
+brigade work scanners show chat-memory-sweep
+brigade work scanners plan
+brigade work scanners doctor
 brigade work next
 brigade work next --json
 brigade work tasks
@@ -278,6 +283,7 @@ Start-of-day commands:
 - `brigade work doctor` checks dogfood config, security config, evidence bundles, Codex CLI, artifact paths, handoff inbox, task acceptance, issue-backed tasks, stale active sessions, ignore coverage, and latest run context.
 - `brigade work resume` shows the active or latest session, latest dogfood run, extracted next step, and suggested command.
 - `brigade work inbox` groups pending scanner imports by source, kind, priority, age, and acceptance coverage, then suggests plan, promote, dismiss, or run commands.
+- `brigade work scanners plan` inspects the local scanner registry and suggests staggered run windows without executing scanners.
 - `brigade work next` prints only the next task. Add `--json` for wrappers.
 
 Task ledger commands:
@@ -316,6 +322,15 @@ Scanner-authored task imports may include `type`, `priority`, `template`, and `a
 Scanner producer imports use source item keys and fingerprints when available. Repeated ingestion skips equivalent pending or promoted imports, and dismissed imports stay dismissed unless the source item changes materially.
 `brigade work doctor` warns when scanner queues go stale, task imports lack acceptance criteria, or a source produces many dismissed imports.
 For handoff-ingest issues, prefer `brigade handoff sync-issues` over repeated raw imports. It imports only issue ids that have not already been seen locally and marks stale handoff-ingest imports/tasks resolved when the latest log no longer contains them.
+
+Scanner registry commands:
+
+- `brigade work scanners init` writes gitignored `.brigade/scanners.toml` with local producer entries for chat sweep, memory refresh, handoff ingest sync, and security findings.
+- `brigade work scanners list` and `show <scanner-id>` inspect configured scanner commands, sources, cadence, timeout, output paths, and conflict windows.
+- `brigade work scanners plan` calculates intended run windows, reports overlaps or clustered jobs, and prints a suggested staggered schedule.
+- `brigade work scanners doctor --import-issues` reports missing config, disabled required producers, bad commands, missing or stale output paths, and schedule conflicts, then can import those health issues as local task imports.
+
+The scanner registry is a planner and health surface only. Brigade does not install cron jobs, start a daemon, run scanners automatically, or promote scanner output automatically.
 
 Run the daily loop with `brigade work run`.
 It opens a work session, resolves the next task, runs `brigade dogfood`, and closes completed ledger tasks after successful runs.

@@ -32,6 +32,7 @@ Goal: make Brigade a safe target for local automations that discover useful work
 - Surface pending imports and grouped counts in `brigade work brief` so discovered work appears in the daily flow. Status: implemented with scanner candidate surfacing and `brigade work inbox`.
 - Warn on stale, noisy, or incomplete scanner queues. Status: started in `brigade work doctor`.
 - Keep scanner producer ingestion idempotent so repeated chat and memory sweeps skip equivalent pending or promoted imports, and dismissed items stay dismissed until source fingerprints change. Status: implemented for chat-sweep and memory-refresh producers.
+- Describe local scanner producers and plan safe schedules without executing them. Status: implemented with gitignored `.brigade/scanners.toml`, `brigade work scanners`, daily brief visibility, work doctor checks, and scanner-health imports.
 
 ## Later Phase: Chat Surface Scanners
 
@@ -44,7 +45,7 @@ Goal: support the common places agent work happens without making any one chat p
 - Keep source metadata such as workspace, channel, thread, message range, and confidence local unless explicitly exported.
 - Maintain a local provider registry for OpenClaw, Peter S, Vincent, and other chat plugins instead of hardcoding one product list. Seeded channel families include Discord, Slack, ClickClack, Telegram, WhatsApp, Signal, iMessage, BlueBubbles, Google Chat, Microsoft Teams, Matrix, Mattermost, Nextcloud Talk, Feishu, Line, QQ bot, Zalo, Nostr, IRC, Twitch, Tlon, Google Meet, voice-call transcripts, webhooks, and QA channels.
 - Import nightly memory sweep `issues` into Brigade with `brigade work import chat-sweep`. Status: implemented for the local producer contract, including actionable task imports, wrapper JSON counts, source metadata, idempotency, and raw-chat privacy filtering.
-- Add scheduler rules that spread memory ingest, crawler repair, chat sweeps, and OpenClaw updater jobs around update windows so upgrades do not race plugin or extension loads.
+- Add scheduler rules that spread memory ingest, crawler repair, chat sweeps, and OpenClaw updater jobs around update windows so upgrades do not race plugin or extension loads. Status: started with local scanner schedule planning and conflict warnings, without cron mutation or daemon execution.
 
 ## Later Phase: Backup And Recovery Visibility
 

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 
@@ -1377,6 +1378,156 @@ def test_work_inbox_groups_scanner_imports_and_reports_candidate(tmp_path, monke
     assert payload["counts"]["acceptance"] == {"missing": 1, "ready": 1}
     assert payload["counts"]["stale"] == 1
     assert payload["candidate"]["id"] == "ready-task"
+
+
+def test_work_scanners_init_list_show_plan_and_json(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+
+    assert work_cmd.scanners_init(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    config = tmp_path / ".brigade" / "scanners.toml"
+    assert f"scanner_config: {config}" in out
+    assert "scanners: 4" in out
+    assert ".brigade/scanners.toml" in (tmp_path / ".gitignore").read_text()
+
+    assert work_cmd.scanners_list(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "work scanners:" in out
+    assert "- chat-memory-sweep [enabled] daily@02:15 source=chat-memory-sweep" in out
+    assert "brigade work import chat-sweep --json" in out
+
+    assert work_cmd.scanners_list(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is True
+    assert payload["scanners"][0]["id"] == "chat-memory-sweep"
+
+    assert work_cmd.scanners_show(target=tmp_path, scanner_id="memory-refresh") == 0
+    out = capsys.readouterr().out
+    assert "scanner: memory-refresh" in out
+    assert "source: memory-refresh" in out
+
+    assert work_cmd.scanners_plan(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "work scanners plan:" in out
+    assert "planned:" in out
+    assert "conflicts: none" in out
+    assert "suggested_schedule:" in out
+
+    assert work_cmd.scanners_plan(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is True
+    assert payload["planned"][0]["id"] == "handoff-ingest"
+    assert payload["suggestions"]
+
+
+def test_work_scanners_plan_detects_conflicts_and_suggests_staggering(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    config = tmp_path / ".brigade" / "scanners.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """
+[[scanner]]
+id = "chat-memory-sweep"
+source = "chat-memory-sweep"
+command = "brigade work import chat-sweep --json"
+cadence = "daily@02:00"
+enabled = true
+timeout = 900
+output_path = ".brigade/chat-memory-sweeps/latest.json"
+conflict_window = "02:00-02:30"
+
+[[scanner]]
+id = "memory-refresh"
+source = "memory-refresh"
+command = "brigade work import memory-refresh --json"
+cadence = "daily@02:05"
+enabled = true
+timeout = 300
+output_path = "memory/cards/decay/refresh-queue.json"
+conflict_window = "02:10-02:40"
+"""
+    )
+
+    assert work_cmd.scanners_plan(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "run_overlap: chat-memory-sweep, memory-refresh" in out
+    assert "window_overlap: chat-memory-sweep, memory-refresh" in out
+    assert "clustered_runs: chat-memory-sweep, memory-refresh" in out
+    assert "memory-refresh: daily@02:15" in out
+
+    assert work_cmd.scanners_plan(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert {item["type"] for item in payload["conflicts"]} == {
+        "run_overlap",
+        "window_overlap",
+        "clustered_runs",
+    }
+    assert payload["suggestions"][1]["suggested_cadence"] == "daily@02:15"
+
+
+def test_work_scanners_doctor_warns_for_missing_stale_bad_and_imports_issues(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    output = tmp_path / ".brigade" / "chat-memory-sweeps" / "latest.json"
+    output.parent.mkdir(parents=True)
+    output.write_text("{}\n")
+    old = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(output, (old, old))
+    config = tmp_path / ".brigade" / "scanners.toml"
+    config.write_text(
+        f"""
+[[scanner]]
+id = "chat-memory-sweep"
+source = "chat-memory-sweep"
+command = "missing-scanner-command --flag"
+cadence = "daily@02:00"
+enabled = true
+timeout = 300
+output_path = "{output.relative_to(tmp_path)}"
+conflict_window = "02:00-02:30"
+"""
+    )
+
+    assert work_cmd.scanners_doctor(target=tmp_path, import_issues=True) == 0
+    out = capsys.readouterr().out
+    assert "[warn] scanner_required:" in out
+    assert "[warn] scanner_commands: chat-memory-sweep" in out
+    assert "[warn] scanner_outputs: stale=chat-memory-sweep=120.0h" in out
+    assert "imported_issues:" in out
+    assert work_cmd.import_list(target=tmp_path, json_output=True) == 0
+    imports = json.loads(capsys.readouterr().out)["imports"]
+    assert any(item["source"] == "scanner-health" for item in imports)
+
+    assert work_cmd.scanners_doctor(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checks"]
+    assert payload["import_issues"] if "import_issues" in payload else True
+
+
+def test_work_brief_and_doctor_include_scanner_health(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    assert work_cmd.scanners_init(target=tmp_path, update_gitignore=False) == 0
+    capsys.readouterr()
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "scanner_config:" in out
+    assert "scanner_health:" in out
+    assert "scanner_next_run:" in out
+
+    assert work_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[ok] scanner_config:" in out
+    assert "[ok] scanner_required:" in out
+    assert "[warn] scanner_outputs:" in out
 
 
 def test_work_import_plan_previews_promoted_task(tmp_path, monkeypatch, capsys):
@@ -2995,6 +3146,49 @@ def test_work_inbox_cli(tmp_path, monkeypatch):
     seen.clear()
     assert cli.main(["work", "inbox", "--target", str(tmp_path), "--json"]) == 0
     assert seen == {"target": tmp_path, "json_output": True, "limit": 20}
+
+
+def test_work_scanners_cli(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_scanners_init(**kwargs):
+        seen.append(("init", kwargs))
+        return 0
+
+    def fake_scanners_list(**kwargs):
+        seen.append(("list", kwargs))
+        return 0
+
+    def fake_scanners_show(**kwargs):
+        seen.append(("show", kwargs))
+        return 0
+
+    def fake_scanners_plan(**kwargs):
+        seen.append(("plan", kwargs))
+        return 0
+
+    def fake_scanners_doctor(**kwargs):
+        seen.append(("doctor", kwargs))
+        return 0
+
+    monkeypatch.setattr(work_cmd, "scanners_init", fake_scanners_init)
+    monkeypatch.setattr(work_cmd, "scanners_list", fake_scanners_list)
+    monkeypatch.setattr(work_cmd, "scanners_show", fake_scanners_show)
+    monkeypatch.setattr(work_cmd, "scanners_plan", fake_scanners_plan)
+    monkeypatch.setattr(work_cmd, "scanners_doctor", fake_scanners_doctor)
+
+    assert cli.main(["work", "scanners", "init", "--target", str(tmp_path), "--force", "--no-gitignore"]) == 0
+    assert cli.main(["work", "scanners", "list", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["work", "scanners", "show", "chat-memory-sweep", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["work", "scanners", "plan", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["work", "scanners", "doctor", "--target", str(tmp_path), "--json", "--import-issues"]) == 0
+    assert seen == [
+        ("init", {"target": tmp_path, "force": True, "update_gitignore": False}),
+        ("list", {"target": tmp_path, "json_output": True}),
+        ("show", {"target": tmp_path, "scanner_id": "chat-memory-sweep", "json_output": True}),
+        ("plan", {"target": tmp_path, "json_output": True}),
+        ("doctor", {"target": tmp_path, "json_output": True, "import_issues": True}),
+    ]
 
 
 def test_work_next_cli(tmp_path, monkeypatch):

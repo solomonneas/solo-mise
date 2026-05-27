@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback.
+    tomllib = None  # type: ignore[assignment]
+
 from . import dogfood_cmd
 from .install import apply_gitignore
 from .selection import Selection
@@ -89,6 +94,51 @@ ACTIVE_SESSION_STALE_HOURS = 24
 IMPORT_STALE_HOURS = 72
 DISMISSED_SOURCE_WARN_THRESHOLD = 5
 PRIORITY_RANK = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+SCANNER_CONFIG_REL_PATH = ".brigade/scanners.toml"
+SCANNER_OUTPUT_STALE_HOURS = 48
+SCANNER_REQUIRED_IDS = ("chat-memory-sweep", "memory-refresh", "handoff-ingest", "security-findings")
+SCANNER_DEFAULTS = (
+    {
+        "id": "chat-memory-sweep",
+        "source": "chat-memory-sweep",
+        "command": "brigade work import chat-sweep --json",
+        "cadence": "daily@02:15",
+        "enabled": True,
+        "timeout": 300,
+        "output_path": ".brigade/chat-memory-sweeps/latest.json",
+        "conflict_window": "02:00-02:30",
+    },
+    {
+        "id": "memory-refresh",
+        "source": "memory-refresh",
+        "command": "brigade work import memory-refresh --json",
+        "cadence": "daily@02:45",
+        "enabled": True,
+        "timeout": 300,
+        "output_path": "memory/cards/decay/refresh-queue.json",
+        "conflict_window": "02:30-03:00",
+    },
+    {
+        "id": "handoff-ingest",
+        "source": "handoff-ingest",
+        "command": "brigade handoff sync-issues --json",
+        "cadence": "hourly@15",
+        "enabled": True,
+        "timeout": 180,
+        "output_path": ".brigade/handoff-sources.json",
+        "conflict_window": "00:10-00:25",
+    },
+    {
+        "id": "security-findings",
+        "source": "security-scan",
+        "command": "brigade security scan --import-findings",
+        "cadence": "daily@03:30",
+        "enabled": True,
+        "timeout": 600,
+        "output_path": ".brigade/security/latest/security-report.json",
+        "conflict_window": "03:20-03:50",
+    },
+)
 CONFIDENCE_RANK = {"high": 0, "medium": 1, "normal": 1, "low": 2}
 RAW_CHAT_FIELDS = {
     "body",
@@ -172,6 +222,10 @@ def _tasks_path(target: Path) -> Path:
 
 def _imports_path(target: Path) -> Path:
     return _work_root(target) / "imports" / "inbox.jsonl"
+
+
+def _scanner_config_path(target: Path) -> Path:
+    return target / SCANNER_CONFIG_REL_PATH
 
 
 def _git_snapshot(target: Path) -> dict[str, Any]:
@@ -1240,6 +1294,323 @@ def _parse_since(value: str | None) -> datetime | None:
     return datetime.combine(parsed_date, time.min, tzinfo=timezone.utc)
 
 
+def _format_scanner_toml(scanners: tuple[dict[str, Any], ...] = SCANNER_DEFAULTS) -> str:
+    lines = [
+        "# Local scanner registry. Brigade plans and inspects these commands but does not run them automatically.",
+        "",
+    ]
+    for scanner in scanners:
+        lines.append("[[scanner]]")
+        for key in ("id", "source", "command", "cadence", "enabled", "timeout", "output_path", "conflict_window"):
+            value = scanner[key]
+            lines.append(f"{key} = {dogfood_cmd._format_toml_value(value)}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _load_scanner_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    path = _scanner_config_path(target)
+    if not path.is_file():
+        return [], [f"scanner config missing: {path}"]
+    if tomllib is None:
+        return [], ["scanner config requires Python tomllib support"]
+    try:
+        payload = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:  # type: ignore[union-attr]
+        return [], [f"invalid scanner config: {exc}"]
+    values = payload.get("scanner")
+    if not isinstance(values, list):
+        return [], ["scanner config must contain [[scanner]] entries"]
+    scanners: list[dict[str, Any]] = []
+    errors: list[str] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(values, start=1):
+        label = f"scanner {index}"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be a table")
+            continue
+        scanner: dict[str, Any] = {}
+        for field in ("id", "command", "source", "cadence", "output_path", "conflict_window"):
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{label}: {field} must be a non-empty string")
+            else:
+                scanner[field] = value.strip()
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            errors.append(f"{label}: enabled must be true or false")
+        else:
+            scanner["enabled"] = enabled
+        timeout = item.get("timeout", 300)
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            errors.append(f"{label}: timeout must be a positive number")
+        else:
+            scanner["timeout"] = float(timeout)
+        scanner_id = scanner.get("id")
+        if isinstance(scanner_id, str):
+            if scanner_id in seen_ids:
+                errors.append(f"{label}: duplicate id {scanner_id}")
+            seen_ids.add(scanner_id)
+        if "cadence" in scanner and _scanner_start_minute(scanner["cadence"]) is None:
+            errors.append(f"{label}: cadence must be daily@HH:MM or hourly@MM")
+        if "conflict_window" in scanner and _scanner_window_minutes(scanner["conflict_window"]) is None:
+            errors.append(f"{label}: conflict_window must be HH:MM-HH:MM")
+        if scanner:
+            scanners.append(scanner)
+    return scanners, errors
+
+
+def _parse_clock_minutes(value: str) -> int | None:
+    match = re.fullmatch(r"([0-2]?\d):([0-5]\d)", value.strip())
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23:
+        return None
+    return hour * 60 + minute
+
+
+def _format_clock_minutes(value: int) -> str:
+    minute = value % (24 * 60)
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _scanner_start_minute(cadence: str) -> int | None:
+    daily = re.fullmatch(r"daily@(.+)", cadence.strip())
+    if daily:
+        return _parse_clock_minutes(daily.group(1))
+    hourly = re.fullmatch(r"hourly@([0-5]?\d)", cadence.strip())
+    if hourly:
+        return int(hourly.group(1))
+    return None
+
+
+def _scanner_window_minutes(value: str) -> tuple[int, int] | None:
+    if "-" not in value:
+        return None
+    start_raw, end_raw = value.split("-", 1)
+    start = _parse_clock_minutes(start_raw)
+    end = _parse_clock_minutes(end_raw)
+    if start is None or end is None or start == end:
+        return None
+    if end < start:
+        end += 24 * 60
+    return start, end
+
+
+def _scanner_duration_minutes(scanner: dict[str, Any]) -> int:
+    timeout = scanner.get("timeout")
+    seconds = float(timeout) if isinstance(timeout, (int, float)) else 300.0
+    return max(5, int((seconds + 59) // 60))
+
+
+def _scanner_command_ok(command: str) -> bool:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    if not parts:
+        return False
+    executable = parts[0]
+    if executable == "brigade":
+        return True
+    if "/" in executable:
+        return Path(executable).expanduser().exists()
+    return shutil.which(executable) is not None
+
+
+def _scanner_plan_payload(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    scanners, errors = _load_scanner_config(target)
+    enabled = [scanner for scanner in scanners if scanner.get("enabled", True)]
+    planned: list[dict[str, Any]] = []
+    for scanner in enabled:
+        start = _scanner_start_minute(str(scanner.get("cadence", "")))
+        if start is None:
+            continue
+        duration = _scanner_duration_minutes(scanner)
+        planned.append(
+            {
+                "id": scanner.get("id"),
+                "source": scanner.get("source"),
+                "command": scanner.get("command"),
+                "cadence": scanner.get("cadence"),
+                "start_minute": start,
+                "start": _format_clock_minutes(start),
+                "duration_minutes": duration,
+                "end": _format_clock_minutes(start + duration),
+                "conflict_window": scanner.get("conflict_window"),
+                "output_path": scanner.get("output_path"),
+            }
+        )
+    planned.sort(key=lambda item: int(item.get("start_minute", 0)))
+
+    conflicts: list[dict[str, Any]] = []
+    for index, left in enumerate(planned):
+        left_start = int(left["start_minute"])
+        left_end = left_start + int(left["duration_minutes"])
+        left_window = _scanner_window_minutes(str(left.get("conflict_window") or ""))
+        for right in planned[index + 1 :]:
+            right_start = int(right["start_minute"])
+            right_end = right_start + int(right["duration_minutes"])
+            right_window = _scanner_window_minutes(str(right.get("conflict_window") or ""))
+            if left_start < right_end and right_start < left_end:
+                conflicts.append({"type": "run_overlap", "scanners": [left["id"], right["id"]]})
+            if left_window and right_window and left_window[0] < right_window[1] and right_window[0] < left_window[1]:
+                conflicts.append({"type": "window_overlap", "scanners": [left["id"], right["id"]]})
+            if abs(right_start - left_start) < 15:
+                conflicts.append({"type": "clustered_runs", "scanners": [left["id"], right["id"]]})
+
+    suggestions: list[dict[str, Any]] = []
+    next_start: int | None = None
+    for item in planned:
+        current = int(item["start_minute"])
+        suggested = current if next_start is None else max(current, next_start)
+        suggestions.append(
+            {
+                "id": item["id"],
+                "current": item["cadence"],
+                "suggested_start": _format_clock_minutes(suggested),
+                "suggested_cadence": f"daily@{_format_clock_minutes(suggested)}"
+                if str(item.get("cadence", "")).startswith("daily@")
+                else f"hourly@{suggested % 60:02d}",
+            }
+        )
+        next_start = suggested + 15
+
+    return {
+        "target": str(target),
+        "config_path": str(_scanner_config_path(target)),
+        "valid": not errors,
+        "errors": errors,
+        "scanners": scanners,
+        "planned": planned,
+        "conflicts": conflicts,
+        "suggestions": suggestions,
+    }
+
+
+def _scanner_health(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    plan = _scanner_plan_payload(target)
+    scanners = plan["scanners"] if isinstance(plan.get("scanners"), list) else []
+    checks: list[dict[str, Any]] = []
+    if not _scanner_config_path(target).is_file():
+        checks.append(
+            {
+                "status": WARN,
+                "name": "scanner_config",
+                "detail": f"missing, run `brigade work scanners init --target {target}`",
+            }
+        )
+    elif plan.get("valid"):
+        checks.append({"status": OK, "name": "scanner_config", "detail": plan["config_path"]})
+    else:
+        checks.append({"status": FAIL, "name": "scanner_config", "detail": "; ".join(plan.get("errors", []))})
+
+    by_id = {scanner.get("id"): scanner for scanner in scanners if isinstance(scanner, dict)}
+    missing_required = [scanner_id for scanner_id in SCANNER_REQUIRED_IDS if scanner_id not in by_id]
+    disabled_required = [
+        scanner_id
+        for scanner_id in SCANNER_REQUIRED_IDS
+        if isinstance(by_id.get(scanner_id), dict) and not by_id[scanner_id].get("enabled", True)
+    ]
+    if missing_required or disabled_required:
+        detail_parts = []
+        if missing_required:
+            detail_parts.append(f"missing={','.join(missing_required)}")
+        if disabled_required:
+            detail_parts.append(f"disabled={','.join(disabled_required)}")
+        checks.append({"status": WARN, "name": "scanner_required", "detail": "; ".join(detail_parts)})
+    else:
+        checks.append({"status": OK, "name": "scanner_required", "detail": "required local producers are enabled"})
+
+    bad_commands = [
+        str(scanner.get("id"))
+        for scanner in scanners
+        if scanner.get("enabled", True) and not _scanner_command_ok(str(scanner.get("command") or ""))
+    ]
+    if bad_commands:
+        checks.append({"status": WARN, "name": "scanner_commands", "detail": ", ".join(bad_commands)})
+    else:
+        checks.append({"status": OK, "name": "scanner_commands", "detail": "enabled scanner commands are resolvable"})
+
+    stale_outputs: list[str] = []
+    missing_outputs: list[str] = []
+    now = _now() if scanners else None
+    for scanner in scanners:
+        if not scanner.get("enabled", True):
+            continue
+        output = scanner.get("output_path")
+        if not isinstance(output, str) or not output.strip():
+            continue
+        path = Path(output).expanduser()
+        path = path if path.is_absolute() else target / path
+        if not path.exists():
+            missing_outputs.append(str(scanner.get("id")))
+            continue
+        if now is None:
+            continue
+        age_hours = (now.timestamp() - path.stat().st_mtime) / 3600
+        if age_hours > SCANNER_OUTPUT_STALE_HOURS:
+            stale_outputs.append(f"{scanner.get('id')}={age_hours:.1f}h")
+    if missing_outputs or stale_outputs:
+        parts = []
+        if missing_outputs:
+            parts.append(f"missing={','.join(missing_outputs)}")
+        if stale_outputs:
+            parts.append(f"stale={','.join(stale_outputs)}")
+        checks.append({"status": WARN, "name": "scanner_outputs", "detail": "; ".join(parts)})
+    else:
+        checks.append({"status": OK, "name": "scanner_outputs", "detail": "enabled scanner outputs exist and are fresh"})
+
+    conflicts = plan.get("conflicts") if isinstance(plan.get("conflicts"), list) else []
+    if conflicts:
+        rendered = ", ".join(f"{item.get('type')}:{'/'.join(str(v) for v in item.get('scanners', []))}" for item in conflicts[:5])
+        checks.append({"status": WARN, "name": "scanner_schedule", "detail": rendered})
+    elif plan.get("valid"):
+        checks.append({"status": OK, "name": "scanner_schedule", "detail": "no scanner schedule conflicts"})
+
+    next_run = plan.get("planned", [None])[0] if plan.get("planned") else None
+    return {
+        "target": str(target),
+        "config_path": str(_scanner_config_path(target)),
+        "checks": checks,
+        "plan": plan,
+        "next_run": next_run,
+    }
+
+
+def _scanner_health_issue_records(target: Path) -> list[dict[str, Any]]:
+    health = _scanner_health(target)
+    records: list[dict[str, Any]] = []
+    for check in health["checks"]:
+        if check.get("status") == OK:
+            continue
+        name = str(check.get("name"))
+        detail = str(check.get("detail"))
+        records.append(
+            {
+                "text": f"Repair scanner health issue {name}: {detail}",
+                "kind": "task",
+                "source": "scanner-health",
+                "type": "workflow",
+                "priority": "normal",
+                "template": "bugfix",
+                "acceptance": [f"`brigade work scanners doctor` no longer reports {name}."],
+                "metadata": {
+                    "scanner_health_check": name,
+                    "scanner_health_status": check.get("status"),
+                    "scanner_health_detail": detail,
+                    "source_item_key": f"scanner-health:{name}",
+                    "source_fingerprint": _stable_hash({"name": name, "detail": detail}),
+                },
+            }
+        )
+    return records
+
+
 def _collect_sessions(root: Path) -> tuple[list[tuple[Path, dict[str, Any]]], int]:
     sessions: list[tuple[Path, dict[str, Any]]] = []
     skipped = 0
@@ -1695,6 +2066,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     pending_imports = _pending_imports(target)
     pending_import_counts = _import_counts(pending_imports)
     scanner_candidate = _scanner_candidate(pending_imports)
+    scanner_health = _scanner_health(target)
     handoff_issues = handoff_cmd.collect_issues(target)
     known_handoff_issue_ids = handoff_cmd._known_local_issue_ids(target)
     new_handoff_issues = [issue for issue in handoff_issues if issue.id not in known_handoff_issue_ids]
@@ -1711,6 +2083,11 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
         "pending_imports": pending_imports,
         "pending_import_counts": pending_import_counts,
         "scanner_candidate": _import_summary(scanner_candidate) if scanner_candidate else None,
+        "scanner_health": {
+            "config_path": scanner_health["config_path"],
+            "checks": scanner_health["checks"],
+            "next_run": scanner_health["next_run"],
+        },
         "handoff_issues": {
             "count": len(new_handoff_issues),
             "known_count": len(handoff_issues) - len(new_handoff_issues),
@@ -2234,6 +2611,19 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
                 f"{_short(str(scanner_candidate.get('text', '')))}"
             )
             print(f"scanner_next_command: brigade work import plan {scanner_candidate.get('id')}")
+
+    scanner_health = payload.get("scanner_health") if isinstance(payload.get("scanner_health"), dict) else {}
+    scanner_checks = scanner_health.get("checks") if isinstance(scanner_health.get("checks"), list) else []
+    if scanner_checks:
+        warnings = [check for check in scanner_checks if isinstance(check, dict) and check.get("status") != OK]
+        print(f"scanner_config: {scanner_health.get('config_path')}")
+        print(f"scanner_health: {'ok' if not warnings else f'{len(warnings)} warning(s)'}")
+        next_scanner = scanner_health.get("next_run") if isinstance(scanner_health.get("next_run"), dict) else None
+        if next_scanner:
+            print(
+                "scanner_next_run: "
+                f"{next_scanner.get('id')} {next_scanner.get('start')} {next_scanner.get('cadence')}"
+            )
 
     handoff_issues = payload.get("handoff_issues")
     if isinstance(handoff_issues, dict) and handoff_issues.get("count"):
@@ -3528,6 +3918,177 @@ def import_dismiss(
     return 0
 
 
+def scanners_init(*, target: Path, force: bool = False, update_gitignore: bool = True) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    path = _scanner_config_path(target)
+    if path.exists() and not force:
+        print(f"error: scanner config already exists: {path}", file=sys.stderr)
+        return 2
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_format_scanner_toml())
+    print(f"scanner_config: {path}")
+    print(f"scanners: {len(SCANNER_DEFAULTS)}")
+    if update_gitignore:
+        result = apply_gitignore(target, _work_selection(target, dogfood_cmd.default_handoff_inbox(target)))
+        print(f"gitignore: {result}")
+    else:
+        print("gitignore: skipped")
+    print("next_command: brigade work scanners plan")
+    return 0
+
+
+def scanners_list(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    scanners, errors = _load_scanner_config(target)
+    payload = {
+        "target": str(target),
+        "config_path": str(_scanner_config_path(target)),
+        "valid": not errors,
+        "errors": errors,
+        "scanners": scanners,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if not errors else 1
+    print(f"work scanners: {target}")
+    print(f"config_path: {_scanner_config_path(target)}")
+    if errors:
+        print(f"errors: {len(errors)}")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    if not scanners:
+        print("scanners: none")
+        return 0
+    for scanner in scanners:
+        status = "enabled" if scanner.get("enabled", True) else "disabled"
+        print(f"- {scanner.get('id')} [{status}] {scanner.get('cadence')} source={scanner.get('source')}")
+        print(f"  command: {scanner.get('command')}")
+        print(f"  output: {scanner.get('output_path')}")
+    return 0
+
+
+def scanners_show(*, target: Path, scanner_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    scanners, errors = _load_scanner_config(target)
+    scanner = None
+    for item in scanners:
+        if item.get("id") == scanner_id:
+            scanner = item
+            break
+    payload = {
+        "target": str(target),
+        "config_path": str(_scanner_config_path(target)),
+        "valid": not errors,
+        "errors": errors,
+        "scanner": scanner,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if scanner is not None and not errors else 1
+    if errors:
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+    if scanner is None:
+        print(f"error: scanner not found: {scanner_id}", file=sys.stderr)
+        return 1
+    print(f"scanner: {scanner.get('id')}")
+    print(f"enabled: {scanner.get('enabled')}")
+    print(f"source: {scanner.get('source')}")
+    print(f"cadence: {scanner.get('cadence')}")
+    print(f"timeout: {scanner.get('timeout')}")
+    print(f"output_path: {scanner.get('output_path')}")
+    print(f"conflict_window: {scanner.get('conflict_window')}")
+    print(f"command: {scanner.get('command')}")
+    return 0
+
+
+def scanners_plan(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _scanner_plan_payload(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["valid"] else 1
+    print(f"work scanners plan: {target}")
+    print(f"config_path: {payload['config_path']}")
+    if payload["errors"]:
+        print(f"errors: {len(payload['errors'])}")
+        for error in payload["errors"]:
+            print(f"- {error}")
+        return 1
+    planned = payload.get("planned") if isinstance(payload.get("planned"), list) else []
+    if not planned:
+        print("planned: none")
+    else:
+        print("planned:")
+        for item in planned:
+            print(
+                f"- {item.get('id')} {item.get('start')}-{item.get('end')} "
+                f"{item.get('cadence')} output={item.get('output_path')}"
+            )
+    conflicts = payload.get("conflicts") if isinstance(payload.get("conflicts"), list) else []
+    if conflicts:
+        print("conflicts:")
+        for item in conflicts:
+            print(f"- {item.get('type')}: {', '.join(str(v) for v in item.get('scanners', []))}")
+    else:
+        print("conflicts: none")
+    suggestions = payload.get("suggestions") if isinstance(payload.get("suggestions"), list) else []
+    if suggestions:
+        print("suggested_schedule:")
+        for item in suggestions:
+            print(f"- {item.get('id')}: {item.get('suggested_cadence')}")
+    return 0
+
+
+def scanners_doctor(*, target: Path, json_output: bool = False, import_issues: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    health = _scanner_health(target)
+    imported: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    skipped_dismissed: list[dict[str, Any]] = []
+    if import_issues:
+        records = _scanner_health_issue_records(target)
+        imported, skipped, skipped_dismissed = _append_import_records(target, records)
+        health["import_issues"] = {
+            "created": len(imported),
+            "skipped": len(skipped),
+            "dismissed": len(skipped_dismissed),
+            "imports": imported,
+        }
+    if json_output:
+        print(json.dumps(health, indent=2, sort_keys=True))
+        return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
+    print(f"work scanners doctor: {target}")
+    print(f"config_path: {health['config_path']}")
+    for check in health["checks"]:
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+    next_run = health.get("next_run")
+    if isinstance(next_run, dict):
+        print(f"next_scanner: {next_run.get('id')} {next_run.get('start')} {next_run.get('cadence')}")
+    if import_issues:
+        print(f"imported_issues: {len(imported)}")
+        print(f"skipped_issues: {len(skipped)}")
+        print(f"dismissed_issues: {len(skipped_dismissed)}")
+    return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
+
+
 def next(*, target: Path, json_output: bool = False) -> int:
     target = target.expanduser().resolve()
     if not target.is_dir():
@@ -4062,6 +4623,12 @@ def doctor(*, target: Path) -> int:
     else:
         _doctor_line(OK, "scanner_import_noise", "none")
 
+    scanner_health = _scanner_health(effective_target)
+    for check in scanner_health["checks"]:
+        if check.get("status") == FAIL:
+            failures += 1
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+
     handoff_inbox = (
         cfg.handoff_inbox
         if cfg and cfg.handoff_inbox is not None
@@ -4075,6 +4642,8 @@ def doctor(*, target: Path) -> int:
     _doctor_line(_doctor_ignore_level(artifacts_ignored), "artifacts_ignored", artifacts_ignored)
     security_ignored = dogfood_cmd._check_git_ignored(effective_target, security_artifacts)
     _doctor_line(_doctor_ignore_level(security_ignored), "security_ignored", security_ignored)
+    scanner_config_ignored = dogfood_cmd._check_git_ignored(effective_target, _scanner_config_path(effective_target))
+    _doctor_line(_doctor_ignore_level(scanner_config_ignored), "scanner_config_ignored", scanner_config_ignored)
     work_ignored = dogfood_cmd._check_git_ignored(effective_target, work_root)
     _doctor_line(_doctor_ignore_level(work_ignored), "work_ignored", work_ignored)
     handoff_ignored = dogfood_cmd._check_git_ignored(effective_target, handoff_inbox)
