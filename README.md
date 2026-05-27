@@ -41,6 +41,7 @@ The cookbook explains the why. This package gives you the kitchen.
 - memory-care staleness checks so durable cards do not quietly rot
 - TokenJuice output-compaction guidance for Claude Code and Codex, including wrapper notes and savings expectations
 - content-guard publish gates so private infrastructure does not leak into public docs
+- built-in agent workspace security scan for secrets, permissions, hooks, MCP configs, supply-chain patterns, and instruction risks
 - adapter fragments for OpenClaw (tested), Hermes (stubbed), and generic harnesses
 - doctor checks that prove the system is wired before you trust it
 
@@ -201,6 +202,8 @@ Inspect a completed run without opening each JSON file:
 brigade runs list --cwd /path/to/repo
 brigade runs latest --cwd /path/to/repo
 brigade runs show .brigade/runs/<run-id>
+brigade security scan --target .
+brigade security scan --target . --import-findings
 ```
 
 Use `--handoff` to bridge a completed run back into the memory system. By default it writes a reviewable handoff to `.claude/memory-handoffs/` under `--cwd`; override with `--handoff-inbox <path>` for Codex, OpenCode, GPT, Hermes, OpenClaw, or any other non-Claude writer inbox. The handoff targets `.learnings/LEARNINGS.md` as a `no-card` document update, so the normal `brigade ingest` route can review or ingest it. If handoff writing fails after synthesis, Brigade still prints the final answer and keeps the final artifacts, but exits nonzero and marks `run.json` as `handoff-failed`. `--handoff` is not allowed with `--dry-run` because dry runs have no final answer.
@@ -284,7 +287,9 @@ brigade add guard    # content-guard
 brigade add tokens   # tokenjuice
 ```
 
-The four managed tools:
+`security` is a built-in station with no external managed tool yet. Run `brigade security scan --target .` for a read-only agent workspace security report, or add `--import-findings` to turn findings into local `brigade work import` review items.
+
+The current managed tools:
 
 | Station | Tool | What it does |
 |---|---|---|

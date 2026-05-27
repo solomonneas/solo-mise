@@ -33,8 +33,14 @@ TOKENS = Station(
     doctor=_doctor.tokens_station_checks,
     tools=("tokenjuice",),
 )
+SECURITY = Station(
+    name="security",
+    summary="agent workspace security scanning",
+    aliases=("sec",),
+    doctor=_doctor.security_station_checks,
+)
 
-_BUILTIN: Tuple[Station, ...] = (CORE, MEMORY, GUARD, TOKENS)
+_BUILTIN: Tuple[Station, ...] = (CORE, MEMORY, GUARD, TOKENS, SECURITY)
 
 
 def all_stations() -> Tuple[Station, ...]:

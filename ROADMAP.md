@@ -41,6 +41,40 @@ Goal: support the common places agent work happens without making any one chat p
 - Use promotion gates so only reviewed, durable, or actionable items become tasks or memory handoffs.
 - Keep source metadata such as workspace, channel, thread, message range, and confidence local unless explicitly exported.
 
+## Later Phase: Cybersecurity Plugin
+
+Goal: ship a Brigade cybersecurity plugin with broad coverage for agent workspaces, then go deeper on Brigade's multi-harness, memory, scanner, and dogfood workflows.
+
+Baseline coverage targets:
+
+- Scan agent workspace configs for hardcoded secrets, exposed tokens, private keys, database URLs, and unsafe environment-variable handling.
+- Audit tool permissions for broad mutable access, wildcard shell access, missing deny lists, dangerous flags, destructive git commands, and unrestricted network commands.
+- Analyze hooks and startup automation for command injection, remote execution, data exfiltration, silent failures, package installs, container escape, reverse shells, clipboard access, log tampering, and persistence behaviors.
+- Audit MCP server configs for high-risk server types, remote transports, shell metacharacters, unpinned `npx` usage, hardcoded env secrets, sensitive file args, excessive server counts, missing timeouts, and auto-approve behavior.
+- Review agent prompts, skills, subagents, slash commands, and workspace instructions for prompt-injection patterns, hidden instructions, URL execution, data harvesting, output suppression, time bombs, and unsafe auto-run language.
+- Emit graded reports with severity, category scores, evidence snippets, suggested fixes, JSON output, markdown output, HTML or bundle output, and CI-friendly exit codes.
+- Support CLI use, GitHub Action use, and local evidence packs.
+
+Brigade-specific additions:
+
+- Scan Claude Code, Codex, OpenCode, Gemini, Hermes, OpenClaw, VS Code, Zed, dmux, and generic repo-local agent harness surfaces with explicit runtime-confidence labels.
+- Understand Brigade installs: `.brigade/`, `.codex/`, `.claude/`, memory handoff inboxes, roster files, dogfood configs, run artifacts, work imports, memory-care decay files, and public template folders.
+- Treat public-template findings differently from active runtime findings so docs and starter templates do not score like live credentials or enabled tools.
+- Integrate with `brigade doctor` as a security station and with `brigade work import` so findings can become reviewable local tasks instead of only console output.
+- Provide safe auto-fix only for narrow cases such as replacing obvious hardcoded sample secrets, tightening generated allow-list examples, or adding missing ignore rules.
+- Produce Memory Handoffs for durable security findings while keeping raw secret evidence redacted.
+- Add policy packs for personal dogfooding, public-repo release checks, CI gates, and strict enterprise workspaces.
+- Include dependency and package-manager hardening checks for agent plugin ecosystems, MCP packages, skills, and local tool wrappers.
+- Track false-positive taxonomy, runtime-confidence rules, suppressions, and regression fixtures as first-class project artifacts.
+
+First build slice:
+
+- Create a plugin scaffold and security scan contract. Status: started with built-in `security` station and `brigade security scan`.
+- Start with config discovery and read-only reporting for Brigade, Claude Code, Codex, and MCP config files. Status: started.
+- Add core rule categories for secrets, permissions, hooks, MCP servers, supply-chain patterns, and agent instructions. Status: started.
+- Output JSON plus readable text, then route selected findings into `brigade work import`. Status: started with `--import-findings`.
+- Keep all raw findings local and gitignored unless the operator explicitly exports an evidence pack. Status: current default.
+
 ## Later Phase: Memory Card Decay And Refresh
 
 Goal: prevent durable memory from silently rotting.
