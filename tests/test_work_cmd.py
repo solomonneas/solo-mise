@@ -101,6 +101,121 @@ def test_work_doctor_reports_ready_repo(tmp_path, monkeypatch, capsys):
     assert "[ok] ready: daily work loop is usable" in out
 
 
+def test_work_doctor_warns_for_task_acceptance_gh_and_stale_session(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: "/usr/bin/codex" if name == "codex" else None)
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 25, 8, 0, 0, tzinfo=timezone.utc),
+    )
+    assert work_cmd.task_add(target=tmp_path, text="Task without acceptance") == 0
+    capsys.readouterr()
+    ledger = json.loads((tmp_path / ".brigade" / "work" / "tasks.json").read_text())
+    ledger["tasks"].append(
+        {
+            "id": "issue-task",
+            "text": "Issue task",
+            "status": "pending",
+            "source": "github_issue",
+            "type": "bug",
+            "priority": "normal",
+            "created_at": "2026-05-25T08:00:00+00:00",
+            "updated_at": "2026-05-25T08:00:00+00:00",
+            "acceptance": ["Issue task acceptance."],
+            "metadata": {
+                "github_issue": {
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "number": 9,
+                    "title": "Issue task",
+                    "labels": ["bug"],
+                    "state": "OPEN",
+                    "source": "gh",
+                }
+            },
+        }
+    )
+    _write_json(tmp_path / ".brigade" / "work" / "tasks.json", ledger)
+    assert work_cmd.start(target=tmp_path, title="Old active session") == 0
+    capsys.readouterr()
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 27, 10, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert work_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] active_session_age:" in out
+    assert "[warn] task_acceptance: 1 pending task(s) missing acceptance criteria" in out
+    assert "[warn] github_issues: 1 issue-backed task(s) cannot be checked because gh is missing: issue-task" in out
+
+
+def test_work_doctor_warns_when_issue_backed_task_is_closed(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    monkeypatch.setattr(
+        work_cmd.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name in {"codex", "gh"} else None,
+    )
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    (tmp_path / ".brigade" / "work").mkdir(parents=True)
+    _write_json(
+        tmp_path / ".brigade" / "work" / "tasks.json",
+        {
+            "version": 1,
+            "tasks": [
+                {
+                    "id": "issue-task",
+                    "text": "Issue task",
+                    "status": "pending",
+                    "source": "github_issue",
+                    "type": "bug",
+                    "priority": "normal",
+                    "created_at": "2026-05-25T08:00:00+00:00",
+                    "updated_at": "2026-05-25T08:00:00+00:00",
+                    "acceptance": ["Issue task acceptance."],
+                    "metadata": {
+                        "github_issue": {
+                            "url": "https://github.com/acme/widgets/issues/9",
+                            "number": 9,
+                            "title": "Issue task",
+                            "labels": ["bug"],
+                            "state": "OPEN",
+                            "source": "gh",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "number": 9,
+                    "title": "Issue task",
+                    "labels": [{"name": "bug"}],
+                    "state": "CLOSED",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(work_cmd.subprocess, "run", fake_run)
+
+    assert work_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] github_issues_closed: 1 remote issue(s) are closed: issue-task" in out
+
+
 def test_work_doctor_fails_invalid_security_config(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     dogfood_cmd.init(target=tmp_path)
@@ -641,6 +756,99 @@ def test_work_task_add_stores_metadata_acceptance_and_plan(tmp_path, monkeypatch
     assert payload["acceptance_missing"] is False
 
 
+def test_work_task_add_template_preserves_explicit_acceptance_and_plan(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert (
+        work_cmd.task_add(
+            target=tmp_path,
+            text="Fix login redirect",
+            task_type="bug",
+            priority="high",
+            template="bugfix",
+            acceptance=["The login redirect works in the browser smoke test."],
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "template: bugfix" in out
+    task_id = out.split("task: ", 1)[1].splitlines()[0]
+    ledger = json.loads((tmp_path / ".brigade" / "work" / "tasks.json").read_text())
+    task = ledger["tasks"][0]
+    assert task["type"] == "bug"
+    assert task["priority"] == "high"
+    assert task["template"] == "bugfix"
+    assert "The bug is reproduced by a focused failing test or equivalent fixture." in task["acceptance"]
+    assert "The login redirect works in the browser smoke test." in task["acceptance"]
+
+    assert work_cmd.task_plan(target=tmp_path, task_id=task_id[:12]) == 0
+    out = capsys.readouterr().out
+    assert "template: bugfix" in out
+    assert "guidance:" in out
+    assert "Reproduce the failing behavior first." in out
+    assert "The login redirect works in the browser smoke test." in out
+
+
+def test_work_task_add_from_issue_preserves_github_metadata(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None)
+
+    def fake_run(args, **kwargs):
+        assert args[:3] == ["gh", "issue", "view"]
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {
+                    "url": "https://github.com/acme/widgets/issues/42",
+                    "number": 42,
+                    "title": "Import issue backed task",
+                    "labels": [{"name": "bug"}, {"name": "tdd"}],
+                    "state": "OPEN",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(work_cmd.subprocess, "run", fake_run)
+
+    assert work_cmd.task_add(target=tmp_path, from_issue="42", template="red-green-refactor") == 0
+    out = capsys.readouterr().out
+    assert "issue: https://github.com/acme/widgets/issues/42" in out
+    ledger = json.loads((tmp_path / ".brigade" / "work" / "tasks.json").read_text())
+    task = ledger["tasks"][0]
+    assert task["text"] == "Import issue backed task"
+    assert task["source"] == "github_issue"
+    assert task["metadata"]["github_issue"] == {
+        "url": "https://github.com/acme/widgets/issues/42",
+        "number": 42,
+        "title": "Import issue backed task",
+        "labels": ["bug", "tdd"],
+        "state": "OPEN",
+        "source": "gh",
+        "ref": "42",
+    }
+
+
+def test_work_task_add_from_issue_fails_without_partial_task(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: None)
+
+    assert work_cmd.task_add(target=tmp_path, from_issue="42") == 1
+    assert "gh CLI is not available" in capsys.readouterr().err
+    assert not (tmp_path / ".brigade" / "work" / "tasks.json").exists()
+
+
 def test_work_brief_includes_pending_tasks(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(
@@ -686,6 +894,47 @@ def test_work_brief_reports_next_task_acceptance(tmp_path, monkeypatch, capsys):
     assert "next_priority: urgent" in out
     assert "next_acceptance: 1" in out
     assert "[workflow urgent acceptance=1] Build accepted task" in out
+
+
+def test_work_brief_surfaces_issue_backed_next_task_context(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None)
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {
+                    "url": "https://github.com/acme/widgets/issues/7",
+                    "number": 7,
+                    "title": "Surface issue context",
+                    "labels": [{"name": "docs"}],
+                    "state": "OPEN",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(work_cmd.subprocess, "run", fake_run)
+    assert work_cmd.task_add(target=tmp_path, from_issue="7") == 0
+    capsys.readouterr()
+
+    assert work_cmd.brief(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["next_issue"]["url"] == "https://github.com/acme/widgets/issues/7"
+    assert payload["next_issue"]["labels"] == ["docs"]
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "issue: https://github.com/acme/widgets/issues/7" in out
+    assert "issue_state: OPEN" in out
+    assert "issue_labels: docs" in out
 
 
 def test_work_import_add_list_show_and_promote(tmp_path, monkeypatch, capsys):
@@ -1854,6 +2103,8 @@ def test_work_tasks_cli(tmp_path, monkeypatch):
                 "high",
                 "--acceptance",
                 "passes",
+                "--template",
+                "vertical-slice",
             ]
         )
         == 0
@@ -1870,9 +2121,11 @@ def test_work_tasks_cli(tmp_path, monkeypatch):
                 "target": tmp_path,
                 "text": "build queue",
                 "from_next": False,
+                "from_issue": None,
                 "task_type": "feature",
                 "priority": "high",
                 "acceptance": ["passes"],
+                "template": "vertical-slice",
             },
         ),
         (
@@ -1881,9 +2134,11 @@ def test_work_tasks_cli(tmp_path, monkeypatch):
                 "target": tmp_path,
                 "text": None,
                 "from_next": True,
+                "from_issue": None,
                 "task_type": "task",
                 "priority": "normal",
                 "acceptance": [],
+                "template": None,
             },
         ),
         ("show", {"target": tmp_path, "task_id": "abc123"}),

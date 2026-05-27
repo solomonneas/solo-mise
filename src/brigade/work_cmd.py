@@ -22,6 +22,69 @@ FAIL = "fail"
 IMPORT_KINDS = ("task", "finding", "decision", "preference", "incident", "link", "command")
 TASK_TYPES = ("task", "feature", "bug", "docs", "security", "workflow", "research", "chore")
 TASK_PRIORITIES = ("low", "normal", "high", "urgent")
+TASK_TEMPLATES: dict[str, dict[str, tuple[str, ...]]] = {
+    "vertical-slice": {
+        "acceptance": (
+            "One user-visible path is implemented end to end.",
+            "Focused tests cover the new path.",
+            "Documentation or help text is updated when user behavior changes.",
+        ),
+        "guidance": (
+            "Define the smallest end-to-end path before editing.",
+            "Add or update a focused test around that path.",
+            "Implement only the supporting code needed for the slice.",
+        ),
+    },
+    "bugfix": {
+        "acceptance": (
+            "The bug is reproduced by a focused failing test or equivalent fixture.",
+            "The fix addresses the root cause.",
+            "The regression test passes with the fix.",
+        ),
+        "guidance": (
+            "Reproduce the failing behavior first.",
+            "Patch the narrow root cause.",
+            "Keep the regression test close to the bug.",
+        ),
+    },
+    "red-green-refactor": {
+        "acceptance": (
+            "A failing test describes the desired behavior.",
+            "The test passes after the implementation.",
+            "The final code is refactored without changing the tested behavior.",
+        ),
+        "guidance": (
+            "Write the smallest meaningful failing test.",
+            "Make it pass with the simplest implementation.",
+            "Refactor only after the test is green.",
+        ),
+    },
+    "docs": {
+        "acceptance": (
+            "The documented command or workflow matches current behavior.",
+            "Examples are concise and runnable or clearly illustrative.",
+            "Related index, changelog, or roadmap entries are updated when appropriate.",
+        ),
+        "guidance": (
+            "Verify the current behavior before writing docs.",
+            "Prefer concise examples over broad explanation.",
+            "Check formatting and public-safe wording.",
+        ),
+    },
+    "security-follow-up": {
+        "acceptance": (
+            "The finding or risk is clearly described without exposing sensitive material.",
+            "The mitigation is implemented or a bounded follow-up is documented.",
+            "Verification evidence is captured with secrets redacted.",
+        ),
+        "guidance": (
+            "Preserve redaction and avoid copying sensitive evidence.",
+            "Prefer the narrowest mitigation that removes the risk.",
+            "Document any remaining manual validation or follow-up.",
+        ),
+    },
+}
+ACTIVE_SESSION_STALE_HOURS = 24
 
 
 def _git(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -241,7 +304,7 @@ def _task_acceptance(task: dict[str, Any]) -> list[str]:
 
 def _task_summary(task: dict[str, Any]) -> dict[str, Any]:
     acceptance = _task_acceptance(task)
-    return {
+    summary = {
         "id": task.get("id"),
         "text": str(task.get("text") or ""),
         "status": task.get("status", "pending"),
@@ -252,6 +315,108 @@ def _task_summary(task: dict[str, Any]) -> dict[str, Any]:
         "acceptance_count": len(acceptance),
         "acceptance_missing": len(acceptance) == 0,
     }
+    if isinstance(task.get("template"), str):
+        summary["template"] = task["template"]
+    issue = _task_issue_metadata(task)
+    if issue:
+        summary["issue"] = issue
+    return summary
+
+
+def _template_acceptance(template: str | None) -> list[str]:
+    if not template:
+        return []
+    item = TASK_TEMPLATES.get(template)
+    if item is None:
+        return []
+    return list(item["acceptance"])
+
+
+def _combined_acceptance(template: str | None, explicit: list[str] | None) -> list[str]:
+    return _normalize_acceptance([*_template_acceptance(template), *(explicit or [])])
+
+
+def _task_issue_metadata(task: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    issue = metadata.get("github_issue") if isinstance(metadata.get("github_issue"), dict) else None
+    if issue is None and metadata.get("github_issue_url"):
+        issue = {
+            "url": metadata.get("github_issue_url"),
+            "number": metadata.get("github_issue_number"),
+            "title": metadata.get("github_issue_title"),
+            "labels": metadata.get("github_issue_labels"),
+            "state": metadata.get("github_issue_state"),
+            "source": metadata.get("github_issue_source"),
+            "ref": metadata.get("github_issue_ref"),
+        }
+    if not isinstance(issue, dict):
+        return None
+    return {
+        key: value
+        for key, value in issue.items()
+        if key in {"url", "number", "title", "labels", "state", "source", "ref"} and value is not None
+    }
+
+
+def _github_issue_ref(issue: dict[str, Any]) -> str | None:
+    url = issue.get("url")
+    if isinstance(url, str) and url.strip():
+        return url.strip()
+    number = issue.get("number")
+    if isinstance(number, int):
+        return str(number)
+    if isinstance(number, str) and number.strip():
+        return number.strip()
+    return None
+
+
+def _read_github_issue(target: Path, issue_ref: str) -> tuple[dict[str, Any] | None, str | None]:
+    if shutil.which("gh") is None:
+        return None, "gh CLI is not available on PATH"
+    result = subprocess.run(
+        [
+            "gh",
+            "issue",
+            "view",
+            issue_ref,
+            "--json",
+            "url,number,title,labels,state",
+        ],
+        cwd=target,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"gh issue view exited {result.returncode}"
+        return None, detail
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return None, f"gh issue view returned invalid JSON: {exc.msg}"
+    if not isinstance(payload, dict):
+        return None, "gh issue view returned invalid JSON object"
+    title = payload.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return None, "gh issue view did not return an issue title"
+    labels = payload.get("labels")
+    label_names: list[str] = []
+    if isinstance(labels, list):
+        for label in labels:
+            if isinstance(label, dict) and isinstance(label.get("name"), str):
+                label_names.append(label["name"])
+            elif isinstance(label, str):
+                label_names.append(label)
+    return {
+        "url": payload.get("url"),
+        "number": payload.get("number"),
+        "title": title.strip(),
+        "labels": label_names,
+        "state": payload.get("state"),
+        "source": "gh",
+        "ref": issue_ref,
+    }, None
 
 
 def _import_record_key(item: dict[str, Any]) -> tuple[str, str, str]:
@@ -511,6 +676,7 @@ def _make_task(
     task_type: str = "task",
     priority: str = "normal",
     acceptance: list[str] | None = None,
+    template: str | None = None,
 ) -> dict[str, Any]:
     now = _now()
     created = now.isoformat()
@@ -525,6 +691,8 @@ def _make_task(
         "created_at": created,
         "updated_at": created,
     }
+    if template:
+        task["template"] = template
     if metadata:
         task["metadata"] = metadata
     return task
@@ -575,11 +743,14 @@ def _add_task(
     task_type: str = "task",
     priority: str = "normal",
     acceptance: list[str] | None = None,
+    template: str | None = None,
+    dedupe: bool = True,
 ) -> tuple[dict[str, Any], bool]:
     ledger = _read_task_ledger(target)
-    existing = _find_pending_task_by_text(target, text)
-    if existing is not None:
-        return existing, False
+    if dedupe:
+        existing = _find_pending_task_by_text(target, text)
+        if existing is not None:
+            return existing, False
     task = _make_task(
         text,
         source=source,
@@ -587,6 +758,7 @@ def _add_task(
         task_type=task_type,
         priority=priority,
         acceptance=acceptance,
+        template=template,
     )
     ledger["tasks"].append(task)
     _write_task_ledger(target, ledger)
@@ -808,6 +980,9 @@ def _task_plan_payload(target: Path, task_id: str) -> tuple[dict[str, Any] | Non
         print(f"error: task not found: {task_id}", file=sys.stderr)
         return None, 1
     summary = _task_summary(task)
+    template = summary.get("template") if isinstance(summary.get("template"), str) else None
+    if template:
+        summary["guidance"] = list(TASK_TEMPLATES.get(template, {}).get("guidance", ()))
     summary["suggested_command"] = "brigade work run"
     summary["tasks_path"] = str(_tasks_path(target))
     return summary, 0
@@ -1047,6 +1222,7 @@ def _next_payload(target: Path) -> dict[str, Any]:
         "next_source": resolved["source"],
         "task_id": resolved.get("task_id"),
         "next_task": _task_summary(ledger_task) if ledger_task else None,
+        "next_issue": _task_issue_metadata(ledger_task) if ledger_task else None,
         "next": str(resolved["task"]),
         "suggested_command": suggested,
     }
@@ -1105,6 +1281,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
         "next_source": resolved["source"],
         "task_id": resolved.get("task_id"),
         "next_task": _task_summary(ledger_task) if ledger_task else None,
+        "next_issue": _task_issue_metadata(ledger_task) if ledger_task else None,
         "next": str(resolved["task"]),
         "suggested_command": suggested,
     }
@@ -1536,10 +1713,20 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     if next_task:
         print(f"next_type: {next_task.get('type')}")
         print(f"next_priority: {next_task.get('priority')}")
+        if next_task.get("template"):
+            print(f"next_template: {next_task.get('template')}")
         if next_task.get("acceptance_missing"):
             print("next_acceptance: missing")
         else:
             print(f"next_acceptance: {next_task.get('acceptance_count')}")
+    next_issue = payload.get("next_issue") if isinstance(payload.get("next_issue"), dict) else None
+    if next_issue:
+        print(f"issue: {next_issue.get('url') or next_issue.get('number')}")
+        if next_issue.get("state"):
+            print(f"issue_state: {next_issue['state']}")
+        labels = next_issue.get("labels")
+        if isinstance(labels, list) and labels:
+            print(f"issue_labels: {', '.join(str(label) for label in labels)}")
     print(f"next: {_short(str(payload['next']))}")
     print(f"suggested_command: {payload['suggested_command']}")
 
@@ -1638,6 +1825,11 @@ def tasks(*, target: Path, all_tasks: bool = False, json_output: bool = False) -
         )
         if task.get("source"):
             print(f"  source: {task['source']}")
+        if task.get("template"):
+            print(f"  template: {task['template']}")
+        issue = _task_issue_metadata(task)
+        if issue:
+            print(f"  issue: {issue.get('url') or issue.get('number')}")
         metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         if metadata.get("run_path"):
             print(f"  run: {metadata['run_path']}")
@@ -1653,16 +1845,22 @@ def task_add(
     target: Path,
     text: str | None = None,
     from_next: bool = False,
+    from_issue: str | None = None,
     task_type: str = "task",
     priority: str = "normal",
     acceptance: list[str] | None = None,
+    template: str | None = None,
 ) -> int:
     target = target.expanduser().resolve()
     if not target.is_dir():
         print(f"error: --target is not a directory: {target}", file=sys.stderr)
         return 2
-    if from_next and text:
-        print("error: pass task text or --from-next, not both", file=sys.stderr)
+    if template and template not in TASK_TEMPLATES:
+        print(f"error: --template must be one of: {', '.join(TASK_TEMPLATES)}", file=sys.stderr)
+        return 2
+    import_sources = [bool(from_next), bool(from_issue)]
+    if sum(import_sources) > 1 or ((from_next or from_issue) and text):
+        print("error: pass task text, --from-next, or --from-issue, not more than one", file=sys.stderr)
         return 2
     if task_type not in TASK_TYPES:
         print(f"error: --type must be one of: {', '.join(TASK_TYPES)}", file=sys.stderr)
@@ -1672,6 +1870,7 @@ def task_add(
         return 2
     task_text = (text or "").strip()
     source = "manual"
+    dedupe = True
     if from_next:
         next_step, metadata = _latest_run_next_metadata(target)
         if not next_step:
@@ -1679,6 +1878,19 @@ def task_add(
             return 1
         task_text = next_step
         source = "latest_dogfood_run"
+    elif from_issue:
+        issue_ref = from_issue.strip()
+        if not issue_ref:
+            print("error: --from-issue requires an issue URL or number", file=sys.stderr)
+            return 2
+        issue, error = _read_github_issue(target, issue_ref)
+        if issue is None:
+            print(f"error: could not read GitHub issue {issue_ref}: {error}", file=sys.stderr)
+            return 1
+        task_text = str(issue["title"]).strip()
+        source = "github_issue"
+        metadata = {"github_issue": issue}
+        dedupe = False
     else:
         metadata = None
     if not task_text:
@@ -1691,15 +1903,22 @@ def task_add(
         metadata=metadata,
         task_type=task_type,
         priority=priority,
-        acceptance=_normalize_acceptance(acceptance),
+        acceptance=_combined_acceptance(template, acceptance),
+        template=template,
+        dedupe=dedupe,
     )
     print(f"task: {task['id']}")
     print(f"status: {task['status']}")
     print(f"created: {created}")
     print(f"type: {_normalize_task_type(task.get('type'))}")
     print(f"priority: {_normalize_task_priority(task.get('priority'))}")
+    if task.get("template"):
+        print(f"template: {task['template']}")
     criteria = _task_acceptance(task)
     print(f"acceptance: {len(criteria)}")
+    issue = _task_issue_metadata(task)
+    if issue:
+        print(f"issue: {issue.get('url') or issue.get('number')}")
     print(f"text: {task['text']}")
     return 0
 
@@ -1718,12 +1937,24 @@ def task_show(*, target: Path, task_id: str) -> int:
     print(f"source: {task.get('source', '')}")
     print(f"type: {_normalize_task_type(task.get('type'))}")
     print(f"priority: {_normalize_task_priority(task.get('priority'))}")
+    if task.get("template"):
+        print(f"template: {task['template']}")
     print(f"created_at: {task.get('created_at', '')}")
     print(f"updated_at: {task.get('updated_at', '')}")
     criteria = _task_acceptance(task)
     print(f"acceptance: {len(criteria)}")
     for item in criteria:
         print(f"  - {item}")
+    issue = _task_issue_metadata(task)
+    if issue:
+        print("issue:")
+        print(f"  url: {issue.get('url', '')}")
+        print(f"  number: {issue.get('number', '')}")
+        print(f"  title: {issue.get('title', '')}")
+        print(f"  state: {issue.get('state', '')}")
+        labels = issue.get("labels")
+        if isinstance(labels, list) and labels:
+            print(f"  labels: {', '.join(str(label) for label in labels)}")
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     if metadata:
         print("metadata:")
@@ -1745,9 +1976,25 @@ def task_plan(*, target: Path, task_id: str, json_output: bool = False) -> int:
     print(f"task: {payload['id']}")
     print(f"type: {payload['type']}")
     print(f"priority: {payload['priority']}")
+    if payload.get("template"):
+        print(f"template: {payload['template']}")
     print(f"status: {payload['status']}")
     print(f"source: {payload['source']}")
     print(f"text: {payload['text']}")
+    if payload.get("issue"):
+        issue = payload["issue"]
+        print("issue:")
+        print(f"  url: {issue.get('url', '')}")
+        print(f"  number: {issue.get('number', '')}")
+        print(f"  title: {issue.get('title', '')}")
+        print(f"  state: {issue.get('state', '')}")
+        labels = issue.get("labels")
+        if isinstance(labels, list) and labels:
+            print(f"  labels: {', '.join(str(label) for label in labels)}")
+    if payload.get("guidance"):
+        print("guidance:")
+        for item in payload["guidance"]:
+            print(f"  - {item}")
     print("acceptance:")
     if payload["acceptance"]:
         for item in payload["acceptance"]:
@@ -2800,13 +3047,61 @@ def doctor(*, target: Path) -> int:
     current = _current_path(effective_target)
     if current.exists():
         active_dir = work_root / current.read_text().strip()
-        if _read_session(active_dir) is None:
+        active_payload = _read_session(active_dir)
+        if active_payload is None:
             failures += 1
             _doctor_line(FAIL, "active_session", f"invalid: {active_dir}")
         else:
             _doctor_line(WARN, "active_session", f"active: {active_dir}")
+            started = _parse_iso_datetime(active_payload.get("started_at"))
+            if started is not None:
+                age_hours = (_now() - started).total_seconds() / 3600
+                if age_hours > ACTIVE_SESSION_STALE_HOURS:
+                    _doctor_line(
+                        WARN,
+                        "active_session_age",
+                        f"open for {age_hours:.1f} hours, close or resume it",
+                    )
     else:
         _doctor_line(OK, "active_session", "none")
+
+    pending_tasks = _pending_tasks(effective_target)
+    missing_acceptance = [task for task in pending_tasks if not _task_acceptance(task)]
+    if missing_acceptance:
+        sample = ", ".join(str(task.get("id")) for task in missing_acceptance[:5])
+        _doctor_line(WARN, "task_acceptance", f"{len(missing_acceptance)} pending task(s) missing acceptance criteria: {sample}")
+    else:
+        _doctor_line(OK, "task_acceptance", "pending tasks have acceptance criteria or no tasks are pending")
+
+    issue_tasks = [(task, issue) for task in pending_tasks if (issue := _task_issue_metadata(task))]
+    if issue_tasks:
+        gh_path = shutil.which("gh")
+        if gh_path is None:
+            sample = ", ".join(str(task.get("id")) for task, _ in issue_tasks[:5])
+            _doctor_line(WARN, "github_issues", f"{len(issue_tasks)} issue-backed task(s) cannot be checked because gh is missing: {sample}")
+        else:
+            closed: list[str] = []
+            unchecked: list[str] = []
+            for task, issue in issue_tasks:
+                issue_ref = _github_issue_ref(issue)
+                if issue_ref is None:
+                    unchecked.append(str(task.get("id")))
+                    continue
+                remote_issue, error = _read_github_issue(effective_target, issue_ref)
+                if remote_issue is None:
+                    unchecked.append(f"{task.get('id')} ({error})")
+                    continue
+                state = str(remote_issue.get("state") or "").lower()
+                if state == "closed":
+                    closed.append(str(task.get("id")))
+            if closed:
+                _doctor_line(WARN, "github_issues_closed", f"{len(closed)} remote issue(s) are closed: {', '.join(closed[:5])}")
+            if unchecked:
+                _doctor_line(WARN, "github_issues_unchecked", f"{len(unchecked)} issue-backed task(s) could not be checked: {', '.join(unchecked[:5])}")
+            if not closed and not unchecked:
+                _doctor_line(OK, "github_issues", f"{len(issue_tasks)} issue-backed task(s) checked")
+    else:
+        _doctor_line(OK, "github_issues", "none")
 
     handoff_inbox = (
         cfg.handoff_inbox

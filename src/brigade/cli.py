@@ -183,6 +183,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_task_add.add_argument("text", nargs="*", help="Task text.")
     p_work_task_add.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_work_task_add.add_argument("--from-next", action="store_true", help="Add the latest extracted dogfood next step.")
+    p_work_task_add.add_argument("--from-issue", default=None, help="Import a GitHub issue by URL or number using gh.")
     p_work_task_add.add_argument("--type", choices=TASK_TYPES, default="task", help="Task type.")
     p_work_task_add.add_argument("--priority", choices=TASK_PRIORITIES, default="normal", help="Task priority.")
     p_work_task_add.add_argument(
@@ -190,6 +191,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Acceptance criterion. Repeat for multiple criteria.",
+    )
+    p_work_task_add.add_argument(
+        "--template",
+        choices=["vertical-slice", "bugfix", "red-green-refactor", "docs", "security-follow-up"],
+        default=None,
+        help="Add template acceptance criteria and planning guidance.",
     )
     p_work_task_show = task_sub.add_parser("show", help="Show one work task.")
     p_work_task_show.add_argument("task_id", help="Task id or unique prefix.")
@@ -765,9 +772,11 @@ def main(argv=None) -> int:
                     target=args.target,
                     text=text,
                     from_next=args.from_next,
+                    from_issue=args.from_issue,
                     task_type=args.type,
                     priority=args.priority,
                     acceptance=args.acceptance,
+                    template=args.template,
                 )
             if args.task_command == "show":
                 return work_cmd.task_show(target=args.target, task_id=args.task_id)

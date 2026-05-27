@@ -270,7 +270,7 @@ Start-of-day commands:
 
 - `brigade work brief` shows branch state, active sessions, pending tasks, import counts, latest dogfood run, and the command to continue.
 - `brigade work status` is the quick dashboard for branch state, dogfood readiness, paths, latest run, and extracted next step.
-- `brigade work doctor` checks dogfood config, security config, evidence bundles, Codex CLI, artifact paths, handoff inbox, ignore coverage, and latest run context.
+- `brigade work doctor` checks dogfood config, security config, evidence bundles, Codex CLI, artifact paths, handoff inbox, task acceptance, issue-backed tasks, stale active sessions, ignore coverage, and latest run context.
 - `brigade work resume` shows the active or latest session, latest dogfood run, extracted next step, and suggested command.
 - `brigade work next` prints only the next task. Add `--json` for wrappers.
 
@@ -279,9 +279,14 @@ Task ledger commands:
 - `brigade work tasks` lists `.brigade/work/tasks.json`.
 - `brigade work task add "..."` queues a task manually.
 - `brigade work task add "..." --type feature --priority high --acceptance "..."` queues typed work with repeatable acceptance criteria.
+- `brigade work task add "..." --template bugfix --acceptance "Regression test passes"` adds template acceptance criteria while preserving explicit acceptance criteria.
+- `brigade work task add --from-issue 42` imports a GitHub issue with `gh issue view` when `gh` is available.
 - `brigade work task add --from-next` promotes the latest extracted dogfood next step.
-- `brigade work task plan <task-id>` shows the task metadata, acceptance checklist, and suggested run command.
+- `brigade work task plan <task-id>` shows the task metadata, acceptance checklist, template guidance, and suggested run command.
 - `brigade work task done <task-id>` closes queued work.
+
+Available task templates are `vertical-slice`, `bugfix`, `red-green-refactor`, `docs`, and `security-follow-up`.
+Issue-backed tasks keep issue URL, number, title, labels, state, and source metadata in the local gitignored ledger.
 
 Import inbox commands:
 
