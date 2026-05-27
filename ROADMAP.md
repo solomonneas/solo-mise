@@ -94,14 +94,15 @@ Brigade-specific additions:
 - Enrich reviewed indicators and suspicious package or domain findings through optional providers such as MISP, then route enriched findings into local evidence bundles and work imports. Status: started with `security-enrichment.json`, `security-enrichment.md`, and review/doctor visibility.
 - Track false-positive taxonomy, runtime-confidence rules, suppressions, and regression fixtures as first-class project artifacts. Status: started with `brigade security review`, reasoned suppressions, unsuppress, and stale-suppression doctor warnings.
 
-## Later Phase: Issue And TDD Work Loop
+## Current Phase: Issue And TDD Work Loop
 
 Goal: make Brigade support a narrow issue lifecycle for daily work: pick one task, define acceptance, test first when practical, implement, review, refactor, and close.
 
-- Add task templates for vertical-slice work, bugfix work, and RED/GREEN/REFACTOR loops.
-- Let `brigade work run` consume structured acceptance criteria from the local task ledger or a GitHub issue mirror. Status: started for local ledger tasks with typed priority, repeatable acceptance criteria, `work task plan`, brief coverage, and criteria injection into ledger-driven runs.
+- Add task templates for vertical-slice work, bugfix work, RED/GREEN/REFACTOR loops, docs work, and security follow-ups. Status: implemented in the local task ledger.
+- Import GitHub issues into the local task ledger without building a sync engine. Status: implemented through the existing `gh` CLI.
+- Let `brigade work run` consume structured acceptance criteria from the local task ledger or a GitHub issue mirror. Status: started with local ledger acceptance criteria and issue metadata.
 - Keep repo-shareable workflow rules separate from gitignored personal/global preferences.
-- Add doctor checks for missing acceptance criteria or stale active issue context.
+- Add doctor checks for missing acceptance criteria or stale active issue context. Status: started with missing acceptance, closed remote issues, unchecked issue-backed tasks, and stale active sessions.
 
 First build slice:
 
