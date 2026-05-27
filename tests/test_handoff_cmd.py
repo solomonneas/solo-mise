@@ -72,6 +72,16 @@ def test_handoff_lint_accepts_card_handoff_without_document_sections(tmp_path, c
     assert "(create-card)" in out
 
 
+def test_handoff_lint_allows_level_three_card_headings_without_warning(tmp_path, capsys):
+    path = tmp_path / "note.md"
+    path.write_text(CARD_HANDOFF + "\n### Details\n\nMore durable context.\n")
+
+    assert handoff_cmd.lint(target=tmp_path, paths=[path]) == 0
+
+    out = capsys.readouterr().out
+    assert "warning:" not in out
+
+
 def test_handoff_lint_rejects_card_handoff_with_empty_document_sections(tmp_path, capsys):
     path = tmp_path / "note.md"
     path.write_text(CARD_HANDOFF + "\n## Target document\n\n## Suggested document content\n")
