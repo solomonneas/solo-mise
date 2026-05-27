@@ -156,6 +156,36 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_task_done = task_sub.add_parser("done", help="Mark one work task done.")
     p_work_task_done.add_argument("task_id", help="Task id or unique prefix.")
     p_work_task_done.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_import = work_sub.add_parser("import", help="Add, list, show, or promote scanner-ready work imports.")
+    import_sub = p_work_import.add_subparsers(dest="import_command", metavar="<import-command>")
+    import_sub.required = True
+    p_work_import_add = import_sub.add_parser("add", help="Add a local work import.")
+    p_work_import_add.add_argument("text", nargs="+", help="Import text.")
+    p_work_import_add.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_import_add.add_argument(
+        "--kind",
+        choices=["task", "finding", "decision", "preference", "incident", "link", "command"],
+        default="task",
+        help="Import kind.",
+    )
+    p_work_import_add.add_argument("--source", default="manual", help="Import source such as slack, discord, or memory-care.")
+    p_work_import_add.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        help="Metadata as key=value. May be repeated.",
+    )
+    p_work_import_list = import_sub.add_parser("list", help="List local work imports.")
+    p_work_import_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_import_list.add_argument("--all", action="store_true", help="Include promoted imports.")
+    p_work_import_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_import_list.add_argument("--limit", type=int, default=20, help="Maximum imports to show.")
+    p_work_import_show = import_sub.add_parser("show", help="Show one work import.")
+    p_work_import_show.add_argument("import_id", help="Import id or unique prefix.")
+    p_work_import_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_import_promote = import_sub.add_parser("promote", help="Promote one work import into the task ledger.")
+    p_work_import_promote.add_argument("import_id", help="Import id or unique prefix.")
+    p_work_import_promote.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_work_list = work_sub.add_parser("list", help="List recent Brigade work sessions.")
     p_work_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_list.add_argument("--limit", type=int, default=10, help="Maximum sessions to show.")
@@ -509,6 +539,28 @@ def main(argv=None) -> int:
             if args.task_command == "done":
                 return work_cmd.task_done(target=args.target, task_id=args.task_id)
             parser.error(f"unknown task command: {args.task_command}")
+            return 2
+        if args.work_command == "import":
+            if args.import_command == "add":
+                return work_cmd.import_add(
+                    target=args.target,
+                    text=" ".join(args.text),
+                    kind=args.kind,
+                    source=args.source,
+                    metadata=args.metadata,
+                )
+            if args.import_command == "list":
+                return work_cmd.import_list(
+                    target=args.target,
+                    all_imports=args.all,
+                    json_output=args.json,
+                    limit=args.limit,
+                )
+            if args.import_command == "show":
+                return work_cmd.import_show(target=args.target, import_id=args.import_id)
+            if args.import_command == "promote":
+                return work_cmd.import_promote(target=args.target, import_id=args.import_id)
+            parser.error(f"unknown import command: {args.import_command}")
             return 2
         if args.work_command == "list":
             return work_cmd.list_sessions(target=args.target, limit=args.limit)
