@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade work import triage` to group pending imports by source and kind.
 - `brigade work import dismiss` to close noisy imports without promoting them.
 - `brigade work import promote --all` with optional `--source` and `--kind` filters for batch promotion.
+- `brigade handoff doctor` to compare pending `.claude` and `.codex` memory handoffs against gitignored local source config.
+- Repo installs now include `.brigade/handoff-sources.example.json` as the local handoff ingestor source-list contract.
 - `docs/import-schema.md` documenting the local import JSONL contract for scanners and wrappers.
 - Cybersecurity plugin roadmap covering broad agent-workspace security checks plus Brigade-specific scanner, doctor, import, and multi-harness security checks.
 - Built-in `security` station and `brigade security scan` for read-only agent workspace security checks.
@@ -85,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade work task add --from-next` now reuses an equivalent pending task instead of adding duplicates.
 - `brigade work brief` now includes pending local work imports and import counts in both text and JSON output.
 - The managed gitignore block now treats `.brigade/dogfood.toml`, `.brigade/security.toml`, `.brigade/runs/`, and `.brigade/security/` as local state.
+- The managed gitignore block now treats `.brigade/handoff-sources.json` as host-local state.
 - Live smoke docs now keep Codex agent execution in a trusted repo cwd while writing temporary roster, artifacts, and handoff output under `/tmp`.
 - Handoff write failures now preserve final run artifacts, print the final answer, return nonzero, and mark `run.json` as `handoff-failed`.
 - Dogfood runs default to prompt-level read-only plus Codex's `danger-full-access` sandbox setting for trusted-workspace use so repo inspection works on hosts where native read-only sandboxing blocks shell inspection; `--native-read-only-sandbox` opts into stricter native enforcement.

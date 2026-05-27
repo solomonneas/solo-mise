@@ -2344,7 +2344,7 @@ def status(*, target: Path, limit: int = 12) -> int:
 
 
 def doctor(*, target: Path) -> int:
-    from . import security_cmd
+    from . import handoff_cmd, security_cmd
 
     target = target.expanduser().resolve()
     failures = 0
@@ -2470,6 +2470,11 @@ def doctor(*, target: Path) -> int:
     _doctor_line(_doctor_ignore_level(work_ignored), "work_ignored", work_ignored)
     handoff_ignored = dogfood_cmd._check_git_ignored(effective_target, handoff_inbox)
     _doctor_line(_doctor_ignore_level(handoff_ignored), "handoff_ignored", handoff_ignored)
+
+    for status, name, detail in handoff_cmd.doctor_checks(effective_target):
+        if status == FAIL:
+            failures += 1
+        _doctor_line(status, name, detail)
 
     latest = dogfood_cmd._latest_run(artifacts_dir)
     if latest is None:

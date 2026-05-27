@@ -107,6 +107,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_dogfood.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="Per-agent timeout.")
 
+    # handoff
+    p_handoff = sub.add_parser("handoff", help="Inspect memory handoff inbox health.")
+    handoff_sub = p_handoff.add_subparsers(dest="handoff_command", metavar="<handoff-command>")
+    handoff_sub.required = True
+    p_handoff_doctor = handoff_sub.add_parser("doctor", help="Check handoff inboxes against local source config.")
+    p_handoff_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_handoff_doctor.add_argument("--sources", type=Path, default=None, help="Override .brigade/handoff-sources.json.")
+    p_handoff_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+
     # work
     p_work = sub.add_parser("work", help="Inspect and manage a daily Brigade work session.")
     work_sub = p_work.add_subparsers(dest="work_command", metavar="<work-command>")
@@ -626,6 +635,13 @@ def main(argv=None) -> int:
             native_read_only_sandbox=args.native_read_only_sandbox,
             timeout_seconds=args.timeout_seconds,
         )
+    if cmd == "handoff":
+        from . import handoff_cmd
+
+        if args.handoff_command == "doctor":
+            return handoff_cmd.doctor(target=args.target, sources=args.sources, json_output=args.json)
+        parser.error(f"unknown handoff command: {args.handoff_command}")
+        return 2
     if cmd == "work":
         from . import work_cmd
 
