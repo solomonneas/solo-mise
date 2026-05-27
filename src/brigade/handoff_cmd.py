@@ -642,7 +642,7 @@ def _lint_card_action(
         if prohibited in sections:
             errors.append(f"card handoffs must omit the {prohibited} section entirely")
 
-    if "## " in suggested_card:
+    if any(line.startswith("## ") for line in suggested_card.splitlines()):
         warnings.append("Suggested card content contains level-2 markdown headings, which may be parsed as handoff sections")
 
 
