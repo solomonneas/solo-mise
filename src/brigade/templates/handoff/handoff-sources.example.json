@@ -1,0 +1,13 @@
+{
+  "_description": "Copy to .brigade/handoff-sources.json and edit for this machine. Relative roots resolve from the repo or workspace target.",
+  "canonical_owner": "openclaw",
+  "sources": [
+    {
+      "root": ".",
+      "inboxes": [
+        ".claude/memory-handoffs",
+        ".codex/memory-handoffs"
+      ]
+    }
+  ]
+}

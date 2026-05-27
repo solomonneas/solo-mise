@@ -93,6 +93,8 @@ brigade init --target ./repo --harnesses none           # generic install
 ```
 
 Once installed, `brigade doctor` verifies the wiring and `brigade status` reports over the station registry.
+For machines that ingest handoffs from multiple repos, copy `.brigade/handoff-sources.example.json` to `.brigade/handoff-sources.json` and list the repo roots and writer inboxes the canonical ingestor scans.
+`brigade handoff doctor` reports pending `.claude/memory-handoffs/` and `.codex/memory-handoffs/` files that are not covered by that local source list.
 
 ## Run a brigade
 
@@ -150,6 +152,7 @@ brigade dogfood status
 brigade dogfood
 brigade dogfood next
 brigade dogfood --target /path/to/repo
+brigade handoff doctor
 brigade work bootstrap
 brigade work status
 brigade work doctor

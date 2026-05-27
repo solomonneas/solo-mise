@@ -428,6 +428,23 @@ def test_doctor_checks_codex_inbox_when_selected(tmp_target: Path, capsys):
     assert ".codex/memory-handoffs" in out
 
 
+def test_doctor_warns_when_pending_handoff_is_not_watched(tmp_target: Path, capsys):
+    sel = Selection(
+        depth="repo",
+        harnesses=["claude"],
+        owner="claude",
+        includes=[],
+    )
+    install_selection(tmp_target, sel)
+    (tmp_target / ".claude" / "memory-handoffs" / "2026-05-27-note.md").write_text("# Memory Handoff\n")
+
+    doctor_mod.run(tmp_target)
+
+    out = capsys.readouterr().out
+    assert "handoff-source: handoff_warning" in out
+    assert "pending handoff" in out
+
+
 def test_doctor_warns_for_orphan_inbox(tmp_target: Path, capsys):
     """If config says claude only, but .codex/memory-handoffs exists, warn."""
     sel = Selection(

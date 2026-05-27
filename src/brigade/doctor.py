@@ -68,6 +68,7 @@ def core_station_checks(ctx: DoctorContext) -> List[CheckResult]:
 def memory_station_checks(ctx: DoctorContext) -> List[CheckResult]:
     checks: List[CheckResult] = []
     checks.extend(_check_handoff_inboxes(ctx.target, ctx.selection, ctx.harnesses))
+    checks.extend(_check_handoff_sources(ctx.target))
     checks.extend(_check_memory_cards(ctx.target))
     checks.extend(_check_memory_index(ctx.target))
     checks.extend(_check_memory_care(ctx.target))
@@ -277,6 +278,16 @@ def _check_handoff_inboxes(
             )
         )
     return results
+
+
+def _check_handoff_sources(target: Path) -> List[CheckResult]:
+    from . import handoff_cmd
+
+    mapping = {handoff_cmd.OK: OK, handoff_cmd.WARN: WARN, handoff_cmd.FAIL: FAIL}
+    return [
+        (mapping.get(status, WARN), f"handoff-source: {name}", detail)
+        for status, name, detail in handoff_cmd.doctor_checks(target)
+    ]
 
 
 def _check_memory_index(target: Path) -> List[CheckResult]:
