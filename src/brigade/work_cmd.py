@@ -19,6 +19,7 @@ from .selection import Selection
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
+IMPORT_KINDS = ("task", "finding", "decision", "preference", "incident", "link", "command")
 
 
 def _git(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -65,6 +66,10 @@ def _current_path(target: Path) -> Path:
 
 def _tasks_path(target: Path) -> Path:
     return _work_root(target) / "tasks.json"
+
+
+def _imports_path(target: Path) -> Path:
+    return _work_root(target) / "imports" / "inbox.jsonl"
 
 
 def _git_snapshot(target: Path) -> dict[str, Any]:
@@ -154,8 +159,40 @@ def _write_task_ledger(target: Path, payload: dict[str, Any]) -> None:
     _write_json(_tasks_path(target), payload)
 
 
+def _read_imports(target: Path) -> list[dict[str, Any]]:
+    path = _imports_path(target)
+    if not path.exists():
+        return []
+    imports: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            imports.append(item)
+    return imports
+
+
+def _write_imports(target: Path, imports: list[dict[str, Any]]) -> None:
+    path = _imports_path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = "".join(json.dumps(item, sort_keys=True) + "\n" for item in imports)
+    path.write_text(rendered)
+
+
 def _task_sort_key(task: dict[str, Any]) -> str:
     return str(task.get("created_at") or task.get("id") or "")
+
+
+def _import_sort_key(item: dict[str, Any]) -> str:
+    return str(item.get("created_at") or item.get("id") or "")
 
 
 def _task_text_key(text: str) -> str:
@@ -176,6 +213,19 @@ def _pending_tasks(target: Path) -> list[dict[str, Any]]:
     return tasks
 
 
+def _pending_imports(target: Path) -> list[dict[str, Any]]:
+    imports = [
+        item
+        for item in _read_imports(target)
+        if isinstance(item, dict)
+        and item.get("status", "pending") == "pending"
+        and isinstance(item.get("text"), str)
+        and item["text"].strip()
+    ]
+    imports.sort(key=_import_sort_key)
+    return imports
+
+
 def _find_pending_task_by_text(target: Path, text: str) -> dict[str, Any] | None:
     wanted = _task_text_key(text)
     if not wanted:
@@ -184,6 +234,21 @@ def _find_pending_task_by_text(target: Path, text: str) -> dict[str, Any] | None
         if _task_text_key(str(task.get("text") or "")) == wanted:
             return task
     return None
+
+
+def _find_import(target: Path, import_id: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    imports = _read_imports(target)
+    matches: list[dict[str, Any]] = []
+    for item in imports:
+        if not isinstance(item, dict):
+            continue
+        if item.get("id") == import_id:
+            return item, imports
+        if isinstance(item.get("id"), str) and item["id"].startswith(import_id):
+            matches.append(item)
+    if len(matches) == 1:
+        return matches[0], imports
+    return None, imports
 
 
 def _find_task(target: Path, task_id: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
@@ -215,6 +280,42 @@ def _make_task(text: str, *, source: str = "manual", metadata: dict[str, Any] | 
     if metadata:
         task["metadata"] = metadata
     return task
+
+
+def _parse_metadata(items: list[str] | None) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for item in items or []:
+        if "=" not in item:
+            raise ValueError("--metadata entries must use key=value")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError("--metadata entries must have a key")
+        metadata[key] = value.strip()
+    return metadata
+
+
+def _make_import(
+    text: str,
+    *,
+    kind: str,
+    source: str,
+    metadata: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    now = _now()
+    created = now.isoformat()
+    item: dict[str, Any] = {
+        "id": f"{now.strftime('%Y%m%d-%H%M%S')}-{kind}-{_slug(text)}-{uuid4().hex[:6]}",
+        "kind": kind,
+        "source": source,
+        "text": text,
+        "status": "pending",
+        "created_at": created,
+        "updated_at": created,
+    }
+    if metadata:
+        item["metadata"] = metadata
+    return item
 
 
 def _add_task(
@@ -674,6 +775,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     git = _git_snapshot(target)
     suggested = _suggested_command(active, resolved["task"], resolved["source"])
     pending = _pending_tasks(target)
+    pending_imports = _pending_imports(target)
     return {
         "target": str(target),
         "git": git,
@@ -683,6 +785,8 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
         "skipped_sessions": skipped,
         "tasks_path": str(_tasks_path(target)),
         "pending_tasks": pending,
+        "imports_path": str(_imports_path(target)),
+        "pending_imports": pending_imports,
         "dogfood": resolved["dogfood"],
         "next_source": resolved["source"],
         "task_id": resolved.get("task_id"),
@@ -1126,6 +1230,18 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
         if len(pending) > 5:
             print(f"  ... {len(pending) - 5} more")
 
+    pending_imports = payload["pending_imports"]
+    if isinstance(pending_imports, list) and pending_imports:
+        print("pending_imports:")
+        for item in pending_imports[:5]:
+            if not isinstance(item, dict):
+                continue
+            source = item.get("source") or "unknown"
+            kind = item.get("kind") or "task"
+            print(f"  - {item.get('id')} [{kind}] {source}: {_short(str(item.get('text', '')))}")
+        if len(pending_imports) > 5:
+            print(f"  ... {len(pending_imports) - 5} more")
+
     recent = payload["recent_sessions"]
     if isinstance(recent, list) and recent:
         print("recent_sessions:")
@@ -1245,6 +1361,149 @@ def task_done(*, target: Path, task_id: str) -> int:
     _write_task_ledger(target, ledger)
     print(f"task: {task.get('id')}")
     print("status: done")
+    return 0
+
+
+def import_add(
+    *,
+    target: Path,
+    text: str,
+    kind: str = "task",
+    source: str = "manual",
+    metadata: list[str] | None = None,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    rendered = text.strip()
+    if not rendered:
+        print("error: import text is required", file=sys.stderr)
+        return 2
+    if kind not in IMPORT_KINDS:
+        print(f"error: --kind must be one of: {', '.join(IMPORT_KINDS)}", file=sys.stderr)
+        return 2
+    source_text = source.strip() or "manual"
+    try:
+        parsed_metadata = _parse_metadata(metadata)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    imports = _read_imports(target)
+    item = _make_import(rendered, kind=kind, source=source_text, metadata=parsed_metadata)
+    imports.append(item)
+    _write_imports(target, imports)
+    print(f"import: {item['id']}")
+    print(f"status: {item['status']}")
+    print(f"kind: {item['kind']}")
+    print(f"source: {item['source']}")
+    print(f"text: {item['text']}")
+    return 0
+
+
+def import_list(*, target: Path, all_imports: bool = False, json_output: bool = False, limit: int = 20) -> int:
+    if limit < 1:
+        print("error: --limit must be a positive integer", file=sys.stderr)
+        return 2
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    imports = [item for item in _read_imports(target) if isinstance(item, dict)]
+    imports.sort(key=_import_sort_key)
+    if not all_imports:
+        imports = [item for item in imports if item.get("status", "pending") == "pending"]
+    imports = imports[:limit]
+
+    if json_output:
+        print(json.dumps({"imports_path": str(_imports_path(target)), "imports": imports}, indent=2, sort_keys=True))
+        return 0
+
+    print(f"work imports: {target}")
+    print(f"imports_path: {_imports_path(target)}")
+    if not imports:
+        print("imports: none")
+        return 0
+    for item in imports:
+        status_text = item.get("status", "pending")
+        kind = item.get("kind", "task")
+        source = item.get("source", "manual")
+        print(f"- {item.get('id')} [{status_text}] {kind} from {source}: {_short(str(item.get('text', '')))}")
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if metadata:
+            rendered = ", ".join(f"{key}={metadata[key]}" for key in sorted(metadata))
+            print(f"  metadata: {rendered}")
+        if item.get("task_id"):
+            print(f"  task: {item['task_id']}")
+    return 0
+
+
+def import_show(*, target: Path, import_id: str) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    item, _ = _find_import(target, import_id)
+    if item is None:
+        print(f"error: import not found: {import_id}", file=sys.stderr)
+        return 1
+    print(f"import: {item.get('id')}")
+    print(f"status: {item.get('status', 'pending')}")
+    print(f"kind: {item.get('kind', '')}")
+    print(f"source: {item.get('source', '')}")
+    print(f"created_at: {item.get('created_at', '')}")
+    print(f"updated_at: {item.get('updated_at', '')}")
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    if metadata:
+        print("metadata:")
+        for key in sorted(metadata):
+            print(f"  {key}: {metadata[key]}")
+    if item.get("promoted_at"):
+        print(f"promoted_at: {item['promoted_at']}")
+    if item.get("task_id"):
+        print(f"task: {item['task_id']}")
+    print(f"text: {item.get('text', '')}")
+    return 0
+
+
+def import_promote(*, target: Path, import_id: str) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    item, imports = _find_import(target, import_id)
+    if item is None:
+        print(f"error: import not found: {import_id}", file=sys.stderr)
+        return 1
+    text = str(item.get("text") or "").strip()
+    if not text:
+        print(f"error: import has no text: {import_id}", file=sys.stderr)
+        return 2
+    metadata: dict[str, Any] = {
+        "import_id": item.get("id"),
+        "import_kind": item.get("kind"),
+        "import_source": item.get("source"),
+    }
+    item_metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    metadata.update(item_metadata)
+    task, created = _add_task(
+        target,
+        text,
+        source=f"import:{item.get('source') or 'manual'}",
+        metadata=metadata,
+    )
+    now = _now().isoformat()
+    item["status"] = "promoted"
+    item["updated_at"] = now
+    item["promoted_at"] = now
+    item["task_id"] = task["id"]
+    _write_imports(target, imports)
+    print(f"import: {item.get('id')}")
+    print(f"status: {item.get('status')}")
+    print(f"task: {task['id']}")
+    print(f"created: {created}")
+    print(f"text: {task['text']}")
     return 0
 
 

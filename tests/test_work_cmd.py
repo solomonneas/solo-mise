@@ -561,6 +561,120 @@ def test_work_brief_includes_pending_tasks(tmp_path, monkeypatch, capsys):
     assert payload["suggested_command"] == "brigade work run"
 
 
+def test_work_import_add_list_show_and_promote(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 30, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 30, 1, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+
+    assert (
+        work_cmd.import_add(
+            target=tmp_path,
+            text="Refresh the stale memory card",
+            kind="task",
+            source="slack",
+            metadata=["channel=eng", "thread=abc123"],
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "import:" in out
+    assert "kind: task" in out
+    assert "source: slack" in out
+    import_id = out.split("import: ", 1)[1].splitlines()[0]
+
+    assert work_cmd.import_list(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "work imports:" in out
+    assert import_id in out
+    assert "[pending] task from slack: Refresh the stale memory card" in out
+
+    assert work_cmd.import_show(target=tmp_path, import_id=import_id[:12]) == 0
+    out = capsys.readouterr().out
+    assert f"import: {import_id}" in out
+    assert "status: pending" in out
+    assert "channel: eng" in out
+    assert "thread: abc123" in out
+
+    assert work_cmd.import_promote(target=tmp_path, import_id=import_id[:12]) == 0
+    out = capsys.readouterr().out
+    assert "status: promoted" in out
+    assert "created: True" in out
+    task_id = out.split("task: ", 1)[1].splitlines()[0]
+
+    assert work_cmd.tasks(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    task = payload["tasks"][0]
+    assert task["id"] == task_id
+    assert task["text"] == "Refresh the stale memory card"
+    assert task["source"] == "import:slack"
+    assert task["metadata"]["import_id"] == import_id
+    assert task["metadata"]["import_kind"] == "task"
+    assert task["metadata"]["import_source"] == "slack"
+    assert task["metadata"]["channel"] == "eng"
+
+    assert work_cmd.import_list(target=tmp_path) == 0
+    assert "imports: none" in capsys.readouterr().out
+    assert work_cmd.import_list(target=tmp_path, all_imports=True, json_output=True) == 0
+    imports_payload = json.loads(capsys.readouterr().out)
+    assert imports_payload["imports"][0]["status"] == "promoted"
+    assert imports_payload["imports"][0]["task_id"] == task_id
+
+
+def test_work_import_promote_reuses_existing_pending_task(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    times = iter(
+        [
+            datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 1, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 26, 12, 2, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(work_cmd, "_now", lambda: next(times))
+    assert work_cmd.task_add(target=tmp_path, text="Refresh stale card") == 0
+    task_id = capsys.readouterr().out.split("task: ", 1)[1].splitlines()[0]
+    assert work_cmd.import_add(target=tmp_path, text=" refresh  stale   card ", source="memory-care") == 0
+    import_id = capsys.readouterr().out.split("import: ", 1)[1].splitlines()[0]
+
+    assert work_cmd.import_promote(target=tmp_path, import_id=import_id) == 0
+    out = capsys.readouterr().out
+    assert f"task: {task_id}" in out
+    assert "created: False" in out
+    ledger = json.loads((tmp_path / ".brigade" / "work" / "tasks.json").read_text())
+    assert len(ledger["tasks"]) == 1
+
+
+def test_work_brief_includes_pending_imports(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    assert (
+        work_cmd.import_add(
+            target=tmp_path,
+            text="Review expired decision card",
+            kind="finding",
+            source="memory-care",
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert work_cmd.brief(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imports_path"].endswith(".brigade/work/imports/inbox.jsonl")
+    assert payload["pending_imports"][0]["text"] == "Review expired decision card"
+    assert payload["pending_imports"][0]["kind"] == "finding"
+    assert payload["pending_imports"][0]["source"] == "memory-care"
+
+
 def test_work_next_reports_latest_next_as_default_task(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     dogfood_cmd.init(target=tmp_path)
@@ -1029,6 +1143,70 @@ def test_work_tasks_cli(tmp_path, monkeypatch):
         ("add", {"target": tmp_path, "text": None, "from_next": True}),
         ("show", {"target": tmp_path, "task_id": "abc123"}),
         ("done", {"target": tmp_path, "task_id": "abc123"}),
+    ]
+
+
+def test_work_import_cli(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_import_add(**kwargs):
+        seen.append(("add", kwargs))
+        return 0
+
+    def fake_import_list(**kwargs):
+        seen.append(("list", kwargs))
+        return 0
+
+    def fake_import_show(**kwargs):
+        seen.append(("show", kwargs))
+        return 0
+
+    def fake_import_promote(**kwargs):
+        seen.append(("promote", kwargs))
+        return 0
+
+    monkeypatch.setattr(work_cmd, "import_add", fake_import_add)
+    monkeypatch.setattr(work_cmd, "import_list", fake_import_list)
+    monkeypatch.setattr(work_cmd, "import_show", fake_import_show)
+    monkeypatch.setattr(work_cmd, "import_promote", fake_import_promote)
+
+    assert (
+        cli.main(
+            [
+                "work",
+                "import",
+                "add",
+                "refresh",
+                "card",
+                "--target",
+                str(tmp_path),
+                "--kind",
+                "finding",
+                "--source",
+                "discord",
+                "--metadata",
+                "channel=dev",
+            ]
+        )
+        == 0
+    )
+    assert cli.main(["work", "import", "list", "--target", str(tmp_path), "--all", "--json", "--limit", "3"]) == 0
+    assert cli.main(["work", "import", "show", "imp123", "--target", str(tmp_path)]) == 0
+    assert cli.main(["work", "import", "promote", "imp123", "--target", str(tmp_path)]) == 0
+    assert seen == [
+        (
+            "add",
+            {
+                "target": tmp_path,
+                "text": "refresh card",
+                "kind": "finding",
+                "source": "discord",
+                "metadata": ["channel=dev"],
+            },
+        ),
+        ("list", {"target": tmp_path, "all_imports": True, "json_output": True, "limit": 3}),
+        ("show", {"target": tmp_path, "import_id": "imp123"}),
+        ("promote", {"target": tmp_path, "import_id": "imp123"}),
     ]
 
 
