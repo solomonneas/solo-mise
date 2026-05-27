@@ -16,6 +16,7 @@ def test_status_lists_stations_for_installed_workspace(tmp_target: Path, capsys)
     assert "core" in out
     assert "memory" in out
     assert "guard" in out
+    assert "security" in out
 
 
 def test_status_runs_on_empty_dir(tmp_target: Path, capsys):

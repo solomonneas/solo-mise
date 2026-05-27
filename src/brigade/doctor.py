@@ -82,6 +82,10 @@ def tokens_station_checks(ctx: DoctorContext) -> List[CheckResult]:
     return []
 
 
+def security_station_checks(ctx: DoctorContext) -> List[CheckResult]:
+    return [(OK, "security: built-in scanner", "run `brigade security scan --target .`")]
+
+
 def run(target: Path, harness: str = "generic") -> int:
     from .registry import all_stations
     from . import managed

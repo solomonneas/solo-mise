@@ -384,6 +384,25 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_scrub.add_argument("--dry-run", action="store_true")
 
+    # security
+    p_security = sub.add_parser("security", help="Scan agent workspace security posture.")
+    security_sub = p_security.add_subparsers(dest="security_command", metavar="<security-command>")
+    security_sub.required = True
+    p_security_scan = security_sub.add_parser("scan", help="Run a read-only agent workspace security scan.")
+    p_security_scan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to scan.")
+    p_security_scan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_security_scan.add_argument(
+        "--fail-on",
+        choices=["none", "low", "medium", "high", "critical"],
+        default="critical",
+        help="Return nonzero when a finding at or above this severity exists.",
+    )
+    p_security_scan.add_argument(
+        "--import-findings",
+        action="store_true",
+        help="Append findings to the local Brigade work import inbox.",
+    )
+
     # handoff-template
     p_ht = sub.add_parser("handoff-template", help="Print the handoff TEMPLATE.md.")
     p_ht.add_argument(
@@ -739,6 +758,18 @@ def main(argv=None) -> int:
         from . import scrub as scrub_mod
 
         return scrub_mod.run(target=args.target, policy=args.policy, dry_run=args.dry_run)
+    if cmd == "security":
+        from . import security_cmd
+
+        if args.security_command == "scan":
+            return security_cmd.scan(
+                target=args.target,
+                json_output=args.json,
+                fail_on=args.fail_on,
+                import_findings=args.import_findings,
+            )
+        parser.error(f"unknown security command: {args.security_command}")
+        return 2
     if cmd == "handoff-template":
         from . import handoff as handoff_mod
 

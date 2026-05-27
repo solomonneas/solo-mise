@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade work import dismiss` to close noisy imports without promoting them.
 - `brigade work import promote --all` with optional `--source` and `--kind` filters for batch promotion.
 - `docs/import-schema.md` documenting the local import JSONL contract for scanners and wrappers.
+- Cybersecurity plugin roadmap covering broad agent-workspace security checks plus Brigade-specific scanner, doctor, import, and multi-harness security checks.
+- Built-in `security` station and `brigade security scan` for read-only agent workspace security checks.
+- `brigade security scan --import-findings` to route security findings into the local work import inbox for review.
 - `ROADMAP.md` covering the daily-driver path, scanner-ready inbox, chat-surface scanners, memory-card decay refresh, and portable operator setup.
 - `brigade work note` to append timestamped checkpoints to the active work session without ending it.
 - `brigade work doctor` to check dogfood config, Codex availability, local artifact paths, handoff inbox, ignore coverage, and latest run context for the daily work loop.
