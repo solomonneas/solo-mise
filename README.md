@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brigade-social-preview.png" alt="Brigade">
+  <img src="docs/assets/brigade-social-preview.jpg" alt="Brigade">
 </p>
 
 <h1 align="center">Brigade</h1>
