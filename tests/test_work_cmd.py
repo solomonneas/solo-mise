@@ -942,6 +942,46 @@ def test_work_import_dismiss_marks_import_not_pending(tmp_path, monkeypatch, cap
     assert payload["imports"][0]["dismiss_reason"] == "not actionable"
 
 
+def test_work_import_promote_rejects_non_pending_import(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    assert work_cmd.import_add(target=tmp_path, text="Dismissed scanner item", source="discord") == 0
+    import_id = capsys.readouterr().out.split("import: ", 1)[1].splitlines()[0]
+    assert work_cmd.import_dismiss(target=tmp_path, import_id=import_id) == 0
+    capsys.readouterr()
+
+    assert work_cmd.import_promote(target=tmp_path, import_id=import_id) == 2
+    assert "import is not pending" in capsys.readouterr().err
+
+    imports = json.loads((tmp_path / ".brigade" / "work" / "imports" / "inbox.jsonl").read_text().splitlines()[0])
+    assert imports["status"] == "dismissed"
+    assert not (tmp_path / ".brigade" / "work" / "tasks.json").exists()
+
+
+def test_work_import_dismiss_rejects_non_pending_import(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    assert work_cmd.import_add(target=tmp_path, text="Promote scanner item", source="slack") == 0
+    import_id = capsys.readouterr().out.split("import: ", 1)[1].splitlines()[0]
+    assert work_cmd.import_promote(target=tmp_path, import_id=import_id) == 0
+    capsys.readouterr()
+
+    assert work_cmd.import_dismiss(target=tmp_path, import_id=import_id, reason="late cleanup") == 2
+    assert "import is not pending" in capsys.readouterr().err
+
+    payload = json.loads((tmp_path / ".brigade" / "work" / "imports" / "inbox.jsonl").read_text().splitlines()[0])
+    assert payload["status"] == "promoted"
+    assert "dismiss_reason" not in payload
+
+
 def test_work_brief_includes_pending_imports(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(
