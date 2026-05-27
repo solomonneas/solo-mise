@@ -1993,6 +1993,9 @@ def import_promote(
     if item is None:
         print(f"error: import not found: {import_id}", file=sys.stderr)
         return 1
+    if item.get("status", "pending") != "pending":
+        print(f"error: import is not pending: {item.get('id')} ({item.get('status')})", file=sys.stderr)
+        return 2
     text = str(item.get("text") or "").strip()
     if not text:
         print(f"error: import has no text: {import_id}", file=sys.stderr)
@@ -2016,6 +2019,9 @@ def import_dismiss(*, target: Path, import_id: str, reason: str | None = None) -
     if item is None:
         print(f"error: import not found: {import_id}", file=sys.stderr)
         return 1
+    if item.get("status", "pending") != "pending":
+        print(f"error: import is not pending: {item.get('id')} ({item.get('status')})", file=sys.stderr)
+        return 2
     now = _now().isoformat()
     item["status"] = "dismissed"
     item["updated_at"] = now
