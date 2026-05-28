@@ -190,6 +190,12 @@ brigade work scanners run chat-memory-sweep
 brigade work scanners run --due
 brigade work scanners runs
 brigade work scanners run-show <run-id>
+brigade work review init
+brigade work review plan
+brigade work review run <reviewer-id>
+brigade work review runs
+brigade work review show <run-id>
+brigade work review import-findings <run-id>
 brigade work sweep
 brigade work sweep --all
 brigade work sweeps
@@ -434,6 +440,16 @@ Scanner registry commands:
 - `brigade work scanners doctor --import-issues` reports missing config, disabled required producers, bad commands, missing or stale output paths, schedule conflicts, failed or timed-out runs, malformed receipts, missing logs, and due scanners, then can import those health issues as local task imports.
 
 The scanner registry is explicit and local. Brigade does not install cron jobs, start a daemon, run scanners from `brief` or `doctor`, promote scanner output automatically, or mutate scanner output beyond the configured command's own behavior. `brigade work sweep` is still explicit foreground execution, not a scheduler, and `sweep-review` is read-only.
+
+Code review producer commands:
+
+- `brigade work review init` writes gitignored `.brigade/reviews.toml` with disabled starter entries for Codex review, Claude Opus review, and custom local reviewers.
+- `brigade work review plan` shows configured reviewer commands, cwd, timeout, target paths, base ref, output path, findings path, and command blockers without executing anything.
+- `brigade work review run <reviewer-id>` and `run --all` execute configured reviewers explicitly, never through a shell, and write receipts under `.brigade/reviews/runs/`.
+- `brigade work review runs` and `brigade work review show <run-id>` inspect review receipts, including exit code, timeout state, stdout/stderr summaries, log paths, findings path, and reviewed completed task ids when available.
+- `brigade work review import-findings <run-id>` reads the run's normalized findings JSON, redacts unsafe values, and routes findings into the existing work inbox with source `code-review`.
+
+Code review is explicit and local. Brigade does not auto-run reviewers from `work run`, apply fixes, post review comments, mutate GitHub, store auth, or promote findings automatically.
 
 Chat surface export commands:
 

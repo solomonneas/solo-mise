@@ -230,6 +230,79 @@ SCANNER_DEFAULTS = (
         "conflict_window": "04:20-04:40",
     },
 )
+REVIEW_CONFIG_REL_PATH = ".brigade/reviews.toml"
+REVIEW_RUN_STALE_HOURS = 72
+REVIEW_REQUIRED_FIELDS = ("id", "name", "command", "output_path", "findings_path", "privacy_mode")
+REVIEW_PRIVACY_MODES = ("safe-summary", "local-only")
+REVIEW_DEFAULTS = (
+    {
+        "id": "codex-review",
+        "name": "Codex local code review",
+        "command": "brigade dogfood --json",
+        "cwd": ".",
+        "enabled": False,
+        "timeout": 600,
+        "target_paths": ["."],
+        "base_ref": "HEAD",
+        "output_path": ".brigade/reviews/codex-review-output.json",
+        "findings_path": ".brigade/reviews/codex-review-findings.json",
+        "supported_modes": ["diff", "workspace"],
+        "privacy_mode": "safe-summary",
+    },
+    {
+        "id": "claude-opus-review",
+        "name": "Claude Opus subagent code review",
+        "command": "claude /review",
+        "cwd": ".",
+        "enabled": False,
+        "timeout": 900,
+        "target_paths": ["."],
+        "base_ref": "HEAD",
+        "output_path": ".brigade/reviews/claude-opus-review-output.json",
+        "findings_path": ".brigade/reviews/claude-opus-review-findings.json",
+        "supported_modes": ["diff", "workspace", "subagents"],
+        "privacy_mode": "safe-summary",
+    },
+    {
+        "id": "custom",
+        "name": "Custom local code review",
+        "command": "brigade dogfood --json",
+        "cwd": ".",
+        "enabled": False,
+        "timeout": 600,
+        "target_paths": ["."],
+        "base_ref": "HEAD",
+        "output_path": ".brigade/reviews/custom-output.json",
+        "findings_path": ".brigade/reviews/custom-findings.json",
+        "supported_modes": ["diff", "workspace"],
+        "privacy_mode": "safe-summary",
+    },
+)
+REVIEW_SEVERITIES = ("low", "medium", "high", "critical")
+REVIEW_CATEGORIES = ("bug", "test", "docs", "security", "design", "maintainability", "performance", "workflow")
+REVIEW_UNSAFE_FIELD_NAMES = {
+    "body",
+    "channel_id",
+    "host",
+    "hostname",
+    "message",
+    "password",
+    "private_text",
+    "raw",
+    "raw_output",
+    "secret",
+    "stderr",
+    "stdout",
+    "token",
+    "transcript",
+    "url",
+    "user_id",
+    "webhook",
+}
+REVIEW_UNSAFE_VALUE_RE = re.compile(
+    r"(?:https?://[^\s]+|/home/[^\s]+|/Users/[^\s]+|[A-Za-z]:\\[^\s]+|xox[baprs]-[A-Za-z0-9-]+|[A-Za-z0-9_]*(?:token|secret|password|api_key)[A-Za-z0-9_]*\s*[:=]\s*[A-Za-z0-9_./+=:-]{8,})",
+    re.IGNORECASE,
+)
 CONFIDENCE_RANK = {"high": 0, "medium": 1, "normal": 1, "low": 2}
 RAW_CHAT_FIELDS = {
     "body",
@@ -360,6 +433,14 @@ def _scanner_runs_root(target: Path) -> Path:
 
 def _scanner_sweeps_root(target: Path) -> Path:
     return target / ".brigade" / "scanners" / "sweeps"
+
+
+def _review_config_path(target: Path) -> Path:
+    return target / REVIEW_CONFIG_REL_PATH
+
+
+def _review_runs_root(target: Path) -> Path:
+    return target / ".brigade" / "reviews" / "runs"
 
 
 def _git_snapshot(target: Path) -> dict[str, Any]:
@@ -2010,6 +2091,38 @@ def _format_scanner_toml(scanners: tuple[dict[str, Any], ...] = SCANNER_DEFAULTS
     return "\n".join(lines)
 
 
+def _format_toml_array(values: object) -> str:
+    if not isinstance(values, list):
+        return "[]"
+    return "[" + ", ".join(dogfood_cmd._format_toml_value(item) for item in values) + "]"
+
+
+def _format_review_toml(reviewers: tuple[dict[str, Any], ...] = REVIEW_DEFAULTS) -> str:
+    lines = [
+        "# Local code review producers. Brigade runs these only when explicitly requested.",
+        "",
+    ]
+    for reviewer in reviewers:
+        lines.append("[[reviewer]]")
+        for key in (
+            "id",
+            "name",
+            "command",
+            "cwd",
+            "enabled",
+            "timeout",
+            "base_ref",
+            "output_path",
+            "findings_path",
+            "privacy_mode",
+        ):
+            lines.append(f"{key} = {dogfood_cmd._format_toml_value(reviewer[key])}")
+        lines.append(f"target_paths = {_format_toml_array(reviewer.get('target_paths'))}")
+        lines.append(f"supported_modes = {_format_toml_array(reviewer.get('supported_modes'))}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _load_scanner_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
     path = _scanner_config_path(target)
     if not path.is_file():
@@ -2083,6 +2196,106 @@ def _load_scanner_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]
         if scanner:
             scanners.append(scanner)
     return scanners, errors
+
+
+def _string_list(value: object, *, label: str, errors: list[str]) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        errors.append(f"{label} must be a list of strings")
+        return []
+    result: list[str] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f"{label} item {index} must be a non-empty string")
+            continue
+        result.append(item.strip())
+    return result
+
+
+def _safe_relative_path(value: str, *, field: str, label: str, errors: list[str]) -> str | None:
+    raw = value.strip()
+    if not raw:
+        errors.append(f"{label}: {field} must be a non-empty string")
+        return None
+    path = Path(raw)
+    if path.is_absolute() or ".." in path.parts:
+        errors.append(f"{label}: {field} must be relative and must not contain '..'")
+        return None
+    return raw
+
+
+def _load_review_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    path = _review_config_path(target)
+    if not path.is_file():
+        return [], [f"review config missing: {path}"]
+    if tomllib is None:
+        return [], ["review config requires Python tomllib support"]
+    try:
+        payload = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:  # type: ignore[union-attr]
+        return [], [f"invalid review config: {exc}"]
+    values = payload.get("reviewer")
+    if not isinstance(values, list):
+        return [], ["review config must contain [[reviewer]] entries"]
+    reviewers: list[dict[str, Any]] = []
+    errors: list[str] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(values, start=1):
+        label = f"reviewer {index}"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be a table")
+            continue
+        reviewer: dict[str, Any] = {}
+        for field in REVIEW_REQUIRED_FIELDS:
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{label}: {field} must be a non-empty string")
+            else:
+                reviewer[field] = value.strip()
+        cwd = item.get("cwd", ".")
+        if not isinstance(cwd, str):
+            errors.append(f"{label}: cwd must be a string")
+        else:
+            safe = _safe_relative_path(cwd, field="cwd", label=label, errors=errors)
+            if safe is not None:
+                reviewer["cwd"] = safe
+        for field in ("output_path", "findings_path"):
+            value = reviewer.get(field)
+            if isinstance(value, str):
+                safe = _safe_relative_path(value, field=field, label=label, errors=errors)
+                if safe is not None:
+                    reviewer[field] = safe
+        target_paths = _string_list(item.get("target_paths", []), label=f"{label}: target_paths", errors=errors)
+        supported_modes = _string_list(item.get("supported_modes", []), label=f"{label}: supported_modes", errors=errors)
+        reviewer["target_paths"] = target_paths
+        reviewer["supported_modes"] = supported_modes
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            errors.append(f"{label}: enabled must be true or false")
+        else:
+            reviewer["enabled"] = enabled
+        timeout = item.get("timeout", 600)
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            errors.append(f"{label}: timeout must be a positive number")
+        else:
+            reviewer["timeout"] = float(timeout)
+        base_ref = item.get("base_ref", "HEAD")
+        if not isinstance(base_ref, str) or not base_ref.strip():
+            errors.append(f"{label}: base_ref must be a non-empty string")
+        else:
+            reviewer["base_ref"] = base_ref.strip()
+        privacy_mode = reviewer.get("privacy_mode")
+        if isinstance(privacy_mode, str) and privacy_mode not in REVIEW_PRIVACY_MODES:
+            errors.append(f"{label}: privacy_mode must be one of: {', '.join(REVIEW_PRIVACY_MODES)}")
+        reviewer_id = reviewer.get("id")
+        if isinstance(reviewer_id, str):
+            if reviewer_id in seen_ids:
+                errors.append(f"{label}: duplicate id {reviewer_id}")
+            seen_ids.add(reviewer_id)
+        if reviewer:
+            reviewers.append(reviewer)
+    return reviewers, errors
 
 
 def _parse_clock_minutes(value: str) -> int | None:
@@ -2185,6 +2398,33 @@ def _scanner_cwd(target: Path, scanner: dict[str, Any]) -> Path:
     return target
 
 
+def _review_output_path(target: Path, reviewer: dict[str, Any]) -> Path | None:
+    output = reviewer.get("output_path")
+    if not isinstance(output, str) or not output.strip():
+        return None
+    path = Path(output).expanduser()
+    return path if path.is_absolute() else target / path
+
+
+def _review_findings_path(target: Path, reviewer: dict[str, Any]) -> Path | None:
+    output = reviewer.get("findings_path")
+    if not isinstance(output, str) or not output.strip():
+        return None
+    path = Path(output).expanduser()
+    return path if path.is_absolute() else target / path
+
+
+def _review_cwd(target: Path, reviewer: dict[str, Any]) -> Path:
+    raw = reviewer.get("cwd")
+    if isinstance(raw, str) and raw.strip():
+        return (target / raw).resolve()
+    return target
+
+
+def _review_argv(command: str) -> tuple[list[str] | None, str | None]:
+    return _scanner_argv(command)
+
+
 def _scanner_read_receipt(path: Path) -> dict[str, Any] | None:
     receipt = path / "receipt.json" if path.is_dir() else path
     if not receipt.is_file():
@@ -2207,6 +2447,46 @@ def _scanner_receipts(target: Path) -> list[dict[str, Any]]:
     valid = [item for item in receipts if isinstance(item, dict)]
     valid.sort(key=lambda item: str(item.get("started_at") or item.get("run_id") or ""), reverse=True)
     return valid
+
+
+def _review_read_receipt(path: Path) -> dict[str, Any] | None:
+    receipt = path / "receipt.json" if path.is_dir() else path
+    if not receipt.is_file():
+        return None
+    try:
+        data = json.loads(receipt.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    data.setdefault("path", str(receipt.parent))
+    return data
+
+
+def _review_receipts(target: Path) -> list[dict[str, Any]]:
+    root = _review_runs_root(target)
+    if not root.is_dir():
+        return []
+    receipts = [_review_read_receipt(path) for path in root.iterdir() if path.is_dir()]
+    valid = [item for item in receipts if isinstance(item, dict)]
+    valid.sort(key=lambda item: str(item.get("started_at") or item.get("run_id") or ""), reverse=True)
+    return valid
+
+
+def _review_latest_success(target: Path, reviewer_id: str | None = None) -> dict[str, Any] | None:
+    for receipt in _review_receipts(target):
+        if reviewer_id and receipt.get("reviewer_id") != reviewer_id:
+            continue
+        if receipt.get("status") == "completed" and receipt.get("exit_code") == 0:
+            return receipt
+    return None
+
+
+def _review_receipt_path(run: dict[str, Any]) -> str | None:
+    value = run.get("path")
+    if isinstance(value, str) and value:
+        return str(Path(value) / "receipt.json")
+    return None
 
 
 def _scanner_read_sweep(path: Path) -> dict[str, Any] | None:
@@ -2400,6 +2680,164 @@ def _scanner_validate_import_output(
     return import_path, records, [f"{scanner.get('id')}: {error}" for error in errors]
 
 
+def _review_redact(value: object) -> object:
+    if isinstance(value, dict):
+        redacted: dict[str, object] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text.casefold() in REVIEW_UNSAFE_FIELD_NAMES:
+                redacted[key_text] = "[redacted]"
+            else:
+                redacted[key_text] = _review_redact(item)
+        return redacted
+    if isinstance(value, list):
+        return [_review_redact(item) for item in value]
+    if isinstance(value, str):
+        return REVIEW_UNSAFE_VALUE_RE.sub("[redacted]", value)
+    return value
+
+
+def _review_safe_text(value: object, *, limit: int = 600) -> str:
+    if not isinstance(value, str):
+        return ""
+    return _short(str(_review_redact(value)).strip(), limit)
+
+
+def _review_finding_fingerprint(finding: dict[str, Any], *, reviewer_id: str) -> str:
+    existing = finding.get("source_fingerprint")
+    if isinstance(existing, str) and existing.strip():
+        return existing.strip()
+    return _stable_hash(
+        {
+            "reviewer_id": reviewer_id,
+            "path": finding.get("path"),
+            "line": finding.get("line"),
+            "severity": finding.get("severity"),
+            "category": finding.get("category"),
+            "rationale": finding.get("rationale"),
+            "suggested_fix": finding.get("suggested_fix"),
+        }
+    )
+
+
+def _normalize_review_finding(value: object, *, reviewer_id: str, run_id: str, run: dict[str, Any], label: str) -> tuple[dict[str, Any] | None, list[str]]:
+    if not isinstance(value, dict):
+        return None, [f"{label}: expected JSON object"]
+    errors: list[str] = []
+    path_value = value.get("path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        errors.append(f"{label}: path must be a non-empty string")
+    severity = str(value.get("severity") or "medium").strip().lower()
+    if severity not in REVIEW_SEVERITIES:
+        errors.append(f"{label}: severity must be one of: {', '.join(REVIEW_SEVERITIES)}")
+    category = str(value.get("category") or "maintainability").strip().lower()
+    if category not in REVIEW_CATEGORIES:
+        errors.append(f"{label}: category must be one of: {', '.join(REVIEW_CATEGORIES)}")
+    line = value.get("line")
+    if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
+        errors.append(f"{label}: line must be a positive integer when present")
+    confidence = str(value.get("confidence") or "medium").strip().lower()
+    if confidence not in {"low", "medium", "high"}:
+        errors.append(f"{label}: confidence must be low, medium, or high")
+    rationale = _review_safe_text(value.get("rationale") or value.get("summary") or value.get("text"), limit=800)
+    suggested_fix = _review_safe_text(value.get("suggested_fix") or value.get("fix"), limit=800)
+    safe_excerpt = _review_safe_text(value.get("safe_excerpt") or value.get("excerpt"), limit=400)
+    if not rationale:
+        errors.append(f"{label}: rationale must be a non-empty string")
+    if errors:
+        return None, errors
+    normalized: dict[str, Any] = {
+        "reviewer_id": reviewer_id,
+        "run_id": run_id,
+        "severity": severity,
+        "category": category,
+        "path": str(path_value).strip(),
+        "line": line,
+        "safe_excerpt": safe_excerpt,
+        "rationale": rationale,
+        "suggested_fix": suggested_fix,
+        "confidence": confidence,
+    }
+    finding_id = value.get("finding_id") or value.get("id")
+    if isinstance(finding_id, str) and finding_id.strip():
+        normalized["finding_id"] = finding_id.strip()
+    else:
+        normalized["finding_id"] = _stable_hash(normalized)[:12]
+    normalized["source_fingerprint"] = _review_finding_fingerprint(normalized, reviewer_id=reviewer_id)
+    normalized["receipt_path"] = _review_receipt_path(run)
+    if run.get("findings_path"):
+        normalized["findings_path"] = run.get("findings_path")
+    return normalized, []
+
+
+def _load_review_findings(path: Path, *, reviewer_id: str, run_id: str, run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    try:
+        payload = json.loads(path.read_text())
+    except OSError as exc:
+        return [], [f"{path}: {exc}"]
+    except json.JSONDecodeError as exc:
+        return [], [f"{path}: invalid JSON: {exc.msg}"]
+    if isinstance(payload, list):
+        raw_findings = payload
+    elif isinstance(payload, dict):
+        raw_findings = payload.get("findings", [])
+    else:
+        return [], [f"{path}: expected JSON object or list"]
+    if not isinstance(raw_findings, list):
+        return [], [f"{path}: findings must be a list"]
+    findings: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, item in enumerate(raw_findings, start=1):
+        finding, item_errors = _normalize_review_finding(
+            _review_redact(item),
+            reviewer_id=reviewer_id,
+            run_id=run_id,
+            run=run,
+            label=f"finding {index}",
+        )
+        errors.extend(item_errors)
+        if finding is not None:
+            findings.append(finding)
+    return findings, errors
+
+
+def _review_import_record(finding: dict[str, Any]) -> dict[str, Any]:
+    location = str(finding.get("path") or "")
+    if finding.get("line"):
+        location = f"{location}:{finding.get('line')}"
+    text = f"Review finding {finding.get('severity')} {finding.get('category')} in {location}: {finding.get('rationale')}"
+    metadata = {
+        "reviewer_id": finding.get("reviewer_id"),
+        "review_run_id": finding.get("run_id"),
+        "review_finding_id": finding.get("finding_id"),
+        "severity": finding.get("severity"),
+        "category": finding.get("category"),
+        "path": finding.get("path"),
+        "line": finding.get("line"),
+        "safe_excerpt": finding.get("safe_excerpt"),
+        "rationale": finding.get("rationale"),
+        "suggested_fix": finding.get("suggested_fix"),
+        "confidence": finding.get("confidence"),
+        "receipt_path": finding.get("receipt_path"),
+        "findings_path": finding.get("findings_path"),
+        "source_item_key": f"code-review:{finding.get('reviewer_id')}:{finding.get('finding_id')}",
+        "source_fingerprint": finding.get("source_fingerprint"),
+    }
+    return {
+        "text": text,
+        "kind": "task" if finding.get("severity") in {"high", "critical"} else "finding",
+        "source": "code-review",
+        "type": "bug" if finding.get("category") == "bug" else "workflow",
+        "priority": "high" if finding.get("severity") in {"high", "critical"} else "normal",
+        "template": "bugfix",
+        "acceptance": [
+            f"The code review finding {finding.get('finding_id')} is resolved or dismissed with rationale.",
+            f"`brigade work review import-findings {finding.get('run_id')}` does not create a duplicate unresolved finding.",
+        ],
+        "metadata": metadata,
+    }
+
+
 def _scanner_run_one(
     target: Path,
     scanner: dict[str, Any],
@@ -2526,6 +2964,305 @@ def _scanner_run_one(
         )
     _write_json(receipt_path, receipt)
     return receipt
+
+
+def _review_stamp_completed_tasks(target: Path, run_id: str) -> list[str]:
+    ledger = _read_task_ledger(target)
+    stamped: list[str] = []
+    changed = False
+    for task in ledger.get("tasks", []):
+        if not isinstance(task, dict) or task.get("status") != "done":
+            continue
+        completion = task.setdefault("completion", {})
+        if not isinstance(completion, dict):
+            completion = {}
+            task["completion"] = completion
+        review_run_ids = completion.get("review_run_ids")
+        if not isinstance(review_run_ids, list):
+            review_run_ids = []
+            completion["review_run_ids"] = review_run_ids
+        if run_id not in review_run_ids:
+            review_run_ids.append(run_id)
+            stamped.append(str(task.get("id")))
+            changed = True
+    if changed:
+        _write_task_ledger(target, ledger)
+    return stamped
+
+
+def _review_run_one(target: Path, reviewer: dict[str, Any]) -> dict[str, Any]:
+    reviewer_id = str(reviewer.get("id") or "reviewer")
+    command = str(reviewer.get("command") or "")
+    argv, blocker = _review_argv(command)
+    output_path = _review_output_path(target, reviewer)
+    findings_path = _review_findings_path(target, reviewer)
+    cwd = _review_cwd(target, reviewer)
+    started = _now()
+    run_id = f"{started.strftime('%Y%m%d-%H%M%S')}-{_slug(reviewer_id)}-{uuid4().hex[:6]}"
+    run_dir = _review_runs_root(target) / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
+    receipt_path = run_dir / "receipt.json"
+    receipt: dict[str, Any] = {
+        "run_id": run_id,
+        "reviewer_id": reviewer_id,
+        "name": reviewer.get("name"),
+        "status": "running",
+        "path": str(run_dir),
+        "target": str(target),
+        "cwd": str(cwd),
+        "command_label": command,
+        "argv": argv or [],
+        "started_at": started.isoformat(),
+        "timeout": reviewer.get("timeout"),
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "output_path": str(output_path) if output_path is not None else None,
+        "output_before": _scanner_output_snapshot(output_path),
+        "findings_path": str(findings_path) if findings_path is not None else None,
+        "findings_before": _scanner_output_snapshot(findings_path),
+        "target_paths": reviewer.get("target_paths") or [],
+        "base_ref": reviewer.get("base_ref"),
+        "supported_modes": reviewer.get("supported_modes") or [],
+        "privacy_mode": reviewer.get("privacy_mode"),
+    }
+    _write_json(receipt_path, receipt)
+    if blocker is not None:
+        completed = _now()
+        receipt.update(
+            {
+                "status": "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": None,
+                "timed_out": False,
+                "error": blocker,
+                "stdout_summary": "",
+                "stderr_summary": blocker,
+                "output_after": _scanner_output_snapshot(output_path),
+                "findings_after": _scanner_output_snapshot(findings_path),
+            }
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
+    if not cwd.is_dir():
+        completed = _now()
+        receipt.update(
+            {
+                "status": "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": None,
+                "timed_out": False,
+                "error": f"review cwd not found: {cwd}",
+                "stdout_summary": "",
+                "stderr_summary": f"review cwd not found: {cwd}",
+                "output_after": _scanner_output_snapshot(output_path),
+                "findings_after": _scanner_output_snapshot(findings_path),
+            }
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
+    try:
+        completed_process = subprocess.run(
+            argv,
+            cwd=cwd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=float(reviewer.get("timeout", 600)),
+        )
+        stdout = completed_process.stdout or ""
+        stderr = completed_process.stderr or ""
+        stdout_path.write_text(stdout)
+        stderr_path.write_text(stderr)
+        completed = _now()
+        status = "completed" if completed_process.returncode == 0 else "failed"
+        receipt.update(
+            {
+                "status": status,
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": completed_process.returncode,
+                "timed_out": False,
+                "stdout_summary": _scanner_run_summary(stdout),
+                "stderr_summary": _scanner_run_summary(stderr),
+                "output_after": _scanner_output_snapshot(output_path),
+                "findings_after": _scanner_output_snapshot(findings_path),
+            }
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        stdout_path.write_text(stdout)
+        stderr_path.write_text(stderr)
+        completed = _now()
+        receipt.update(
+            {
+                "status": "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": None,
+                "timed_out": True,
+                "error": f"review timed out after {reviewer.get('timeout')} seconds",
+                "stdout_summary": _scanner_run_summary(stdout),
+                "stderr_summary": _scanner_run_summary(stderr),
+                "output_after": _scanner_output_snapshot(output_path),
+                "findings_after": _scanner_output_snapshot(findings_path),
+            }
+        )
+    if receipt.get("status") == "completed":
+        receipt["completed_task_ids_reviewed"] = _review_stamp_completed_tasks(target, run_id)
+    _write_json(receipt_path, receipt)
+    return receipt
+
+
+def _review_plan_payload(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    reviewers, errors = _load_review_config(target)
+    planned: list[dict[str, Any]] = []
+    for reviewer in reviewers:
+        argv, blocker = _review_argv(str(reviewer.get("command") or ""))
+        planned.append(
+            {
+                "id": reviewer.get("id"),
+                "name": reviewer.get("name"),
+                "enabled": reviewer.get("enabled", True),
+                "command": reviewer.get("command"),
+                "argv": argv or [],
+                "blocker": blocker,
+                "cwd": str(_review_cwd(target, reviewer)),
+                "timeout": reviewer.get("timeout"),
+                "target_paths": reviewer.get("target_paths") or [],
+                "base_ref": reviewer.get("base_ref"),
+                "output_path": str(_review_output_path(target, reviewer)) if _review_output_path(target, reviewer) else None,
+                "findings_path": str(_review_findings_path(target, reviewer)) if _review_findings_path(target, reviewer) else None,
+                "supported_modes": reviewer.get("supported_modes") or [],
+                "privacy_mode": reviewer.get("privacy_mode"),
+            }
+        )
+    return {
+        "target": str(target),
+        "config_path": str(_review_config_path(target)),
+        "valid": not errors,
+        "errors": errors,
+        "reviewers": reviewers,
+        "planned": planned,
+    }
+
+
+def _review_pending_finding(target: Path) -> dict[str, Any] | None:
+    candidates = [
+        item
+        for item in _pending_imports(target)
+        if item.get("source") == "code-review"
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda item: (
+            PRIORITY_RANK.get(str(item.get("priority") or "normal"), 9),
+            str(item.get("created_at") or ""),
+        )
+    )
+    return _import_summary(candidates[0])
+
+
+def _review_malformed_findings(target: Path, runs: list[dict[str, Any]], reviewers: list[dict[str, Any]]) -> list[str]:
+    items: list[tuple[str, Path, dict[str, Any]]] = []
+    for run in runs[:20]:
+        value = run.get("findings_path")
+        if isinstance(value, str) and value:
+            items.append((str(run.get("run_id")), Path(value), run))
+    for reviewer in reviewers:
+        path = _review_findings_path(target, reviewer)
+        if path is not None and path.is_file():
+            items.append((str(reviewer.get("id")), path, {"run_id": str(reviewer.get("id")), "findings_path": str(path)}))
+    malformed: list[str] = []
+    seen: set[str] = set()
+    for label, path, run in items:
+        if str(path) in seen or not path.is_file():
+            continue
+        seen.add(str(path))
+        _, errors = _load_review_findings(
+            path,
+            reviewer_id=str(run.get("reviewer_id") or label),
+            run_id=str(run.get("run_id") or label),
+            run=run,
+        )
+        if errors:
+            malformed.append(f"{label}:{errors[0]}")
+    return malformed
+
+
+def _review_health(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    plan = _review_plan_payload(target)
+    reviewers = plan["reviewers"] if isinstance(plan.get("reviewers"), list) else []
+    receipts = _review_receipts(target)
+    checks: list[dict[str, Any]] = []
+    if not _review_config_path(target).is_file():
+        checks.append({"status": WARN, "name": "review_config", "detail": f"missing, run `brigade work review init --target {target}`"})
+    elif plan.get("valid"):
+        checks.append({"status": OK, "name": "review_config", "detail": plan["config_path"]})
+    else:
+        checks.append({"status": FAIL, "name": "review_config", "detail": "; ".join(plan.get("errors", []))})
+    blocked = [
+        f"{item.get('id')}:{item.get('blocker')}"
+        for item in plan.get("planned", [])
+        if isinstance(item, dict) and item.get("enabled", True) and item.get("blocker")
+    ]
+    if blocked:
+        checks.append({"status": WARN, "name": "review_commands", "detail": ", ".join(blocked[:5])})
+    elif plan.get("valid"):
+        checks.append({"status": OK, "name": "review_commands", "detail": "enabled reviewer commands are resolvable"})
+    failed = [run for run in receipts if run.get("status") == "failed" or run.get("timed_out")][:5]
+    if failed:
+        checks.append({"status": WARN, "name": "review_runs_failed", "detail": ", ".join(str(run.get("run_id")) for run in failed)})
+    elif receipts:
+        checks.append({"status": OK, "name": "review_runs_failed", "detail": "none"})
+    missing_logs: list[str] = []
+    for run in receipts[:20]:
+        for key in ("stdout_path", "stderr_path"):
+            value = run.get(key)
+            if isinstance(value, str) and value and not Path(value).is_file():
+                missing_logs.append(f"{run.get('run_id')}:{key}")
+    if missing_logs:
+        checks.append({"status": WARN, "name": "review_run_logs", "detail": ", ".join(missing_logs[:5])})
+    elif receipts:
+        checks.append({"status": OK, "name": "review_run_logs", "detail": "receipt logs exist"})
+    malformed = _review_malformed_findings(target, receipts, reviewers)
+    if malformed:
+        checks.append({"status": WARN, "name": "review_findings_malformed", "detail": "; ".join(malformed[:3])})
+    latest_success = _review_latest_success(target)
+    enabled = [reviewer for reviewer in reviewers if reviewer.get("enabled", True)]
+    if enabled and latest_success is None:
+        checks.append({"status": WARN, "name": "review_runs_missing", "detail": "no successful review runs"})
+    elif latest_success is not None:
+        completed = _parse_iso_datetime(latest_success.get("completed_at") or latest_success.get("started_at"))
+        if completed is not None:
+            age_hours = (_now() - completed).total_seconds() / 3600
+            if age_hours > REVIEW_RUN_STALE_HOURS:
+                checks.append({"status": WARN, "name": "review_runs_stale", "detail": f"{latest_success.get('run_id')}={age_hours:.1f}h"})
+            else:
+                checks.append({"status": OK, "name": "review_runs_stale", "detail": "latest review run is fresh"})
+    ledger = _read_task_ledger(target)
+    done_tasks = [task for task in ledger.get("tasks", []) if isinstance(task, dict) and task.get("status") == "done"]
+    if enabled and done_tasks and latest_success is None:
+        checks.append({"status": WARN, "name": "review_completed_tasks", "detail": f"{len(done_tasks)} completed task(s) have no successful review receipt"})
+    top_pending = _review_pending_finding(target)
+    return {
+        "target": str(target),
+        "config_path": str(_review_config_path(target)),
+        "checks": checks,
+        "plan": plan,
+        "latest_run": receipts[0] if receipts else None,
+        "latest_success": latest_success,
+        "top_pending_finding": top_pending,
+        "pending_finding_count": len([item for item in _pending_imports(target) if item.get("source") == "code-review"]),
+    }
 
 
 def _scanner_plan_payload(target: Path) -> dict[str, Any]:
@@ -3286,6 +4023,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     inbox_hygiene = _inbox_hygiene_payload(target)
     scanner_health = _scanner_health(target)
     sweep_health = _scanner_sweep_health(target)
+    review_health = _review_health(target)
     chat_health = chat_cmd.health(target)
     memory_health = memory_cmd.health(target)
     security_health = security_cmd.health(target)
@@ -3327,6 +4065,14 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "due_count": sweep_health["due_count"],
             "suggested_command": sweep_health["suggested_command"],
             "review": sweep_health["review"],
+        },
+        "code_review": {
+            "config_path": review_health["config_path"],
+            "checks": review_health["checks"],
+            "latest_run": review_health["latest_run"],
+            "latest_success": review_health["latest_success"],
+            "pending_finding_count": review_health["pending_finding_count"],
+            "top_pending_finding": review_health["top_pending_finding"],
         },
         "chat_surfaces": {
             "config_path": chat_health["config_path"],
@@ -4039,6 +4785,21 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
                     f"{checkpoint_top.get('checkpoint_id')} {checkpoint_top.get('issue_type')} "
                     f"{_short(str(checkpoint_top.get('detail', '')))}"
                 )
+
+    code_review = payload.get("code_review")
+    if isinstance(code_review, dict):
+        latest_review = code_review.get("latest_run") if isinstance(code_review.get("latest_run"), dict) else None
+        if latest_review:
+            print(
+                f"review_latest: {latest_review.get('run_id')} "
+                f"{latest_review.get('reviewer_id')} [{latest_review.get('status')}]"
+            )
+        if code_review.get("pending_finding_count"):
+            print(f"review_pending_findings: {code_review.get('pending_finding_count')}")
+        top_review = code_review.get("top_pending_finding") if isinstance(code_review.get("top_pending_finding"), dict) else None
+        if top_review:
+            print(f"review_top_finding: {top_review.get('id')} {_short(str(top_review.get('text', '')))}")
+            print(f"review_top_command: brigade work import plan {top_review.get('id')}")
 
     handoff_issues = payload.get("handoff_issues")
     if isinstance(handoff_issues, dict) and handoff_issues.get("count"):
@@ -5969,6 +6730,273 @@ def scanners_init(*, target: Path, force: bool = False, update_gitignore: bool =
     return 0
 
 
+def review_init(*, target: Path, force: bool = False, update_gitignore: bool = True) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    path = _review_config_path(target)
+    if path.exists() and not force:
+        print(f"error: review config already exists: {path}", file=sys.stderr)
+        return 2
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_format_review_toml())
+    print(f"review_config: {path}")
+    print(f"reviewers: {len(REVIEW_DEFAULTS)}")
+    if update_gitignore:
+        result = apply_gitignore(target, _work_selection(target, dogfood_cmd.default_handoff_inbox(target)))
+        print(f"gitignore: {result}")
+    else:
+        print("gitignore: skipped")
+    print("next_command: brigade work review plan")
+    return 0
+
+
+def review_plan(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _review_plan_payload(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["valid"] else 1
+    print(f"work review plan: {target}")
+    print(f"config_path: {payload['config_path']}")
+    if payload["errors"]:
+        print(f"errors: {len(payload['errors'])}")
+        for error in payload["errors"]:
+            print(f"- {error}")
+        return 1
+    planned = payload.get("planned") if isinstance(payload.get("planned"), list) else []
+    if not planned:
+        print("reviewers: none")
+    for item in planned:
+        status = "enabled" if item.get("enabled", True) else "disabled"
+        blocker = f" blocker={item.get('blocker')}" if item.get("blocker") else ""
+        print(f"- {item.get('id')} [{status}] cwd={item.get('cwd')} timeout={item.get('timeout')}{blocker}")
+        print(f"  command: {item.get('command')}")
+        print(f"  findings: {item.get('findings_path')}")
+    return 0
+
+
+def _select_reviewers_for_run(
+    target: Path,
+    *,
+    reviewer_id: str | None,
+    all_matching: bool,
+    include_disabled: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    reviewers, errors = _load_review_config(target)
+    if errors:
+        return [], [], errors
+    if reviewer_id:
+        selected = [item for item in reviewers if item.get("id") == reviewer_id]
+        if not selected:
+            return [], [], [f"reviewer not found: {reviewer_id}"]
+    elif all_matching:
+        selected = list(reviewers)
+    else:
+        return [], [], ["reviewer id or --all is required"]
+    runnable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for reviewer in selected:
+        if not reviewer.get("enabled", True) and not include_disabled:
+            if reviewer_id:
+                return [], [], [f"reviewer disabled: {reviewer_id}"]
+            skipped.append({"reviewer": reviewer, "reason": "disabled"})
+            continue
+        runnable.append(reviewer)
+    return runnable, skipped, []
+
+
+def review_run(
+    *,
+    target: Path,
+    reviewer_id: str | None = None,
+    all_matching: bool = False,
+    include_disabled: bool = False,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    if bool(reviewer_id) == bool(all_matching):
+        print("error: pass exactly one reviewer id or --all", file=sys.stderr)
+        return 2
+    if not _review_config_path(target).is_file():
+        print(f"error: review config missing: {_review_config_path(target)}", file=sys.stderr)
+        return 2
+    selected, skipped, errors = _select_reviewers_for_run(
+        target,
+        reviewer_id=reviewer_id,
+        all_matching=all_matching,
+        include_disabled=include_disabled,
+    )
+    if errors:
+        if json_output:
+            print(json.dumps({"target": str(target), "errors": errors, "runs": [], "skipped": []}, indent=2, sort_keys=True))
+        else:
+            for error in errors:
+                print(f"error: {error}", file=sys.stderr)
+        return 2
+    runs = [_review_run_one(target, reviewer) for reviewer in selected]
+    payload = {
+        "target": str(target),
+        "runs_root": str(_review_runs_root(target)),
+        "selected": len(selected),
+        "completed": len([run for run in runs if run.get("status") == "completed"]),
+        "failed": len([run for run in runs if run.get("status") != "completed"]),
+        "skipped": [
+            {"reviewer_id": item["reviewer"].get("id"), "reason": item["reason"]}
+            for item in skipped
+            if isinstance(item.get("reviewer"), dict)
+        ],
+        "runs": runs,
+    }
+    rc = 0 if payload["failed"] == 0 else 1
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    print(f"work review run: {target}")
+    print(f"runs_root: {payload['runs_root']}")
+    print(f"selected: {payload['selected']}")
+    print(f"completed: {payload['completed']}")
+    print(f"failed: {payload['failed']}")
+    for item in payload["skipped"]:
+        print(f"skipped: {item['reviewer_id']} {item['reason']}")
+    for run in runs:
+        print(
+            f"- {run.get('run_id')} {run.get('reviewer_id')} "
+            f"[{run.get('status')}] exit={run.get('exit_code')} timed_out={run.get('timed_out')}"
+        )
+        if run.get("error"):
+            print(f"  error: {run.get('error')}")
+        print(f"  logs: {run.get('stdout_path')} {run.get('stderr_path')}")
+    return rc
+
+
+def review_runs(*, target: Path, json_output: bool = False, limit: int = 20) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    receipts = _review_receipts(target)[:limit]
+    payload = {"target": str(target), "runs_root": str(_review_runs_root(target)), "runs": receipts}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"work review runs: {target}")
+    print(f"runs_root: {payload['runs_root']}")
+    if not receipts:
+        print("runs: none")
+        return 0
+    for receipt in receipts:
+        print(
+            f"- {receipt.get('run_id')} {receipt.get('reviewer_id')} "
+            f"[{receipt.get('status')}] exit={receipt.get('exit_code')} {receipt.get('started_at')}"
+        )
+    return 0
+
+
+def review_show(*, target: Path, run_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    matches = [receipt for receipt in _review_receipts(target) if str(receipt.get("run_id") or "").startswith(run_id)]
+    if not matches:
+        print(f"error: review run not found: {run_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: review run id is ambiguous: {run_id}", file=sys.stderr)
+        return 2
+    receipt = matches[0]
+    if json_output:
+        print(json.dumps({"target": str(target), "run": receipt}, indent=2, sort_keys=True))
+        return 0
+    print(f"review_run: {receipt.get('run_id')}")
+    print(f"reviewer: {receipt.get('reviewer_id')}")
+    print(f"status: {receipt.get('status')}")
+    print(f"started_at: {receipt.get('started_at')}")
+    if receipt.get("completed_at"):
+        print(f"completed_at: {receipt.get('completed_at')}")
+    print(f"duration_seconds: {receipt.get('duration_seconds')}")
+    print(f"exit_code: {receipt.get('exit_code')}")
+    print(f"timed_out: {receipt.get('timed_out')}")
+    print(f"stdout: {receipt.get('stdout_path')}")
+    print(f"stderr: {receipt.get('stderr_path')}")
+    print(f"findings: {receipt.get('findings_path')}")
+    if receipt.get("stdout_summary"):
+        print(f"stdout_summary: {_short(str(receipt.get('stdout_summary')))}")
+    if receipt.get("stderr_summary"):
+        print(f"stderr_summary: {_short(str(receipt.get('stderr_summary')))}")
+    return 0
+
+
+def review_import_findings(*, target: Path, run_id: str, json_output: bool = False, dry_run: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    matches = [receipt for receipt in _review_receipts(target) if str(receipt.get("run_id") or "").startswith(run_id)]
+    if not matches:
+        print(f"error: review run not found: {run_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: review run id is ambiguous: {run_id}", file=sys.stderr)
+        return 2
+    run = matches[0]
+    findings_path_value = run.get("findings_path")
+    if not isinstance(findings_path_value, str) or not findings_path_value:
+        print(f"error: review run has no findings_path: {run.get('run_id')}", file=sys.stderr)
+        return 2
+    findings_path = Path(findings_path_value)
+    if not findings_path.is_file():
+        print(f"error: review findings file not found: {findings_path}", file=sys.stderr)
+        return 1
+    findings, errors = _load_review_findings(
+        findings_path,
+        reviewer_id=str(run.get("reviewer_id") or ""),
+        run_id=str(run.get("run_id") or ""),
+        run=run,
+    )
+    if errors:
+        if json_output:
+            print(json.dumps({"target": str(target), "run_id": run.get("run_id"), "errors": errors}, indent=2, sort_keys=True))
+        else:
+            for error in errors:
+                print(f"error: {error}", file=sys.stderr)
+        return 2
+    records = [_review_import_record(finding) for finding in findings]
+    imported, skipped, skipped_dismissed = _append_import_records(target, records, dry_run=dry_run)
+    payload = {
+        "target": str(target),
+        "run_id": run.get("run_id"),
+        "reviewer_id": run.get("reviewer_id"),
+        "findings_path": str(findings_path),
+        "findings": len(findings),
+        "created": len(imported),
+        "skipped": len(skipped),
+        "dismissed": len(skipped_dismissed),
+        "imports": imported,
+        "dry_run": dry_run,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"review findings import: {target}")
+    print(f"run_id: {payload['run_id']}")
+    print(f"findings: {payload['findings']}")
+    print(f"created: {payload['created']}")
+    print(f"skipped: {payload['skipped']}")
+    print(f"dismissed: {payload['dismissed']}")
+    for item in imported:
+        print(f"- {item.get('id')} [{item.get('kind')}] {_short(str(item.get('text', '')))}")
+    return 0
+
+
 def scanners_list(*, target: Path, json_output: bool = False) -> int:
     target = target.expanduser().resolve()
     if not target.is_dir():
@@ -7462,6 +8490,12 @@ def doctor(*, target: Path) -> int:
 
     sweep_health = _scanner_sweep_health(effective_target)
     for check in sweep_health["checks"]:
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+
+    review_health = _review_health(effective_target)
+    for check in review_health["checks"]:
+        if check.get("status") == FAIL:
+            failures += 1
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
 
     chat_health = chat_cmd.health(effective_target)

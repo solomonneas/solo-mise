@@ -308,6 +308,35 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_scanners_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_scanners_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_scanners_doctor.add_argument("--import-issues", action="store_true", help="Import scanner health issues into the work inbox.")
+    p_work_review = work_sub.add_parser("review", help="Run explicit local code review producers.")
+    review_sub = p_work_review.add_subparsers(dest="review_command", metavar="<review-command>")
+    review_sub.required = True
+    p_work_review_init = review_sub.add_parser("init", help="Write local code review producer config.")
+    p_work_review_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_review_init.add_argument("--force", action="store_true", help="Overwrite an existing review config.")
+    p_work_review_init.add_argument("--no-gitignore", action="store_true", help="Do not update the target .gitignore.")
+    p_work_review_plan = review_sub.add_parser("plan", help="Plan configured code review producers without running them.")
+    p_work_review_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_review_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_review_run = review_sub.add_parser("run", help="Run configured local code review producers explicitly.")
+    p_work_review_run.add_argument("reviewer_id", nargs="?", default=None, help="Reviewer id to run.")
+    p_work_review_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_review_run.add_argument("--all", action="store_true", help="Run all configured reviewers.")
+    p_work_review_run.add_argument("--include-disabled", action="store_true", help="Allow disabled reviewers to run.")
+    p_work_review_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_review_runs = review_sub.add_parser("runs", help="List local code review run receipts.")
+    p_work_review_runs.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_review_runs.add_argument("--limit", type=int, default=20, help="Maximum runs to list.")
+    p_work_review_runs.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_review_show = review_sub.add_parser("show", help="Show one code review run receipt.")
+    p_work_review_show.add_argument("run_id", help="Run id or unique prefix.")
+    p_work_review_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_review_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_review_import = review_sub.add_parser("import-findings", help="Import normalized review findings into the work inbox.")
+    p_work_review_import.add_argument("run_id", help="Run id or unique prefix.")
+    p_work_review_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_review_import.add_argument("--dry-run", action="store_true", help="Report without writing imports.")
+    p_work_review_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_next = work_sub.add_parser("next", help="Show the next daily work task and suggested command.")
     p_work_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_next.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -1298,6 +1327,36 @@ def main(argv=None) -> int:
                     import_issues=args.import_issues,
                 )
             parser.error(f"unknown scanners command: {args.scanners_command}")
+            return 2
+        if args.work_command == "review":
+            if args.review_command == "init":
+                return work_cmd.review_init(
+                    target=args.target,
+                    force=args.force,
+                    update_gitignore=not args.no_gitignore,
+                )
+            if args.review_command == "plan":
+                return work_cmd.review_plan(target=args.target, json_output=args.json)
+            if args.review_command == "run":
+                return work_cmd.review_run(
+                    target=args.target,
+                    reviewer_id=args.reviewer_id,
+                    all_matching=args.all,
+                    include_disabled=args.include_disabled,
+                    json_output=args.json,
+                )
+            if args.review_command == "runs":
+                return work_cmd.review_runs(target=args.target, limit=args.limit, json_output=args.json)
+            if args.review_command == "show":
+                return work_cmd.review_show(target=args.target, run_id=args.run_id, json_output=args.json)
+            if args.review_command == "import-findings":
+                return work_cmd.review_import_findings(
+                    target=args.target,
+                    run_id=args.run_id,
+                    dry_run=args.dry_run,
+                    json_output=args.json,
+                )
+            parser.error(f"unknown review command: {args.review_command}")
             return 2
         if args.work_command == "next":
             return work_cmd.next(target=args.target, json_output=args.json)
