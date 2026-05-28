@@ -291,6 +291,8 @@ def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
             "cwd",
             "runtime_id",
             "runtime_health_path",
+            "mcp_server_id",
+            "mcp_tool_name",
         ):
             value = raw_tool.get(field)
             if value is not None:
@@ -1071,6 +1073,20 @@ def _redact_text(value: object, limit: int | None = 500) -> str:
     return _short(text, limit)
 
 
+def _redact_known_values(value: object, secrets: list[str]) -> object:
+    if isinstance(value, dict):
+        return {str(key): _redact_known_values(nested, secrets) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_redact_known_values(item, secrets) for item in value]
+    if isinstance(value, str):
+        text = value
+        for secret in secrets:
+            if secret:
+                text = text.replace(secret, "[redacted]")
+        return text
+    return value
+
+
 def _schema_path(target: Path, tool: dict[str, Any], field: str) -> Path | None:
     return _as_path(target, tool.get(field))
 
@@ -1201,6 +1217,8 @@ def _contract_defined(tool: dict[str, Any]) -> bool:
             "runtime_id",
             "requires_runtime",
             "runtime_health_path",
+            "mcp_server_id",
+            "mcp_tool_name",
         )
     )
 
@@ -1221,6 +1239,8 @@ def _contract_summary(target: Path, tool: dict[str, Any]) -> dict[str, Any]:
         "runtime_id": tool.get("runtime_id"),
         "requires_runtime": tool.get("requires_runtime", False),
         "runtime_health_path": tool.get("runtime_health_path"),
+        "mcp_server_id": tool.get("mcp_server_id"),
+        "mcp_tool_name": tool.get("mcp_tool_name"),
         "approval_mode": tool.get("approval_mode") or "never",
         "permissions": tool.get("permissions", []),
         "effects": tool.get("effects", []),
@@ -1257,6 +1277,8 @@ def _contract_fingerprint(target: Path, tool: dict[str, Any]) -> str:
             "runtime_id": tool.get("runtime_id"),
             "requires_runtime": tool.get("requires_runtime", False),
             "runtime_health_path": tool.get("runtime_health_path"),
+            "mcp_server_id": tool.get("mcp_server_id"),
+            "mcp_tool_name": tool.get("mcp_tool_name"),
             "approval_mode": tool.get("approval_mode"),
             "permissions": tool.get("permissions", []),
             "effects": tool.get("effects", []),
@@ -1269,6 +1291,13 @@ def _contract_fingerprint(target: Path, tool: dict[str, Any]) -> str:
 
 def _contract_issues(target: Path, tool: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
+    if tool.get("family") == "mcp":
+        if not tool.get("runtime_id"):
+            issues.append(_tool_issue(tool, "missing_runtime", "runtime_id is required for MCP execution"))
+        if not tool.get("mcp_tool_name"):
+            issues.append(_tool_issue(tool, "missing_mcp_tool_name", "mcp_tool_name is required for MCP execution"))
+        if not tool.get("command"):
+            issues.append(_tool_issue(tool, "missing_command", "command is required for local MCP stdio execution"))
     if not _contract_defined(tool):
         if tool.get("command") or tool.get("family") in {"script", "custom", "mcp", "openapi", "graphql"}:
             issues.append(_tool_issue(tool, "missing_contract", "tool has no call contract metadata"))
@@ -1756,6 +1785,11 @@ def _call_plan_payload(
     if tool is not None:
         if not tool.get("command"):
             blockers.append("command is required for call planning")
+        if tool.get("family") == "mcp":
+            if not tool.get("runtime_id"):
+                blockers.append("runtime_id is required for MCP call planning")
+            if not tool.get("mcp_tool_name"):
+                blockers.append("mcp_tool_name is required for MCP call planning")
         auth_label = str(tool.get("auth_label") or "")
         if auth_label and UNSAFE_FIELD_PATTERN.search(auth_label):
             blockers.append("auth_label appears unsafe")
@@ -1805,8 +1839,10 @@ def _call_plan_payload(
         "cwd": tool.get("cwd") if tool is not None else None,
         "timeout": tool.get("timeout") if tool is not None else None,
         "runtime_id": tool.get("runtime_id") if tool is not None else None,
-        "requires_runtime": tool.get("requires_runtime", False) if tool is not None else False,
+        "requires_runtime": (tool.get("requires_runtime", False) or tool.get("family") == "mcp") if tool is not None else False,
         "runtime_health_path": tool.get("runtime_health_path") if tool is not None else None,
+        "mcp_server_id": tool.get("mcp_server_id") if tool is not None else None,
+        "mcp_tool_name": tool.get("mcp_tool_name") if tool is not None else None,
         "auth_label": "[redacted]" if tool is not None and UNSAFE_FIELD_PATTERN.search(str(tool.get("auth_label") or "")) else (tool.get("auth_label") if tool is not None else None),
         "env_labels": safe_env_labels,
         "arguments": mapped_arguments,
@@ -1900,6 +1936,8 @@ def _call_plan_from_record(call: dict[str, Any]) -> dict[str, Any]:
         "runtime_id": contract.get("runtime_id"),
         "requires_runtime": contract.get("requires_runtime", False),
         "runtime_health_path": contract.get("runtime_health_path"),
+        "mcp_server_id": contract.get("mcp_server_id"),
+        "mcp_tool_name": contract.get("mcp_tool_name"),
         "auth_label": contract.get("auth_label"),
         "env_labels": contract.get("env_labels", []),
         "arguments": call.get("arguments"),
@@ -1964,6 +2002,8 @@ def _make_call_record(plan_payload: dict[str, Any]) -> dict[str, Any]:
             "runtime_id": plan.get("runtime_id"),
             "requires_runtime": plan.get("requires_runtime", False),
             "runtime_health_path": plan.get("runtime_health_path"),
+            "mcp_server_id": plan.get("mcp_server_id"),
+            "mcp_tool_name": plan.get("mcp_tool_name"),
         },
         "blockers": plan_payload.get("blockers", []),
         "policy": plan_payload.get("policy", {}),
@@ -2115,8 +2155,9 @@ def _call_run_blockers(target: Path, call: dict[str, Any], *, expected_status: s
                 blockers.append(f"call must be {expected_status} before run: {status or 'unknown'}")
     if call.get("blockers"):
         blockers.append("blocked calls cannot be run")
-    if call.get("family") != "script":
-        blockers.append("only script family calls can be run")
+    family = call.get("family")
+    if family not in {"script", "mcp"}:
+        blockers.append("only script and mcp family calls can be run")
     if not isinstance(call.get("command"), str) or not str(call.get("command")).strip():
         blockers.append("command is required")
     if _high_risk_command(call.get("command")):
@@ -2141,8 +2182,8 @@ def _call_run_blockers(target: Path, call: dict[str, Any], *, expected_status: s
         if tool is None:
             blockers.extend(errors or [f"tool not found: {tool_id}"])
         else:
-            if tool.get("family") != "script":
-                blockers.append("configured tool is not script family")
+            if tool.get("family") != family:
+                blockers.append(f"configured tool family changed: {tool.get('family')}")
             current_projection = _call_projection_summary(target, tool_id)
             if current_projection != call.get("projection_summary", {}):
                 blockers.append("projection summary is stale")
@@ -2165,6 +2206,11 @@ def _call_run_blockers(target: Path, call: dict[str, Any], *, expected_status: s
             blockers.append(f"required runtime is not managed by Brigade: {runtime_snapshot.get('id')}")
         elif runtime_snapshot.get("health_ok") is False:
             blockers.append(f"required runtime is unhealthy: {runtime_snapshot.get('id')}")
+    if family == "mcp":
+        if not contract.get("runtime_id"):
+            blockers.append("runtime_id is required for MCP calls")
+        if not contract.get("mcp_tool_name"):
+            blockers.append("mcp_tool_name is required for MCP calls")
     policy_decision = _policy_decision(target, _call_plan_from_record(call))
     blockers.extend(policy_decision["blockers"])
     return blockers
@@ -2202,6 +2248,8 @@ def _write_run_receipt(
         if value:
             stdout_text = stdout_text.replace(str(value), "[redacted]")
             stderr_text = stderr_text.replace(str(value), "[redacted]")
+    if extra:
+        extra = _redact_known_values(extra, [str(value) for value in env_values.values() if value])
     stdout_path = run_dir / f"{run_id}.stdout.log"
     stderr_path = run_dir / f"{run_id}.stderr.log"
     receipt_path = run_dir / f"{run_id}.json"
@@ -2211,6 +2259,7 @@ def _write_run_receipt(
         "id": run_id,
         "call_id": call.get("id"),
         "tool_id": call.get("tool_id"),
+        "family": call.get("family"),
         "status": status,
         "started_at": started_at,
         "completed_at": completed_at,
@@ -2239,6 +2288,8 @@ def _write_run_receipt(
         "permissions": contract.get("permissions", []),
         "effects": contract.get("effects", []),
         "runtime_id": contract.get("runtime_id"),
+        "mcp_server_id": contract.get("mcp_server_id"),
+        "mcp_tool_name": contract.get("mcp_tool_name"),
         "runtime": runtime_snapshot,
         "policy": safe_policy,
         "env_labels_used": policy_decision.get("env_labels_used", []),
@@ -2280,6 +2331,7 @@ def _run_public_summary(receipt: dict[str, Any]) -> dict[str, Any]:
         "status": receipt.get("status"),
         "call_id": receipt.get("call_id"),
         "tool_id": receipt.get("tool_id"),
+        "family": receipt.get("family"),
         "started_at": receipt.get("started_at"),
         "completed_at": receipt.get("completed_at"),
         "duration_seconds": receipt.get("duration_seconds"),
@@ -2288,6 +2340,10 @@ def _run_public_summary(receipt: dict[str, Any]) -> dict[str, Any]:
         "timeout": receipt.get("timeout"),
         "policy": receipt.get("policy", {}),
         "runtime": receipt.get("runtime"),
+        "mcp_server_id": receipt.get("mcp_server_id"),
+        "mcp_tool_name": receipt.get("mcp_tool_name"),
+        "mcp_request_id": receipt.get("mcp_request_id"),
+        "mcp_response_summary": receipt.get("mcp_response_summary"),
         "stdout_summary": receipt.get("stdout_summary"),
         "stderr_summary": receipt.get("stderr_summary"),
         "stdout_log_path": receipt.get("stdout_log_path"),
@@ -2601,6 +2657,18 @@ def _run_history_health(target: Path) -> dict[str, Any]:
                     "detail": f"{run_id} failed with exit_code={receipt.get('exit_code')}",
                 }
             )
+            if receipt.get("family") == "mcp":
+                issues.append(
+                    {
+                        "status": WARN,
+                        "name": "tool_mcp_execution_failed",
+                        "issue_type": str(receipt.get("mcp_error_type") or "mcp_execution_failed"),
+                        "tool_id": tool_id,
+                        "run_id": run_id,
+                        "call_id": receipt.get("call_id"),
+                        "detail": f"{run_id} MCP execution failed: {_short(str(receipt.get('stderr_summary') or receipt.get('mcp_response_summary') or ''))}",
+                    }
+                )
         if receipt.get("timed_out") is True:
             issues.append(
                 {
@@ -2806,6 +2874,147 @@ def _checkpoint_health(target: Path) -> dict[str, Any]:
     }
 
 
+def _mcp_jsonrpc_requests(call: dict[str, Any]) -> list[dict[str, Any]]:
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    tool_name = str(contract.get("mcp_tool_name") or call.get("tool_id") or "")
+    args = call.get("args") if isinstance(call.get("args"), dict) else {}
+    return [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "brigade", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": args},
+        },
+    ]
+
+
+def _parse_mcp_responses(stdout: object) -> tuple[list[dict[str, Any]], list[str]]:
+    responses: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for line in str(stdout or "").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(f"invalid JSON-RPC response: {exc.msg}")
+            continue
+        if not isinstance(payload, dict):
+            errors.append("JSON-RPC response must be an object")
+            continue
+        responses.append(payload)
+        if payload.get("error"):
+            errors.append(f"JSON-RPC error for id={payload.get('id')}: {_short(str(payload.get('error')))}")
+    return responses, errors
+
+
+def _mcp_response_by_id(responses: list[dict[str, Any]], request_id: int) -> dict[str, Any] | None:
+    for response in responses:
+        if response.get("id") == request_id:
+            return response
+    return None
+
+
+def _mcp_tool_list_contains(response: dict[str, Any] | None, tool_name: str) -> bool:
+    result = response.get("result") if isinstance(response, dict) else None
+    tools = result.get("tools") if isinstance(result, dict) else None
+    if not isinstance(tools, list):
+        return False
+    for item in tools:
+        if isinstance(item, dict) and item.get("name") == tool_name:
+            return True
+    return False
+
+
+def _run_mcp_call(
+    target: Path,
+    *,
+    call: dict[str, Any],
+    run_id: str,
+    cwd: Path,
+    policy_decision: dict[str, Any],
+    timeout_value: float | None,
+) -> tuple[object, object, int | None, bool, str, dict[str, Any]]:
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    env_values = policy_decision.get("env") if isinstance(policy_decision.get("env"), dict) else {}
+    run_env = os.environ.copy()
+    for label, value in env_values.items():
+        run_env[str(label)] = str(value)
+    run_env["BRIGADE_TOOL_CHECKPOINT_DIR"] = str(checkpoints_path(target))
+    run_env["BRIGADE_TOOL_CALL_ID"] = str(call.get("id") or "")
+    run_env["BRIGADE_TOOL_RUN_ID"] = run_id
+    tool_name = str(contract.get("mcp_tool_name") or "")
+    requests = _mcp_jsonrpc_requests(call)
+    request_text = "".join(json.dumps(request, sort_keys=True) + "\n" for request in requests)
+    started_request_id = requests[-1]["id"]
+    status = "completed"
+    exit_code: int | None = None
+    timed_out = False
+    stdout: object = ""
+    stderr: object = ""
+    try:
+        completed = subprocess.run(
+            _command_parts(call.get("command")),
+            input=request_text,
+            cwd=cwd,
+            env=run_env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_value,
+            check=False,
+        )
+        stdout = completed.stdout
+        stderr = completed.stderr
+        exit_code = completed.returncode
+        if completed.returncode != 0:
+            status = "failed"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        timed_out = True
+        status = "failed"
+    except OSError as exc:
+        stderr = str(exc)
+        status = "failed"
+    responses, response_errors = _parse_mcp_responses(stdout)
+    if response_errors and status == "completed":
+        status = "failed"
+    if status == "completed" and _mcp_response_by_id(responses, 1) is None:
+        response_errors.append("missing initialize response")
+        status = "failed"
+    list_response = _mcp_response_by_id(responses, 2)
+    if status == "completed" and not _mcp_tool_list_contains(list_response, tool_name):
+        response_errors.append(f"MCP tool not listed by server: {tool_name}")
+        status = "failed"
+    call_response = _mcp_response_by_id(responses, 3)
+    if status == "completed" and call_response is None:
+        response_errors.append("missing tools/call response")
+        status = "failed"
+    if response_errors:
+        stderr = (str(stderr or "") + "\n" + "\n".join(response_errors)).strip()
+    extra = {
+        "mcp_server_id": contract.get("mcp_server_id") or contract.get("runtime_id"),
+        "mcp_tool_name": tool_name,
+        "mcp_request_id": started_request_id,
+        "mcp_request_payload": _redact_payload(requests[-1]),
+        "mcp_response_summary": _redact_payload(call_response or {}),
+        "mcp_response_count": len(responses),
+        "mcp_error_type": "mcp_execution_failed" if status == "failed" else None,
+    }
+    return stdout, stderr, exit_code, timed_out, status, extra
+
+
 def _next_approved_call(calls: list[dict[str, Any]]) -> dict[str, Any] | None:
     approved = [call for call in calls if call.get("status") == "approved"]
     approved.sort(key=lambda call: str(call.get("created_at") or ""))
@@ -2842,11 +3051,12 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
     cwd = _as_path(target, cwd_value) if cwd_value else target
     assert cwd is not None
     argv = _command_parts(call.get("command"))
-    for key in sorted((call.get("arguments") if isinstance(call.get("arguments"), dict) else {}).keys()):
-        value = call["arguments"][key]
-        if value is None:
-            continue
-        argv.extend(shlex.split(str(value)))
+    if call.get("family") != "mcp":
+        for key in sorted((call.get("arguments") if isinstance(call.get("arguments"), dict) else {}).keys()):
+            value = call["arguments"][key]
+            if value is None:
+                continue
+            argv.extend(shlex.split(str(value)))
     started_at = _now().isoformat()
     run_id = _run_id_for_call(call, started_at)
     receipt_path = runs_path(target) / f"{run_id}.json"
@@ -2876,29 +3086,40 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
     exit_code: int | None = None
     timed_out = False
     status = "completed"
-    try:
-        completed = subprocess.run(
-            argv,
+    extra_receipt: dict[str, Any] = {}
+    if call.get("family") == "mcp":
+        stdout, stderr, exit_code, timed_out, status, extra_receipt = _run_mcp_call(
+            target,
+            call=call,
+            run_id=run_id,
             cwd=cwd,
-            env=run_env,
-            text=True,
-            capture_output=True,
-            timeout=timeout_value,
-            check=False,
+            policy_decision=policy_decision,
+            timeout_value=timeout_value,
         )
-        stdout = completed.stdout
-        stderr = completed.stderr
-        exit_code = completed.returncode
-        if completed.returncode != 0:
+    else:
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=run_env,
+                text=True,
+                capture_output=True,
+                timeout=timeout_value,
+                check=False,
+            )
+            stdout = completed.stdout
+            stderr = completed.stderr
+            exit_code = completed.returncode
+            if completed.returncode != 0:
+                status = "failed"
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            timed_out = True
             status = "failed"
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        timed_out = True
-        status = "failed"
-    except OSError as exc:
-        stderr = str(exc)
-        status = "failed"
+        except OSError as exc:
+            stderr = str(exc)
+            status = "failed"
     duration_seconds = time.monotonic() - start_monotonic
     completed_at = _now().isoformat()
     checkpoints = _collect_run_checkpoints(
@@ -2909,7 +3130,6 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
         started_epoch=started_epoch,
     )
     checkpoint = checkpoints[0] if checkpoints else None
-    extra_receipt: dict[str, Any] = {}
     if checkpoint is not None:
         status = "waiting"
         extra_receipt["checkpoint_id"] = checkpoint.get("id")

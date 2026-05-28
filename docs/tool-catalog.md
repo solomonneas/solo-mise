@@ -312,13 +312,15 @@ Equivalent valid plans dedupe while pending or approved. Rejected calls can be r
 
 For script calls, Brigade parses the configured `command`, appends rendered `argument_template` values in stable key order, uses the configured `cwd` when present, and applies the configured timeout. It does not resolve auth, fetch secrets, start MCP servers, run OpenAPI or GraphQL calls, or execute unapproved queue entries.
 
+For MCP calls, Brigade requires an approved `mcp` family call with `runtime_id`, `mcp_tool_name`, `input_schema_path`, timeout, permissions, effects, and approval mode. The configured runtime must already be running, managed by Brigade metadata, healthy, and allowed by policy. Brigade then runs the configured local stdio command with `shell=False`, sends JSON-RPC `initialize`, `tools/list`, and `tools/call`, validates that the requested MCP tool is listed, and records the redacted request and response in the receipt. It does not connect to remote MCP servers or start runtimes automatically.
+
 Each run writes a receipt and raw local logs under:
 
 ```text
 .brigade/tools/runs/
 ```
 
-Receipts include call id, tool id, status, timestamps, duration, exit code, timeout status, command label, cwd, redacted args and rendered arguments, redacted stdout/stderr summaries, stdout/stderr log paths, contract/source/call/approval fingerprints, approval metadata, permissions, effects, runtime snapshot, policy decision, env labels used, and projection summary. Raw stdout and stderr logs stay local and gitignored.
+Receipts include call id, tool id, family, status, timestamps, duration, exit code, timeout status, command label, cwd, redacted args and rendered arguments, redacted stdout/stderr summaries, stdout/stderr log paths, contract/source/call/approval fingerprints, approval metadata, permissions, effects, runtime snapshot, policy decision, env labels used, and projection summary. MCP receipts also include server id, tool name, request id, redacted request payload, redacted response summary, and MCP response count. Raw stdout and stderr logs stay local and gitignored.
 
 ## Run History And Replay
 
@@ -376,6 +378,7 @@ Checkpoint approval does not execute anything. Checkpoint resume never runs auto
 - failed tool call executions
 - tool call executions left running too long
 - failed or timed-out run receipts
+- failed MCP executions, malformed JSON-RPC responses, and MCP tool-list mismatches
 - malformed run receipts and missing run log files
 - run replay candidates blocked by current tool, runtime, or policy state
 - stale, expired, rejected, blocked, or failed checkpoints
@@ -385,7 +388,7 @@ Checkpoint approval does not execute anything. Checkpoint resume never runs auto
 - policy blockers for effects, timeouts, approval modes, runtimes, families, and env labels
 - MCP config issues in local JSON files with `mcpServers`
 
-MCP discovery is structural only. Brigade summarizes server count and server ids, checks for missing commands and timeout metadata, and flags broad shell-like command shapes. It never starts an MCP server.
+MCP discovery is structural. Brigade summarizes server count and server ids, checks for missing commands and timeout metadata, and flags broad shell-like command shapes. MCP execution is explicit, local-runtime-only, and limited to approved calls through `brigade tools call run`.
 
 ## Work Inbox Routing
 
@@ -405,4 +408,4 @@ Repeated imports dedupe equivalent pending or promoted issues. Dismissed tool-ca
 
 Keep all catalog state local and gitignored. Do not put tokens, passwords, raw credentials, URLs with embedded secrets, private hostnames, or host-private paths in public templates. Brigade reports unsafe field names without copying their values into command output, work imports, session artifacts, docs, or handoffs.
 
-Projection apply is local and explicit. Call planning, call approval review, run history inspection, and checkpoint review are local and non-executing. Tool execution is explicit through `brigade tools call run`, limited initially to approved local `script` entries, and recorded with local receipts. Replay creates a pending call and never bypasses approval, runtime, or policy gates. Checkpoint resume is explicit and never automatic. Runtime lifecycle is explicit through `brigade tools runtime`; no command auto-starts runtimes as a side effect. Execution policy is host-local and gitignored. Brigade does not store secrets, start MCP servers, run OpenAPI or GraphQL calls, install schedulers, fetch remote schemas, store auth, send notifications, or mutate remote services.
+Projection apply is local and explicit. Call planning, call approval review, run history inspection, and checkpoint review are local and non-executing. Tool execution is explicit through `brigade tools call run`, limited to approved local `script` entries and approved local `mcp` entries with already-running managed runtimes, and recorded with local receipts. Replay creates a pending call and never bypasses approval, runtime, or policy gates. Checkpoint resume is explicit and never automatic. Runtime lifecycle is explicit through `brigade tools runtime`; no command auto-starts runtimes as a side effect. Execution policy is host-local and gitignored. Brigade does not store secrets, connect to remote MCP servers, run OpenAPI or GraphQL calls, install schedulers, fetch remote schemas, store auth, send notifications, or mutate remote services.

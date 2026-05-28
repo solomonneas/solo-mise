@@ -3008,6 +3008,248 @@ else:
     assert secret_value not in Path(payload["receipt"]["stdout_log_path"]).read_text()
 
 
+def _write_mcp_tool_config(tmp_path, *, server_script: str, timeout: float = 5.0) -> None:
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir(exist_ok=True)
+    (tools_dir / "fake_mcp.py").write_text(server_script)
+    (tools_dir / "mcp-input.schema.json").write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "api_token": {"type": "string"}},
+                "additionalProperties": True,
+            }
+        )
+    )
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.parent.mkdir(exist_ok=True)
+    config.write_text(
+        f"""
+[[tool]]
+id = "mcp-runner"
+name = "MCP Runner"
+family = "mcp"
+enabled = true
+description = "Run local MCP tool."
+command = "{sys.executable} tools/fake_mcp.py"
+input_schema_path = "tools/mcp-input.schema.json"
+timeout = {timeout}
+permissions = ["read-files"]
+effects = ["local-read"]
+approval_mode = "on-request"
+runtime_id = "helper"
+requires_runtime = true
+mcp_server_id = "helper"
+mcp_tool_name = "echo"
+supported_harnesses = []
+"""
+    )
+
+
+def _fake_mcp_server_script(*, malformed: bool = False, sleep_seconds: float = 0.0, copy_env: bool = False) -> str:
+    if malformed:
+        return 'print("not-json", flush=True)\n'
+    env_line = '" env=" + os.environ.get("SAFE_LABEL", "")' if copy_env else '""'
+    return f"""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+time.sleep({sleep_seconds})
+methods = []
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    request = json.loads(line)
+    methods.append(request.get("method", ""))
+    method = request.get("method")
+    if method == "initialize":
+        response = {{"jsonrpc": "2.0", "id": request.get("id"), "result": {{"protocolVersion": "2024-11-05", "capabilities": {{}}}}}}
+    elif method == "tools/list":
+        response = {{"jsonrpc": "2.0", "id": request.get("id"), "result": {{"tools": [{{"name": "echo", "inputSchema": {{"type": "object"}}}}]}}}}
+    elif method == "tools/call":
+        arguments = request.get("params", {{}}).get("arguments", {{}})
+        text = "echo " + str(arguments.get("path", "")) + " api_token=server-secret" + ({env_line})
+        response = {{"jsonrpc": "2.0", "id": request.get("id"), "result": {{"content": [{{"type": "text", "text": text}}]}}}}
+    else:
+        response = {{"jsonrpc": "2.0", "id": request.get("id"), "error": {{"code": -32601, "message": "unknown"}}}}
+    print(json.dumps(response), flush=True)
+Path("mcp-methods.json").write_text(json.dumps(methods))
+"""
+
+
+def _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"README.md"}'):
+    assert tools_cmd.call_queue(target=tmp_path, tool_id="mcp-runner", args=args, json_output=True) == 0
+    call = json.loads(capsys.readouterr().out)["call"]
+    assert tools_cmd.call_approve(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    return json.loads(capsys.readouterr().out)["call"]
+
+
+def test_tools_call_run_approved_mcp_stdio_writes_receipt_and_message_flow(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script())
+    _write_runtime_config(tmp_path)
+    _write_policy_config(tmp_path, allowed_families=["mcp"], allowed_runtimes=["helper"])
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    capsys.readouterr()
+    try:
+        call = _queue_and_approve_mcp(tmp_path, capsys)
+        assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+        payload = json.loads(capsys.readouterr().out)
+        receipt = payload["receipt"]
+        assert payload["call"]["status"] == "completed"
+        assert receipt["family"] == "mcp"
+        assert receipt["mcp_server_id"] == "helper"
+        assert receipt["mcp_tool_name"] == "echo"
+        assert receipt["mcp_request_id"] == 3
+        assert receipt["mcp_request_payload"]["method"] == "tools/call"
+        assert receipt["mcp_request_payload"]["params"]["name"] == "echo"
+        assert receipt["mcp_response_summary"]["result"]["content"][0]["text"].startswith("echo README.md")
+        assert json.loads((tmp_path / "mcp-methods.json").read_text()) == ["initialize", "tools/list", "tools/call"]
+    finally:
+        tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True)
+        capsys.readouterr()
+
+
+def test_tools_call_run_refuses_bad_mcp_status_policy_and_runtime(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script())
+    _write_runtime_config(tmp_path)
+    _write_policy_config(tmp_path, allowed_families=["mcp"], allowed_runtimes=["helper"])
+
+    assert tools_cmd.call_queue(target=tmp_path, tool_id="mcp-runner", args='{"path":"pending"}', json_output=True) == 0
+    pending = json.loads(capsys.readouterr().out)["call"]
+    assert tools_cmd.call_run(target=tmp_path, call_id=pending["id"], json_output=True) == 1
+    assert "must be approved" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    rejected = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"rejected"}')
+    assert tools_cmd.call_reject(target=tmp_path, call_id=rejected["id"], reason="no", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.call_run(target=tmp_path, call_id=rejected["id"], json_output=True) == 1
+    assert "must be approved" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    held = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"held"}')
+    assert tools_cmd.call_hold(target=tmp_path, call_id=held["id"], reason="wait", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.call_run(target=tmp_path, call_id=held["id"], json_output=True) == 1
+    assert "must be approved" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    blocked = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"blocked"}')
+    calls = tools_cmd._read_calls(tmp_path)
+    for item in calls:
+        if item["id"] == blocked["id"]:
+            item["blockers"] = ["manual blocker"]
+            item["approval_fingerprint"] = tools_cmd._approval_fingerprint(item)
+    tools_cmd._write_calls(tmp_path, calls)
+    assert tools_cmd.call_run(target=tmp_path, call_id=blocked["id"], json_output=True) == 1
+    assert "blocked calls cannot be run" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    stale = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"stale"}')
+    (tmp_path / "tools" / "mcp-input.schema.json").write_text(
+        json.dumps({"type": "object", "properties": {"path": {"type": "string"}, "mode": {"type": "string"}}})
+    )
+    assert tools_cmd.call_run(target=tmp_path, call_id=stale["id"], json_output=True) == 1
+    assert "contract fingerprint is stale" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script())
+    missing_runtime = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"missing-runtime"}')
+    assert tools_cmd.call_run(target=tmp_path, call_id=missing_runtime["id"], json_output=True) == 1
+    assert "required runtime is not running: helper" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    _write_policy_config(tmp_path, allowed_families=["mcp"], allowed_runtimes=["helper"])
+    policy_denied = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"policy"}')
+    _write_policy_config(tmp_path, allowed_families=["script"], allowed_runtimes=["helper"])
+    assert tools_cmd.call_run(target=tmp_path, call_id=policy_denied["id"], json_output=True) == 1
+    assert "family is not allowed by policy: mcp" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+
+def test_tools_call_run_mcp_timeout_and_malformed_receipts(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_runtime_config(tmp_path)
+    _write_policy_config(tmp_path, allowed_families=["mcp"], allowed_runtimes=["helper"])
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    capsys.readouterr()
+    try:
+        _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script(malformed=True))
+        malformed = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"malformed"}')
+        assert tools_cmd.call_run(target=tmp_path, call_id=malformed["id"], json_output=True) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["receipt"]["status"] == "failed"
+        assert "invalid JSON-RPC response" in payload["receipt"]["stderr_summary"]
+
+        _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script(sleep_seconds=1.0), timeout=0.1)
+        timed = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"timeout"}')
+        assert tools_cmd.call_run(target=tmp_path, call_id=timed["id"], json_output=True) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["receipt"]["status"] == "failed"
+        assert payload["receipt"]["timed_out"] is True
+    finally:
+        tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True)
+        capsys.readouterr()
+
+
+def test_tools_call_run_mcp_redacts_payloads_and_env_values(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    secret_value = "super-secret-value"
+    monkeypatch.setenv("BRIGADE_TEST_SECRET", secret_value)
+    _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script(copy_env=True))
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.write_text(config.read_text() + 'env_labels = ["SAFE_LABEL"]\n')
+    _write_runtime_config(tmp_path)
+    _write_policy_config(tmp_path, allowed_families=["mcp"], allowed_runtimes=["helper"], env_bindings={"SAFE_LABEL": "BRIGADE_TEST_SECRET"})
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    capsys.readouterr()
+    try:
+        call = _queue_and_approve_mcp(tmp_path, capsys, args='{"path":"README.md","api_token":"argument-secret"}')
+        assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+        payload = json.loads(capsys.readouterr().out)
+        rendered = json.dumps(payload)
+        assert secret_value not in rendered
+        assert "argument-secret" not in rendered
+        assert payload["receipt"]["mcp_request_payload"]["params"]["arguments"]["api_token"] == "[redacted]"
+        assert secret_value not in Path(payload["receipt"]["receipt_path"]).read_text()
+        assert secret_value not in Path(payload["receipt"]["stdout_log_path"]).read_text()
+    finally:
+        tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True)
+        capsys.readouterr()
+
+
+def test_tools_call_run_mcp_health_brief_and_imports(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    _write_mcp_tool_config(tmp_path, server_script=_fake_mcp_server_script(malformed=True))
+    _write_runtime_config(tmp_path)
+    _write_policy_config(tmp_path, allowed_families=["mcp"], allowed_runtimes=["helper"])
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    capsys.readouterr()
+    try:
+        failed = _queue_and_approve_mcp(tmp_path, capsys)
+        assert tools_cmd.call_run(target=tmp_path, call_id=failed["id"], json_output=True) == 1
+        run_id = json.loads(capsys.readouterr().out)["receipt"]["id"]
+    finally:
+        tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True)
+        capsys.readouterr()
+
+    assert tools_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] tool_mcp_execution_failed:" in out
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tool_run_top_issue:" in out
+    assert run_id in out
+
+    assert tools_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    issue_types = {item["metadata"]["tool_issue_type"] for item in payload["imports"]}
+    assert "mcp_execution_failed" in issue_types
+
+
 def test_tools_runtime_init_list_show_status_and_json(tmp_path, capsys):
     _init_git_repo(tmp_path)
     assert tools_cmd.runtime_init(target=tmp_path) == 0
