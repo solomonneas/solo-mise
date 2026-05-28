@@ -463,10 +463,13 @@ brigade security fix
 brigade security scan --target .
 brigade security scan --target . --policy public-repo
 brigade security scan --target . --output-dir .brigade/security/latest
+brigade security config
+brigade security doctor
+brigade security findings
+brigade security show <finding-id>
 brigade security enrich --target .
-brigade security review
-brigade security suppress <fingerprint> --reason "reviewed false positive"
-brigade security unsuppress <fingerprint>
+brigade security suppress <finding-id-or-fingerprint> --reason "reviewed false positive"
+brigade security unsuppress <finding-id-or-fingerprint>
 brigade security scan --target . --import-findings
 ```
 
@@ -582,14 +585,19 @@ brigade add tokens   # tokenjuice
 Security commands:
 
 - `brigade security init` writes gitignored local defaults to `.brigade/security.toml`.
+- `brigade security config` shows the local profile, enabled checks, include/exclude paths, severity threshold, output path, suppressions, and enrichment settings.
 - `brigade security fix` creates `.brigade/security/` and refreshes the managed `.gitignore` block.
 - `brigade security scan --target .` runs a read-only agent workspace security scan.
-- `brigade security scan --output-dir .brigade/security/latest` writes redacted report artifacts.
-- `brigade security scan --import-findings` turns findings into local `brigade work import` review items.
+- `brigade security scan --output-dir .brigade/security/latest` writes redacted report artifacts with stable finding ids, fingerprints, rule ids, severity, category, path, line, safe excerpt, and remediation hint.
+- `brigade security scan --import-findings` writes the local evidence bundle and turns unsuppressed findings into deduped `security-scan` work imports with safe metadata.
+- `brigade security findings` lists the latest reviewable findings, and `brigade security show <finding-id>` inspects one finding.
+- `brigade security doctor` reports config, evidence, suppression, and open-finding health in text or JSON.
 - `brigade security enrich --target .` enriches an existing report and writes enrichment artifacts.
 - `brigade security review` inspects the latest evidence bundle, including enrichment when present.
-- `brigade security suppress <fingerprint> --reason "..."` suppresses reviewed noise.
-- `brigade security unsuppress <fingerprint>` removes stale suppressions.
+- `brigade security suppress <finding-id-or-fingerprint> --reason "..."` suppresses reviewed noise.
+- `brigade security unsuppress <finding-id-or-fingerprint>` removes stale suppressions.
+
+The local `.brigade/security.toml` contract supports `scan_profile` values `public-repo`, `internal-workspace`, and `local-only-audit`, plus `enabled_checks`, `include_paths`, `exclude_paths`, `severity_threshold`, suppressions, and `output_path`. Scan state and raw evidence stay under `.brigade/security/` and should remain gitignored. Public reports and work imports use redacted excerpts and safe detail fields, not raw secrets or private infrastructure values. The scanner never calls external SaaS scanners, runs network scans, stores secrets, starts a daemon, or remediates automatically.
 
 The scanner covers:
 

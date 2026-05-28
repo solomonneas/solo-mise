@@ -3891,6 +3891,27 @@ def test_work_brief_and_doctor_include_scanner_health(tmp_path, monkeypatch, cap
     assert "[warn] scanner_outputs:" in out
 
 
+def test_work_brief_and_doctor_include_security_health(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    assert security_cmd.init(target=tmp_path) == 0
+    (tmp_path / ".env").write_text("SERVICE_TOKEN=abcd1234abcd1234abcd1234\n")
+    assert security_cmd.scan(target=tmp_path, fail_on="none") == 0
+    capsys.readouterr()
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "security_config:" in out
+    assert "security_health:" in out
+    assert "security_top_finding:" in out
+
+    assert work_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] security_open_findings:" in out
+
+
 def test_work_import_plan_previews_promoted_task(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(

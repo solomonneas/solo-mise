@@ -536,6 +536,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_security_init = security_sub.add_parser("init", help="Write local security scan defaults.")
     p_security_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to configure.")
     p_security_init.add_argument("--force", action="store_true", help="Overwrite an existing security config.")
+    p_security_config = security_sub.add_parser("config", help="Show local security scan config.")
+    p_security_config.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_security_config.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_security_doctor = security_sub.add_parser("doctor", help="Check local security scanner health.")
+    p_security_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_security_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_security_fix = security_sub.add_parser("fix", help="Apply safe local security hygiene fixes.")
     p_security_fix.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_security_fix.add_argument("--dry-run", action="store_true", help="Show changes without writing files.")
@@ -543,6 +549,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_security_review.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to review.")
     p_security_review.add_argument("--output-dir", type=Path, default=None, help="Security evidence bundle directory.")
     p_security_review.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_security_findings = security_sub.add_parser("findings", help="List local security findings.")
+    p_security_findings.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to review.")
+    p_security_findings.add_argument("--output-dir", type=Path, default=None, help="Security evidence bundle directory.")
+    p_security_findings.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_security_show = security_sub.add_parser("show", help="Show one local security finding.")
+    p_security_show.add_argument("finding_id", help="Finding id, id prefix, or fingerprint.")
+    p_security_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to review.")
+    p_security_show.add_argument("--output-dir", type=Path, default=None, help="Security evidence bundle directory.")
+    p_security_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_security_enrich = security_sub.add_parser("enrich", help="Enrich an existing security report.")
     p_security_enrich.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to enrich.")
     p_security_enrich.add_argument(
@@ -560,12 +575,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_security_enrich.add_argument("--provider", choices=["local", "misp"], default=None, help="Override configured provider.")
     p_security_enrich.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
-    p_security_suppress = security_sub.add_parser("suppress", help="Suppress a reviewed security finding fingerprint.")
-    p_security_suppress.add_argument("fingerprint", help="Finding fingerprint to suppress.")
+    p_security_suppress = security_sub.add_parser("suppress", help="Suppress a reviewed security finding.")
+    p_security_suppress.add_argument("fingerprint", help="Finding id, id prefix, or fingerprint to suppress.")
     p_security_suppress.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_security_suppress.add_argument("--reason", required=True, help="Required suppression reason.")
     p_security_unsuppress = security_sub.add_parser("unsuppress", help="Remove a security finding suppression.")
-    p_security_unsuppress.add_argument("fingerprint", help="Finding fingerprint to unsuppress.")
+    p_security_unsuppress.add_argument("fingerprint", help="Finding id, id prefix, or fingerprint to unsuppress.")
     p_security_unsuppress.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_security_scan = security_sub.add_parser("scan", help="Run a read-only agent workspace security scan.")
     p_security_scan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to scan.")
@@ -1249,10 +1264,23 @@ def main(argv=None) -> int:
 
         if args.security_command == "init":
             return security_cmd.init(target=args.target, force=args.force)
+        if args.security_command == "config":
+            return security_cmd.show_config(target=args.target, json_output=args.json)
+        if args.security_command == "doctor":
+            return security_cmd.doctor(target=args.target, json_output=args.json)
         if args.security_command == "fix":
             return security_cmd.fix(target=args.target, dry_run=args.dry_run)
         if args.security_command == "review":
             return security_cmd.review(target=args.target, output_dir=args.output_dir, json_output=args.json)
+        if args.security_command == "findings":
+            return security_cmd.findings(target=args.target, output_dir=args.output_dir, json_output=args.json)
+        if args.security_command == "show":
+            return security_cmd.show(
+                target=args.target,
+                finding_id=args.finding_id,
+                output_dir=args.output_dir,
+                json_output=args.json,
+            )
         if args.security_command == "enrich":
             return security_cmd.enrich(
                 target=args.target,

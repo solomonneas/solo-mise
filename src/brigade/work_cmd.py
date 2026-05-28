@@ -141,7 +141,7 @@ BACKUP_DEFAULTS = (
 )
 SCANNER_CONFIG_REL_PATH = ".brigade/scanners.toml"
 SCANNER_OUTPUT_STALE_HOURS = 48
-SCANNER_REQUIRED_IDS = ("chat-memory-sweep", "memory-refresh", "handoff-ingest", "security-findings")
+SCANNER_REQUIRED_IDS = ("chat-memory-sweep", "memory-refresh", "handoff-ingest")
 SCANNER_DEFAULTS = (
     {
         "id": "chat-memory-sweep",
@@ -184,11 +184,11 @@ SCANNER_DEFAULTS = (
         "conflict_window": "04:00-04:20",
     },
     {
-        "id": "security-findings",
+        "id": "security-scan",
         "source": "security-scan",
         "command": "brigade security scan --import-findings",
         "cadence": "daily@03:30",
-        "enabled": True,
+        "enabled": False,
         "timeout": 600,
         "output_path": ".brigade/security/latest/security-report.json",
         "conflict_window": "03:20-03:50",
@@ -1230,15 +1230,14 @@ def _make_import(
         "created_at": created,
         "updated_at": created,
     }
-    if kind == "task":
-        if task_type:
-            item["type"] = _normalize_task_type(task_type)
-        if priority:
-            item["priority"] = _normalize_task_priority(priority)
-        if template:
-            item["template"] = template
-        if acceptance is not None:
-            item["acceptance"] = _normalize_acceptance(acceptance)
+    if task_type:
+        item["type"] = _normalize_task_type(task_type)
+    if priority:
+        item["priority"] = _normalize_task_priority(priority)
+    if template:
+        item["template"] = template
+    if acceptance is not None:
+        item["acceptance"] = _normalize_acceptance(acceptance)
     if metadata:
         item["metadata"] = metadata
     return item
@@ -2386,7 +2385,7 @@ def _suggested_command(active: dict[str, Any] | None, next_text: object, source:
 
 
 def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
-    from . import handoff_cmd, tools_cmd
+    from . import handoff_cmd, security_cmd, tools_cmd
 
     target = target.expanduser().resolve()
     active = _active_session_info(target)
@@ -2402,6 +2401,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     pending_import_counts = _import_counts(pending_imports)
     scanner_candidate = _scanner_candidate(pending_imports)
     scanner_health = _scanner_health(target)
+    security_health = security_cmd.health(target)
     backup_health = _backup_health(target)
     tool_health = tools_cmd.health(target)
     handoff_issues = handoff_cmd.collect_issues(target)
@@ -2424,6 +2424,13 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "config_path": scanner_health["config_path"],
             "checks": scanner_health["checks"],
             "next_run": scanner_health["next_run"],
+        },
+        "security_health": {
+            "config_path": security_health["config_path"],
+            "valid": security_health["valid"],
+            "issue_count": security_health["issue_count"],
+            "top_issue": security_health["top_issue"],
+            "top_finding": security_health["top_finding"],
         },
         "backup_health": {
             "config_path": backup_health["config_path"],
@@ -2976,6 +2983,19 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
             print(
                 "scanner_next_run: "
                 f"{next_scanner.get('id')} {next_scanner.get('start')} {next_scanner.get('cadence')}"
+            )
+
+    security_health = payload.get("security_health") if isinstance(payload.get("security_health"), dict) else {}
+    if security_health:
+        print(f"security_config: {security_health.get('config_path')}")
+        print(f"security_health: {'ok' if security_health.get('issue_count') == 0 else f'{security_health.get('issue_count')} issue(s)'}")
+        top_security = security_health.get("top_finding") if isinstance(security_health.get("top_finding"), dict) else None
+        if top_security:
+            print(
+                "security_top_finding: "
+                f"{top_security.get('id')} [{top_security.get('severity')}] "
+                f"{top_security.get('path')}:{top_security.get('line')} "
+                f"{_short(str(top_security.get('title', '')))}"
             )
 
     backup_health = payload.get("backup_health") if isinstance(payload.get("backup_health"), dict) else {}
@@ -5025,6 +5045,14 @@ def doctor(*, target: Path) -> int:
             "security_evidence",
             f"{security_bundle.get('reason')}; run `brigade security scan --target {effective_target} --output-dir {security_artifacts}`",
         )
+    security_health = security_cmd.health(effective_target)
+    open_finding_check = None
+    for check in security_health["checks"]:
+        if check.get("name") == "security_open_findings":
+            open_finding_check = check
+            break
+    if open_finding_check is not None:
+        _doctor_line(str(open_finding_check.get("status")), "security_open_findings", open_finding_check.get("detail"))
 
     codex_path = shutil.which("codex")
     if codex_path is None:
