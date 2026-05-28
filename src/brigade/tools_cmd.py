@@ -31,6 +31,7 @@ FAIL = "fail"
 CONFIG_REL_PATH = ".brigade/tools.toml"
 CALLS_REL_PATH = ".brigade/tools/calls.jsonl"
 RUNS_REL_PATH = ".brigade/tools/runs"
+CHECKPOINTS_REL_PATH = ".brigade/tools/checkpoints"
 RUNTIMES_REL_PATH = ".brigade/tools/runtimes.toml"
 RUNTIME_STATE_REL_PATH = ".brigade/tools/runtime"
 POLICY_REL_PATH = ".brigade/tools/policy.toml"
@@ -114,6 +115,10 @@ def calls_path(target: Path) -> Path:
 
 def runs_path(target: Path) -> Path:
     return target / RUNS_REL_PATH
+
+
+def checkpoints_path(target: Path) -> Path:
+    return target / CHECKPOINTS_REL_PATH
 
 
 def runtimes_config_path(target: Path) -> Path:
@@ -1034,6 +1039,8 @@ def _redact_value(key: str, value: object) -> object:
         return {str(nested_key): _redact_value(str(nested_key), nested_value) for nested_key, nested_value in value.items()}
     if isinstance(value, list):
         return [_redact_value(key, item) for item in value]
+    if isinstance(value, str):
+        return _redact_text(value, None)
     return value
 
 
@@ -1042,6 +1049,8 @@ def _redact_payload(value: object) -> object:
         return {str(key): _redact_value(str(key), nested) for key, nested in value.items()}
     if isinstance(value, list):
         return [_redact_payload(item) for item in value]
+    if isinstance(value, str):
+        return _redact_text(value, None)
     return value
 
 
@@ -2016,6 +2025,9 @@ def _queue_call_payload(
                 "call": existing,
                 "reason": "equivalent rejected call requires changed args or contract fingerprint",
             }, 0
+    existing_ids = {str(existing.get("id")) for existing in calls}
+    if record["id"] in existing_ids:
+        record["id"] = f"{record['id']}-queued-{_stable_hash({'created_at': record['created_at'], 'count': len(calls)})}"
     calls.append(record)
     _write_calls(target, calls)
     return {
@@ -2086,10 +2098,10 @@ def _run_id_for_call(call: dict[str, Any], started_at: str) -> str:
     return f"run-{suffix}"
 
 
-def _call_run_blockers(target: Path, call: dict[str, Any]) -> list[str]:
+def _call_run_blockers(target: Path, call: dict[str, Any], *, expected_status: str = "approved") -> list[str]:
     blockers: list[str] = []
     status = str(call.get("status") or "")
-    if status != "approved":
+    if status != expected_status:
         if status == "completed":
             blockers.append("completed calls cannot be run again")
         elif status == "failed":
@@ -2097,7 +2109,10 @@ def _call_run_blockers(target: Path, call: dict[str, Any]) -> list[str]:
         elif status == "running":
             blockers.append("call is already running")
         else:
-            blockers.append(f"call must be approved before run: {status or 'unknown'}")
+            if expected_status == "approved":
+                blockers.append(f"call must be approved before run: {status or 'unknown'}")
+            else:
+                blockers.append(f"call must be {expected_status} before run: {status or 'unknown'}")
     if call.get("blockers"):
         blockers.append("blocked calls cannot be run")
     if call.get("family") != "script":
@@ -2171,6 +2186,7 @@ def _write_run_receipt(
     argv: list[str],
     cwd: Path,
     policy_decision: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     run_dir = runs_path(target)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -2228,6 +2244,8 @@ def _write_run_receipt(
         "env_labels_used": policy_decision.get("env_labels_used", []),
         "projection_summary": call.get("projection_summary", {}),
     }
+    if extra:
+        receipt.update(extra)
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return receipt
 
@@ -2322,6 +2340,166 @@ def _resolve_run_receipt(target: Path, run_id: str) -> tuple[dict[str, Any] | No
     if len(matches) > 1:
         return None, f"run id is ambiguous: {run_id}"
     return matches[0], None
+
+
+def _checkpoint_paths(target: Path) -> list[Path]:
+    path = checkpoints_path(target)
+    if not path.is_dir():
+        return []
+    return sorted(item for item in path.glob("*.json") if item.is_file())
+
+
+def _read_checkpoint(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        payload = json.loads(path.read_text())
+    except OSError as exc:
+        return None, str(exc)
+    except json.JSONDecodeError as exc:
+        return None, f"invalid checkpoint JSON: {exc.msg}"
+    if not isinstance(payload, dict):
+        return None, "checkpoint must be a JSON object"
+    payload.setdefault("checkpoint_path", str(path))
+    return payload, None
+
+
+def _write_checkpoint(target: Path, checkpoint: dict[str, Any]) -> Path:
+    checkpoint_id = str(checkpoint.get("id") or "")
+    path = checkpoints_path(target) / f"{checkpoint_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint["checkpoint_path"] = str(path)
+    path.write_text(json.dumps(checkpoint, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def _checkpoint_public_summary(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": checkpoint.get("id"),
+        "status": checkpoint.get("status"),
+        "tool_id": checkpoint.get("tool_id"),
+        "call_id": checkpoint.get("call_id"),
+        "run_id": checkpoint.get("run_id"),
+        "reason": checkpoint.get("reason"),
+        "requested_action": checkpoint.get("requested_action"),
+        "prompt": checkpoint.get("prompt"),
+        "context": checkpoint.get("context", {}),
+        "choices": checkpoint.get("choices", []),
+        "selected_choice": checkpoint.get("selected_choice"),
+        "created_at": checkpoint.get("created_at"),
+        "expires_at": checkpoint.get("expires_at"),
+        "reviewed_at": checkpoint.get("reviewed_at"),
+        "review_reason": checkpoint.get("review_reason"),
+        "resume_run_id": checkpoint.get("resume_run_id"),
+        "checkpoint_path": checkpoint.get("checkpoint_path"),
+    }
+
+
+def _resolve_checkpoint(target: Path, checkpoint_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    matches: list[dict[str, Any]] = []
+    for path in _checkpoint_paths(target):
+        checkpoint, error = _read_checkpoint(path)
+        if error is not None or checkpoint is None:
+            continue
+        candidate_id = str(checkpoint.get("id") or path.stem)
+        if candidate_id.startswith(checkpoint_id) or path.stem.startswith(checkpoint_id):
+            matches.append(checkpoint)
+    if not matches:
+        return None, f"checkpoint not found: {checkpoint_id}"
+    if len(matches) > 1:
+        return None, f"checkpoint id is ambiguous: {checkpoint_id}"
+    return matches[0], None
+
+
+def _normalize_checkpoint(
+    target: Path,
+    path: Path,
+    *,
+    call: dict[str, Any],
+    run_id: str,
+    fallback_created_at: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    raw, error = _read_checkpoint(path)
+    if error is not None or raw is None:
+        return None, error or "invalid checkpoint"
+    checkpoint_id = raw.get("id")
+    if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
+        checkpoint_id = f"checkpoint-{_stable_hash({'path': str(path), 'call_id': call.get('id'), 'run_id': run_id})}"
+    choices = raw.get("choices", raw.get("allowed_resume_choices", []))
+    if isinstance(choices, str):
+        choices = [choices]
+    if not isinstance(choices, list):
+        choices = []
+    context = raw.get("context", {})
+    if not isinstance(context, (dict, list)):
+        context = {"value": context}
+    checkpoint = {
+        "id": checkpoint_id.strip(),
+        "status": "pending",
+        "tool_id": call.get("tool_id"),
+        "call_id": call.get("id"),
+        "run_id": run_id,
+        "reason": _redact_text(raw.get("reason") or "tool requested operator checkpoint", 240),
+        "requested_action": _redact_text(raw.get("requested_action") or raw.get("action") or "review", 240),
+        "prompt": _redact_text(raw.get("prompt") or raw.get("operator_prompt") or "", 1000),
+        "context": _redact_payload(context),
+        "choices": [_redact_text(choice, 160) for choice in choices],
+        "created_at": str(raw.get("created_at") or fallback_created_at),
+        "expires_at": raw.get("expires_at"),
+        "reviewed_at": None,
+        "review_reason": None,
+        "selected_choice": None,
+        "resume_run_id": None,
+        "contract_fingerprint": call.get("contract_fingerprint"),
+        "source_fingerprint": call.get("source_fingerprint"),
+        "call_fingerprint": call.get("call_fingerprint"),
+        "approval_fingerprint": call.get("approval_fingerprint"),
+        "projection_summary": call.get("projection_summary", {}),
+    }
+    _write_checkpoint(target, checkpoint)
+    if path.name != f"{checkpoint['id']}.json":
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return checkpoint, None
+
+
+def _collect_run_checkpoints(
+    target: Path,
+    *,
+    call: dict[str, Any],
+    run_id: str,
+    fallback_created_at: str,
+    started_epoch: float,
+) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for path in _checkpoint_paths(target):
+        try:
+            if path.stat().st_mtime < started_epoch - 1:
+                continue
+        except OSError:
+            continue
+        raw, error = _read_checkpoint(path)
+        if error is not None or raw is None:
+            continue
+        raw_call = raw.get("call_id")
+        raw_run = raw.get("run_id")
+        if raw_call not in (None, "", call.get("id")):
+            continue
+        if raw_run not in (None, "", run_id):
+            continue
+        if raw.get("status") not in (None, "", "pending"):
+            continue
+        checkpoint, normalize_error = _normalize_checkpoint(
+            target,
+            path,
+            call=call,
+            run_id=run_id,
+            fallback_created_at=fallback_created_at,
+        )
+        if normalize_error is None and checkpoint is not None:
+            found.append(checkpoint)
+    found.sort(key=lambda item: str(item.get("created_at") or ""))
+    return found
 
 
 def _replay_plan_payload(target: Path, receipt: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -2473,6 +2651,161 @@ def _run_history_health(target: Path) -> dict[str, Any]:
     }
 
 
+def _checkpoint_expired(checkpoint: dict[str, Any], *, now: datetime | None = None) -> bool:
+    expires = _parse_iso_datetime(checkpoint.get("expires_at"))
+    if expires is None:
+        return False
+    return (now or _now()) > expires
+
+
+def _checkpoint_resume_blockers(target: Path, checkpoint: dict[str, Any]) -> tuple[list[str], dict[str, Any] | None, list[dict[str, Any]]]:
+    blockers: list[str] = []
+    status = str(checkpoint.get("status") or "")
+    if status != "approved":
+        blockers.append(f"checkpoint must be approved before resume: {status or 'unknown'}")
+    if _checkpoint_expired(checkpoint):
+        blockers.append("checkpoint is expired")
+    call_id = str(checkpoint.get("call_id") or "")
+    call: dict[str, Any] | None = None
+    calls: list[dict[str, Any]] = []
+    if not call_id:
+        blockers.append("checkpoint call_id is missing")
+    else:
+        call, calls, error = _resolve_call(target, call_id)
+        if call is None:
+            blockers.append(error or f"call not found: {call_id}")
+    if call is not None:
+        if checkpoint.get("contract_fingerprint") != call.get("contract_fingerprint"):
+            blockers.append("checkpoint contract fingerprint is stale")
+        if checkpoint.get("source_fingerprint") != call.get("source_fingerprint"):
+            blockers.append("checkpoint source fingerprint is stale")
+        if checkpoint.get("call_fingerprint") != call.get("call_fingerprint"):
+            blockers.append("checkpoint call fingerprint is stale")
+        blockers.extend(_call_run_blockers(target, call, expected_status="resume-pending"))
+    return blockers, call, calls
+
+
+def _checkpoint_payload(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    checkpoints: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    for path in _checkpoint_paths(target):
+        checkpoint, error = _read_checkpoint(path)
+        if error is not None or checkpoint is None:
+            errors.append({"checkpoint_path": str(path), "error": error or "invalid checkpoint"})
+            continue
+        summary = _checkpoint_public_summary(checkpoint)
+        checkpoints.append(summary)
+        status = str(summary.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    checkpoints.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {
+        "target": str(target),
+        "checkpoints_path": str(checkpoints_path(target)),
+        "checkpoints": checkpoints,
+        "checkpoint_count": len(checkpoints),
+        "counts": counts,
+        "errors": errors,
+        "error_count": len(errors),
+    }
+
+
+def _checkpoint_health(target: Path) -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+    checkpoints: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    now = _now()
+    for path in _checkpoint_paths(target):
+        checkpoint, error = _read_checkpoint(path)
+        if error is not None or checkpoint is None:
+            issues.append(
+                {
+                    "status": WARN,
+                    "name": "tool_checkpoint_invalid",
+                    "issue_type": "checkpoint_invalid",
+                    "detail": f"{path}: {error or 'invalid checkpoint'}",
+                    "checkpoint_id": path.stem,
+                }
+            )
+            continue
+        checkpoints.append(checkpoint)
+        status = str(checkpoint.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        checkpoint_id = str(checkpoint.get("id") or path.stem)
+        base = {
+            "tool_id": checkpoint.get("tool_id"),
+            "checkpoint_id": checkpoint_id,
+            "call_id": checkpoint.get("call_id"),
+            "run_id": checkpoint.get("run_id"),
+        }
+        if _checkpoint_expired(checkpoint, now=now) and status not in {"rejected", "resumed"}:
+            issues.append(
+                {
+                    **base,
+                    "status": WARN,
+                    "name": "tool_checkpoint_expired",
+                    "issue_type": "checkpoint_expired",
+                    "detail": f"{checkpoint_id} expired at {checkpoint.get('expires_at')}",
+                }
+            )
+        created = _parse_iso_datetime(checkpoint.get("created_at"))
+        if status in {"pending", "approved"} and created is not None:
+            age_hours = (now - created).total_seconds() / 3600
+            if age_hours > CALL_STALE_HOURS:
+                issues.append(
+                    {
+                        **base,
+                        "status": WARN,
+                        "name": "tool_checkpoint_stale",
+                        "issue_type": "checkpoint_stale",
+                        "detail": f"{checkpoint_id} {status} for {age_hours:.1f}h",
+                    }
+                )
+        if status == "approved":
+            blockers, _, _ = _checkpoint_resume_blockers(target, checkpoint)
+            if blockers:
+                issues.append(
+                    {
+                        **base,
+                        "status": WARN,
+                        "name": "tool_checkpoint_blocked",
+                        "issue_type": "checkpoint_blocked",
+                        "detail": f"{checkpoint_id} resume blocked: {_short('; '.join(blockers))}",
+                    }
+                )
+        if status == "rejected":
+            issues.append(
+                {
+                    **base,
+                    "status": WARN,
+                    "name": "tool_checkpoint_rejected",
+                    "issue_type": "checkpoint_rejected",
+                    "detail": f"{checkpoint_id} rejected: {checkpoint.get('review_reason') or ''}".strip(),
+                }
+            )
+        if status == "failed":
+            issues.append(
+                {
+                    **base,
+                    "status": WARN,
+                    "name": "tool_checkpoint_failed",
+                    "issue_type": "checkpoint_failed",
+                    "detail": f"{checkpoint_id} resume failed",
+                }
+            )
+    checkpoints.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {
+        "checkpoints_path": str(checkpoints_path(target)),
+        "checkpoint_count": len(checkpoints),
+        "counts": counts,
+        "issue_count": len(issues),
+        "issues": issues,
+        "top_issue": issues[0] if issues else None,
+        "latest": _checkpoint_public_summary(checkpoints[0]) if checkpoints else None,
+    }
+
+
 def _next_approved_call(calls: list[dict[str, Any]]) -> dict[str, Any] | None:
     approved = [call for call in calls if call.get("status") == "approved"]
     approved.sort(key=lambda call: str(call.get("created_at") or ""))
@@ -2517,6 +2850,7 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
     started_at = _now().isoformat()
     run_id = _run_id_for_call(call, started_at)
     receipt_path = runs_path(target) / f"{run_id}.json"
+    checkpoints_path(target).mkdir(parents=True, exist_ok=True)
     call["status"] = "running"
     call["started_at"] = started_at
     call["completed_at"] = None
@@ -2532,7 +2866,11 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
     env_values = policy_decision.get("env") if isinstance(policy_decision.get("env"), dict) else {}
     for label, value in env_values.items():
         run_env[str(label)] = str(value)
+    run_env["BRIGADE_TOOL_CHECKPOINT_DIR"] = str(checkpoints_path(target))
+    run_env["BRIGADE_TOOL_CALL_ID"] = str(call.get("id") or "")
+    run_env["BRIGADE_TOOL_RUN_ID"] = run_id
     start_monotonic = time.monotonic()
+    started_epoch = time.time()
     stdout: object = ""
     stderr: object = ""
     exit_code: int | None = None
@@ -2563,6 +2901,19 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
         status = "failed"
     duration_seconds = time.monotonic() - start_monotonic
     completed_at = _now().isoformat()
+    checkpoints = _collect_run_checkpoints(
+        target,
+        call=call,
+        run_id=run_id,
+        fallback_created_at=completed_at,
+        started_epoch=started_epoch,
+    )
+    checkpoint = checkpoints[0] if checkpoints else None
+    extra_receipt: dict[str, Any] = {}
+    if checkpoint is not None:
+        status = "waiting"
+        extra_receipt["checkpoint_id"] = checkpoint.get("id")
+        extra_receipt["checkpoint"] = _checkpoint_public_summary(checkpoint)
     receipt = _write_run_receipt(
         target,
         call=call,
@@ -2578,12 +2929,15 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
         argv=argv,
         cwd=cwd,
         policy_decision=policy_decision,
+        extra=extra_receipt,
     )
     call["status"] = status
     call["completed_at"] = completed_at
     call["exit_code"] = exit_code
     call["timed_out"] = timed_out
     call["receipt_path"] = receipt["receipt_path"]
+    if checkpoint is not None:
+        call["checkpoint_id"] = checkpoint.get("id")
     _write_calls(target, calls)
     return {
         "target": str(target),
@@ -2591,7 +2945,133 @@ def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bo
         "runs_path": str(runs_path(target)),
         "call": call,
         "receipt": receipt,
-    }, 0 if status == "completed" else 1
+    }, 0 if status in {"completed", "waiting", "resumed"} else 1
+
+
+def _resume_checkpoint_payload(target: Path, checkpoint_id: str) -> tuple[dict[str, Any], int]:
+    target = target.expanduser().resolve()
+    checkpoint, error = _resolve_checkpoint(target, checkpoint_id)
+    if checkpoint is None:
+        return {"target": str(target), "checkpoints_path": str(checkpoints_path(target)), "error": error}, 1
+    blockers, call, calls = _checkpoint_resume_blockers(target, checkpoint)
+    if blockers or call is None:
+        return {
+            "target": str(target),
+            "checkpoints_path": str(checkpoints_path(target)),
+            "checkpoint": _checkpoint_public_summary(checkpoint),
+            "blockers": blockers,
+            "error": "checkpoint is not resumable",
+        }, 1
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    cwd_value = contract.get("cwd")
+    cwd = _as_path(target, cwd_value) if cwd_value else target
+    assert cwd is not None
+    argv = _command_parts(call.get("command"))
+    for key in sorted((call.get("arguments") if isinstance(call.get("arguments"), dict) else {}).keys()):
+        value = call["arguments"][key]
+        if value is None:
+            continue
+        argv.extend(shlex.split(str(value)))
+    started_at = _now().isoformat()
+    run_id = _run_id_for_call({**call, "id": f"{call.get('id')}:resume:{checkpoint.get('id')}"}, started_at)
+    receipt_path = runs_path(target) / f"{run_id}.json"
+    call["status"] = "running"
+    call["started_at"] = started_at
+    call["completed_at"] = None
+    call["run_id"] = run_id
+    call["receipt_path"] = str(receipt_path)
+    call["exit_code"] = None
+    _write_calls(target, calls)
+
+    timeout = contract.get("timeout")
+    timeout_value = float(timeout) if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) else None
+    policy_decision = _policy_decision(target, _call_plan_from_record(call), include_env_values=True)
+    run_env = os.environ.copy()
+    env_values = policy_decision.get("env") if isinstance(policy_decision.get("env"), dict) else {}
+    for label, value in env_values.items():
+        run_env[str(label)] = str(value)
+    run_env["BRIGADE_TOOL_CHECKPOINT_DIR"] = str(checkpoints_path(target))
+    run_env["BRIGADE_TOOL_CALL_ID"] = str(call.get("id") or "")
+    run_env["BRIGADE_TOOL_RUN_ID"] = run_id
+    run_env["BRIGADE_TOOL_RESUME_CHECKPOINT_ID"] = str(checkpoint.get("id") or "")
+    run_env["BRIGADE_TOOL_RESUME_CHOICE"] = str(checkpoint.get("selected_choice") or "")
+    start_monotonic = time.monotonic()
+    stdout: object = ""
+    stderr: object = ""
+    exit_code: int | None = None
+    timed_out = False
+    status = "resumed"
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=run_env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_value,
+            check=False,
+        )
+        stdout = completed.stdout
+        stderr = completed.stderr
+        exit_code = completed.returncode
+        if completed.returncode != 0:
+            status = "failed"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        timed_out = True
+        status = "failed"
+    except OSError as exc:
+        stderr = str(exc)
+        status = "failed"
+    completed_at = _now().isoformat()
+    receipt = _write_run_receipt(
+        target,
+        call=call,
+        run_id=run_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_seconds=time.monotonic() - start_monotonic,
+        status=status,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        stdout=stdout,
+        stderr=stderr,
+        argv=argv,
+        cwd=cwd,
+        policy_decision=policy_decision,
+        extra={
+            "checkpoint_id": checkpoint.get("id"),
+            "original_call_id": checkpoint.get("call_id"),
+            "original_run_id": checkpoint.get("run_id"),
+            "resume_run_id": run_id,
+            "resume": {
+                "checkpoint_id": checkpoint.get("id"),
+                "selected_choice": checkpoint.get("selected_choice"),
+                "reviewed_at": checkpoint.get("reviewed_at"),
+                "review_reason": checkpoint.get("review_reason"),
+            },
+        },
+    )
+    call["status"] = status
+    call["completed_at"] = completed_at
+    call["exit_code"] = exit_code
+    call["timed_out"] = timed_out
+    call["receipt_path"] = receipt["receipt_path"]
+    call["resume_checkpoint_id"] = checkpoint.get("id")
+    _write_calls(target, calls)
+    checkpoint["status"] = "resumed" if status == "resumed" else "failed"
+    checkpoint["resume_run_id"] = run_id
+    _write_checkpoint(target, checkpoint)
+    return {
+        "target": str(target),
+        "calls_path": str(calls_path(target)),
+        "checkpoints_path": str(checkpoints_path(target)),
+        "runs_path": str(runs_path(target)),
+        "checkpoint": _checkpoint_public_summary(checkpoint),
+        "call": call,
+        "receipt": receipt,
+    }, 0 if status == "resumed" else 1
 
 
 def _call_health(target: Path) -> dict[str, Any]:
@@ -2721,6 +3201,8 @@ def _catalog_payload(target: Path) -> dict[str, Any]:
     issues.extend(call_health["issues"])
     run_health = _run_history_health(target)
     issues.extend(run_health["issues"])
+    checkpoint_health = _checkpoint_health(target)
+    issues.extend(checkpoint_health["issues"])
     if errors:
         issues.insert(0, {"status": WARN, "name": "tool_config", "issue_type": "config", "detail": "; ".join(errors)})
     return {
@@ -2747,6 +3229,14 @@ def _catalog_payload(target: Path) -> dict[str, Any]:
             "issue_count": run_health["issue_count"],
             "top_issue": run_health["top_issue"],
             "latest": run_health["latest"],
+        },
+        "checkpoints": {
+            "checkpoints_path": checkpoint_health["checkpoints_path"],
+            "counts": checkpoint_health["counts"],
+            "checkpoint_count": checkpoint_health["checkpoint_count"],
+            "issue_count": checkpoint_health["issue_count"],
+            "top_issue": checkpoint_health["top_issue"],
+            "latest": checkpoint_health["latest"],
         },
         "runtimes": {
             "config_path": runtime_health["config_path"],
@@ -2777,6 +3267,7 @@ def health(target: Path) -> dict[str, Any]:
         "issues": payload["issues"],
         "call_queue": payload["call_queue"],
         "run_history": payload["run_history"],
+        "checkpoints": payload["checkpoints"],
         "runtimes": payload["runtimes"],
         "policy": payload["policy"],
     }
@@ -2796,9 +3287,10 @@ def _issue_records(target: Path) -> list[dict[str, Any]]:
             "tool_harness": issue.get("harness"),
             "tool_call_id": issue.get("call_id"),
             "tool_run_id": issue.get("run_id"),
+            "tool_checkpoint_id": issue.get("checkpoint_id"),
             "projection_target": issue.get("projection_target"),
             "tool_issue_detail": detail,
-            "source_item_key": f"tool-catalog:{tool_id}:{issue_type}:{issue.get('harness') or ''}:{issue.get('call_id') or ''}:{issue.get('run_id') or ''}",
+            "source_item_key": f"tool-catalog:{tool_id}:{issue_type}:{issue.get('harness') or ''}:{issue.get('call_id') or ''}:{issue.get('run_id') or ''}:{issue.get('checkpoint_id') or ''}",
             "source_fingerprint": _stable_hash(
                 {
                     "tool_id": tool_id,
@@ -2807,6 +3299,7 @@ def _issue_records(target: Path) -> list[dict[str, Any]]:
                     "harness": issue.get("harness"),
                     "call_id": issue.get("call_id"),
                     "run_id": issue.get("run_id"),
+                    "checkpoint_id": issue.get("checkpoint_id"),
                     "projection_target": issue.get("projection_target"),
                 }
             ),
@@ -3538,6 +4031,169 @@ def run_replay(*, target: Path, run_id: str, json_output: bool = False) -> int:
     print(f"status: {call.get('status')}")
     print("executed: 0")
     print(f"next_command: brigade tools call approve {call.get('id')}")
+    return rc
+
+
+def checkpoint_list(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _checkpoint_payload(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"tools checkpoint list: {target}")
+    print(f"checkpoints_path: {payload['checkpoints_path']}")
+    print(f"checkpoints: {payload['checkpoint_count']}")
+    for status, count in sorted(payload["counts"].items()):
+        print(f"{status}: {count}")
+    for error in payload["errors"]:
+        print(f"[warn] checkpoint_invalid: {error.get('checkpoint_path')} {error.get('error')}")
+    for checkpoint in payload["checkpoints"]:
+        print(f"- {checkpoint.get('id')} [{checkpoint.get('status')}] {checkpoint.get('tool_id')} {checkpoint.get('requested_action')}")
+    return 0
+
+
+def checkpoint_show(*, target: Path, checkpoint_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    checkpoint, error = _resolve_checkpoint(target, checkpoint_id)
+    payload = {
+        "target": str(target),
+        "checkpoints_path": str(checkpoints_path(target)),
+        "checkpoint": _checkpoint_public_summary(checkpoint) if checkpoint is not None else None,
+        "error": error,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if checkpoint is not None else 1
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    assert checkpoint is not None
+    summary = _checkpoint_public_summary(checkpoint)
+    print(f"checkpoint: {summary.get('id')}")
+    print(f"status: {summary.get('status')}")
+    print(f"tool_id: {summary.get('tool_id')}")
+    print(f"call_id: {summary.get('call_id')}")
+    print(f"run_id: {summary.get('run_id')}")
+    print(f"reason: {summary.get('reason')}")
+    print(f"requested_action: {summary.get('requested_action')}")
+    print(f"prompt: {summary.get('prompt')}")
+    print(f"choices: {', '.join(str(choice) for choice in summary.get('choices', []))}")
+    if summary.get("selected_choice"):
+        print(f"selected_choice: {summary.get('selected_choice')}")
+    return 0
+
+
+def _checkpoint_review(
+    *,
+    target: Path,
+    checkpoint_id: str,
+    status: str,
+    choice: str | None = None,
+    reason: str | None = None,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    checkpoint, error = _resolve_checkpoint(target, checkpoint_id)
+    if checkpoint is None:
+        payload = {"target": str(target), "error": error}
+        if json_output:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+    if status == "approved":
+        choices = [str(item) for item in checkpoint.get("choices", []) if isinstance(item, str)]
+        if choices and choice not in choices:
+            payload = {"target": str(target), "error": "choice is not allowed", "checkpoint": _checkpoint_public_summary(checkpoint)}
+            if json_output:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print("error: choice is not allowed", file=sys.stderr)
+            return 1
+    checkpoint["status"] = status
+    checkpoint["reviewed_at"] = _now().isoformat()
+    checkpoint["review_reason"] = reason
+    if status == "approved":
+        checkpoint["selected_choice"] = choice
+    _write_checkpoint(target, checkpoint)
+    call: dict[str, Any] | None = None
+    calls: list[dict[str, Any]] = []
+    call_id = checkpoint.get("call_id")
+    if isinstance(call_id, str) and call_id:
+        call, calls, _ = _resolve_call(target, call_id)
+    if call is not None and status == "approved":
+        call["status"] = "resume-pending"
+        call["checkpoint_id"] = checkpoint.get("id")
+        call["approval_fingerprint"] = _approval_fingerprint(call)
+        _write_calls(target, calls)
+    payload = {
+        "target": str(target),
+        "checkpoints_path": str(checkpoints_path(target)),
+        "checkpoint": _checkpoint_public_summary(checkpoint),
+        "call": call,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"checkpoint: {checkpoint.get('id')}")
+    print(f"status: {checkpoint.get('status')}")
+    if choice:
+        print(f"selected_choice: {choice}")
+    if reason:
+        print(f"review_reason: {reason}")
+    return 0
+
+
+def checkpoint_approve(*, target: Path, checkpoint_id: str, choice: str, json_output: bool = False) -> int:
+    return _checkpoint_review(
+        target=target,
+        checkpoint_id=checkpoint_id,
+        status="approved",
+        choice=choice,
+        json_output=json_output,
+    )
+
+
+def checkpoint_reject(*, target: Path, checkpoint_id: str, reason: str, json_output: bool = False) -> int:
+    return _checkpoint_review(
+        target=target,
+        checkpoint_id=checkpoint_id,
+        status="rejected",
+        reason=reason,
+        json_output=json_output,
+    )
+
+
+def checkpoint_resume(*, target: Path, checkpoint_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload, rc = _resume_checkpoint_payload(target, checkpoint_id)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    if payload.get("error"):
+        print(f"error: {payload['error']}", file=sys.stderr)
+        for blocker in payload.get("blockers", []):
+            print(f"- {blocker}", file=sys.stderr)
+        return rc
+    checkpoint = payload["checkpoint"]
+    receipt = payload["receipt"]
+    print(f"tools checkpoint resume: {checkpoint.get('id')}")
+    print(f"status: {checkpoint.get('status')}")
+    print(f"resume_run_id: {receipt.get('id')}")
+    print(f"exit_code: {receipt.get('exit_code')}")
+    print(f"receipt_path: {receipt.get('receipt_path')}")
     return rc
 
 

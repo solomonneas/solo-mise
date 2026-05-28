@@ -692,6 +692,30 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tools_run_replay.add_argument("run_id", help="Run id or unique prefix.")
     p_tools_run_replay.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_tools_run_replay.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_checkpoint = tools_sub.add_parser("checkpoint", help="Review and resume portable tool execution checkpoints.")
+    tools_checkpoint_sub = p_tools_checkpoint.add_subparsers(dest="tools_checkpoint_command", metavar="<tools-checkpoint-command>")
+    tools_checkpoint_sub.required = True
+    p_tools_checkpoint_list = tools_checkpoint_sub.add_parser("list", help="List local portable tool checkpoints.")
+    p_tools_checkpoint_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_checkpoint_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_checkpoint_show = tools_checkpoint_sub.add_parser("show", help="Show one local portable tool checkpoint.")
+    p_tools_checkpoint_show.add_argument("checkpoint_id", help="Checkpoint id or unique prefix.")
+    p_tools_checkpoint_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_checkpoint_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_checkpoint_approve = tools_checkpoint_sub.add_parser("approve", help="Approve one checkpoint for explicit resume.")
+    p_tools_checkpoint_approve.add_argument("checkpoint_id", help="Checkpoint id or unique prefix.")
+    p_tools_checkpoint_approve.add_argument("--choice", required=True, help="Allowed resume choice.")
+    p_tools_checkpoint_approve.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_checkpoint_approve.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_checkpoint_reject = tools_checkpoint_sub.add_parser("reject", help="Reject one checkpoint.")
+    p_tools_checkpoint_reject.add_argument("checkpoint_id", help="Checkpoint id or unique prefix.")
+    p_tools_checkpoint_reject.add_argument("--reason", required=True, help="Review reason.")
+    p_tools_checkpoint_reject.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_checkpoint_reject.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_checkpoint_resume = tools_checkpoint_sub.add_parser("resume", help="Resume one approved checkpoint.")
+    p_tools_checkpoint_resume.add_argument("checkpoint_id", help="Checkpoint id or unique prefix.")
+    p_tools_checkpoint_resume.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_checkpoint_resume.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_tools_runtime = tools_sub.add_parser("runtime", help="Manage explicit local portable tool runtimes.")
     tools_runtime_sub = p_tools_runtime.add_subparsers(dest="tools_runtime_command", metavar="<tools-runtime-command>")
     tools_runtime_sub.required = True
@@ -1319,6 +1343,29 @@ def main(argv=None) -> int:
             if args.tools_run_command == "replay":
                 return tools_cmd.run_replay(target=args.target, run_id=args.run_id, json_output=args.json)
             parser.error(f"unknown tools run command: {args.tools_run_command}")
+            return 2
+        if args.tools_command == "checkpoint":
+            if args.tools_checkpoint_command == "list":
+                return tools_cmd.checkpoint_list(target=args.target, json_output=args.json)
+            if args.tools_checkpoint_command == "show":
+                return tools_cmd.checkpoint_show(target=args.target, checkpoint_id=args.checkpoint_id, json_output=args.json)
+            if args.tools_checkpoint_command == "approve":
+                return tools_cmd.checkpoint_approve(
+                    target=args.target,
+                    checkpoint_id=args.checkpoint_id,
+                    choice=args.choice,
+                    json_output=args.json,
+                )
+            if args.tools_checkpoint_command == "reject":
+                return tools_cmd.checkpoint_reject(
+                    target=args.target,
+                    checkpoint_id=args.checkpoint_id,
+                    reason=args.reason,
+                    json_output=args.json,
+                )
+            if args.tools_checkpoint_command == "resume":
+                return tools_cmd.checkpoint_resume(target=args.target, checkpoint_id=args.checkpoint_id, json_output=args.json)
+            parser.error(f"unknown tools checkpoint command: {args.tools_checkpoint_command}")
             return 2
         if args.tools_command == "runtime":
             if args.tools_runtime_command == "init":

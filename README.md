@@ -196,6 +196,11 @@ brigade tools run list
 brigade tools run show <run-id>
 brigade tools run latest
 brigade tools run replay <run-id>
+brigade tools checkpoint list
+brigade tools checkpoint show <checkpoint-id>
+brigade tools checkpoint approve <checkpoint-id> --choice continue
+brigade tools checkpoint reject <checkpoint-id> --reason "not safe"
+brigade tools checkpoint resume <checkpoint-id>
 brigade tools runtime init
 brigade tools runtime list
 brigade tools runtime status
@@ -382,6 +387,7 @@ Portable tool catalog commands:
 - `brigade tools call queue/list/show/approve/reject/hold` stores planned calls in `.brigade/tools/calls.jsonl` for local review. Approval changes status only and never executes a tool.
 - `brigade tools call run <call-id>` and `brigade tools call run --next` execute approved, unblocked `script` calls only, then write local receipts and stdout/stderr logs under `.brigade/tools/runs/`.
 - `brigade tools run list/show/latest` inspects local execution receipts, and `brigade tools run replay <run-id>` creates a new pending reviewed replay candidate after revalidating current contract, source, runtime, and policy state. Replay never reruns directly.
+- `brigade tools checkpoint list/show/approve/reject/resume` reviews script-requested local checkpoints under `.brigade/tools/checkpoints/`; resume requires explicit checkpoint approval and revalidates runtime and policy gates.
 - `brigade tools runtime init/list/show/status/start/stop/restart/doctor` manages explicit local runtimes used by portable tool calls, writing PID files and logs under `.brigade/tools/runtime/`.
 - `brigade tools policy init/show/doctor` manages host-local execution policy, including allowed effects, timeout caps, runtime allow-lists, approval modes, and environment label bindings.
 - `brigade tools plan` previews exact projection creates, updates, skips, unmanaged conflicts, and local-edit conflicts for all configured harness targets.
@@ -389,7 +395,7 @@ Portable tool catalog commands:
 - `brigade tools doctor` reports missing sources, manifests, schemas, invalid contracts, missing examples, bad argument templates, projections, unmanaged projections, locally edited managed projections, stale projection fingerprints, MCP config issues, stale health files, unsafe auth/env field names, and high-risk command shapes.
 - `brigade tools import-issues` turns catalog health issues into local `tool-catalog` work imports with stable fingerprints and dismiss-until-changed behavior.
 
-Tool catalog inspection, call planning, call approval review, and run history inspection are non-executing, and projection writes are always explicit through `brigade tools apply`. Tool call execution is explicit through `brigade tools call run`, limited initially to approved local `script` entries, and writes local receipts instead of mutating approvals automatically. Replay creates a pending call from redacted receipt arguments and never recovers secret values or bypasses approval, runtime, or policy gates. Runtime start and stop are explicit through `brigade tools runtime`; `doctor`, `brief`, and `work run` never auto-start runtimes. Execution policy is host-local and gitignored; environment values come only from the current process and are not stored in calls, receipts, logs, imports, or docs. Brigade does not start MCP servers, fetch OpenAPI or GraphQL schemas, store auth, install schedulers, send approval notifications, or auto-sync harness configs from `doctor`, `brief`, or `work run`. Keep tokens, secrets, private URLs, and host-private paths out of public catalog templates.
+Tool catalog inspection, call planning, call approval review, run history inspection, and checkpoint review are non-executing, and projection writes are always explicit through `brigade tools apply`. Tool call execution is explicit through `brigade tools call run`, limited initially to approved local `script` entries, and writes local receipts instead of mutating approvals automatically. Replay creates a pending call from redacted receipt arguments and never recovers secret values or bypasses approval, runtime, or policy gates. Checkpoint resume is explicit through `brigade tools checkpoint resume` and never runs automatically after approval. Runtime start and stop are explicit through `brigade tools runtime`; `doctor`, `brief`, and `work run` never auto-start runtimes. Execution policy is host-local and gitignored; environment values come only from the current process and are not stored in calls, checkpoints, receipts, logs, imports, or docs. Brigade does not start MCP servers, fetch OpenAPI or GraphQL schemas, store auth, install schedulers, send approval notifications, or auto-sync harness configs from `doctor`, `brief`, or `work run`. Keep tokens, secrets, private URLs, and host-private paths out of public catalog templates.
 
 Backup health commands:
 

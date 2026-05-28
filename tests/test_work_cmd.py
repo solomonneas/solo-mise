@@ -2783,6 +2783,231 @@ def test_tools_run_history_integrates_with_brief_and_imports(tmp_path, monkeypat
     assert imported["metadata"]["tool_run_id"] == run_id
 
 
+def _checkpoint_script(*, fail_on_resume: bool = False) -> str:
+    resume_failure = "sys.exit(5)" if fail_on_resume else ""
+    return f"""
+import json
+import os
+import sys
+from pathlib import Path
+
+checkpoint_dir = Path(os.environ["BRIGADE_TOOL_CHECKPOINT_DIR"])
+checkpoint_dir.mkdir(parents=True, exist_ok=True)
+if os.environ.get("BRIGADE_TOOL_RESUME_CHECKPOINT_ID"):
+    print("resumed choice=" + os.environ.get("BRIGADE_TOOL_RESUME_CHOICE", ""))
+    Path("resumed.txt").write_text(os.environ.get("BRIGADE_TOOL_RESUME_CHOICE", ""))
+    {resume_failure}
+else:
+    (checkpoint_dir / "request.json").write_text(json.dumps({{
+        "reason": "needs operator review",
+        "requested_action": "choose next step",
+        "prompt": "Continue with token=prompt-secret?",
+        "context": {{"api_token": "argument-secret", "note": "secret=private-value"}},
+        "choices": ["continue", "abort"]
+    }}))
+    print("checkpoint requested")
+"""
+
+
+def _create_waiting_checkpoint(tmp_path, capsys, *, script: str | None = None, args='{"path":"README.md"}'):
+    _write_script_tool_config(tmp_path, script=script or _checkpoint_script())
+    call = _queue_and_approve_runner(tmp_path, capsys, args=args)
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    checkpoint_id = payload["receipt"]["checkpoint_id"]
+    return payload["call"], checkpoint_id, payload["receipt"]
+
+
+def test_tools_checkpoint_creation_list_show_and_redaction(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    call, checkpoint_id, receipt = _create_waiting_checkpoint(tmp_path, capsys)
+    assert call["status"] == "waiting"
+    assert receipt["status"] == "waiting"
+    assert receipt["checkpoint"]["id"] == checkpoint_id
+    assert receipt["checkpoint"]["context"]["api_token"] == "[redacted]"
+    assert "prompt-secret" not in json.dumps(receipt)
+    assert "argument-secret" not in json.dumps(receipt)
+    assert "private-value" not in json.dumps(receipt)
+
+    assert tools_cmd.checkpoint_list(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tools checkpoint list:" in out
+    assert f"- {checkpoint_id} [pending] runner choose next step" in out
+
+    assert tools_cmd.checkpoint_list(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checkpoint_count"] == 1
+    assert payload["checkpoints"][0]["id"] == checkpoint_id
+
+    assert tools_cmd.checkpoint_show(target=tmp_path, checkpoint_id=checkpoint_id[:12]) == 0
+    out = capsys.readouterr().out
+    assert f"checkpoint: {checkpoint_id}" in out
+    assert "choices: continue, abort" in out
+
+    assert tools_cmd.checkpoint_show(target=tmp_path, checkpoint_id=checkpoint_id, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checkpoint"]["context"]["note"] == "secret=[redacted]"
+
+
+def test_tools_checkpoint_approve_reject_and_successful_resume(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    call, checkpoint_id, receipt = _create_waiting_checkpoint(tmp_path, capsys)
+
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=checkpoint_id, choice="continue", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checkpoint"]["status"] == "approved"
+    assert payload["checkpoint"]["selected_choice"] == "continue"
+    assert payload["call"]["status"] == "resume-pending"
+
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=checkpoint_id, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checkpoint"]["status"] == "resumed"
+    assert payload["call"]["status"] == "resumed"
+    assert payload["receipt"]["status"] == "resumed"
+    assert payload["receipt"]["original_call_id"] == call["id"]
+    assert payload["receipt"]["original_run_id"] == receipt["id"]
+    assert payload["receipt"]["checkpoint_id"] == checkpoint_id
+    assert payload["receipt"]["resume_run_id"] == payload["receipt"]["id"]
+    assert (tmp_path / "resumed.txt").read_text() == "continue"
+
+    _write_script_tool_config(tmp_path, script=_checkpoint_script())
+    second = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"other"}')
+    assert tools_cmd.call_run(target=tmp_path, call_id=second["id"], json_output=True) == 0
+    second_checkpoint = json.loads(capsys.readouterr().out)["receipt"]["checkpoint_id"]
+    assert tools_cmd.checkpoint_reject(target=tmp_path, checkpoint_id=second_checkpoint, reason="not now", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checkpoint"]["status"] == "rejected"
+    assert payload["checkpoint"]["review_reason"] == "not now"
+
+
+def test_tools_checkpoint_resume_refuses_unapproved_expired_stale_blocked_and_policy_denied(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _, checkpoint_id, _ = _create_waiting_checkpoint(tmp_path, capsys)
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=checkpoint_id, json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "checkpoint must be approved before resume" in "\n".join(payload["blockers"])
+
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=checkpoint_id, choice="continue", json_output=True) == 0
+    capsys.readouterr()
+    checkpoint, _ = tools_cmd._resolve_checkpoint(tmp_path, checkpoint_id)
+    assert checkpoint is not None
+    checkpoint["expires_at"] = "2026-05-01T00:00:00+00:00"
+    tools_cmd._write_checkpoint(tmp_path, checkpoint)
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=checkpoint_id, json_output=True) == 1
+    assert "checkpoint is expired" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    _write_script_tool_config(tmp_path, script=_checkpoint_script())
+    _, stale_checkpoint, _ = _create_waiting_checkpoint(tmp_path, capsys, args='{"path":"stale"}')
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=stale_checkpoint, choice="continue", json_output=True) == 0
+    capsys.readouterr()
+    (tmp_path / "tools" / "input.schema.json").write_text(
+        json.dumps({"type": "object", "properties": {"path": {"type": "string"}, "mode": {"type": "string"}}})
+    )
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=stale_checkpoint, json_output=True) == 1
+    blockers = "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+    assert "contract fingerprint is stale" in blockers
+
+    _write_script_tool_config(tmp_path, script=_checkpoint_script())
+    _, blocked_checkpoint, _ = _create_waiting_checkpoint(tmp_path, capsys, args='{"path":"blocked"}')
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=blocked_checkpoint, choice="continue", json_output=True) == 0
+    capsys.readouterr()
+    calls = tools_cmd._read_calls(tmp_path)
+    for item in calls:
+        if item.get("checkpoint_id") == blocked_checkpoint:
+            item["blockers"] = ["manual blocker"]
+            item["approval_fingerprint"] = tools_cmd._approval_fingerprint(item)
+    tools_cmd._write_calls(tmp_path, calls)
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=blocked_checkpoint, json_output=True) == 1
+    assert "blocked calls cannot be run" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    _write_script_tool_config(tmp_path, script=_checkpoint_script())
+    _write_policy_config(tmp_path)
+    _, policy_checkpoint, _ = _create_waiting_checkpoint(tmp_path, capsys, args='{"path":"policy"}')
+    _write_policy_config(tmp_path, denied_effects=["local-read"])
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=policy_checkpoint, choice="continue", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=policy_checkpoint, json_output=True) == 1
+    assert "effect is denied by policy: local-read" in "\n".join(json.loads(capsys.readouterr().out)["blockers"])
+
+
+def test_tools_checkpoint_resume_failure_health_brief_and_imports(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    _, checkpoint_id, _ = _create_waiting_checkpoint(tmp_path, capsys, script=_checkpoint_script(fail_on_resume=True))
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=checkpoint_id, choice="continue", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=checkpoint_id, json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checkpoint"]["status"] == "failed"
+    assert payload["receipt"]["status"] == "failed"
+
+    assert tools_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] tool_checkpoint_failed:" in out
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tool_checkpoint_top_issue:" in out
+    assert checkpoint_id in out
+
+    assert tools_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    issue_types = {item["metadata"]["tool_issue_type"] for item in payload["imports"]}
+    assert "checkpoint_failed" in issue_types
+    imported = [item for item in payload["imports"] if item["metadata"]["tool_issue_type"] == "checkpoint_failed"][0]
+    assert imported["metadata"]["tool_checkpoint_id"] == checkpoint_id
+
+
+def test_tools_checkpoint_does_not_store_secret_env_values(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    secret_value = "super-secret-value"
+    monkeypatch.setenv("BRIGADE_TEST_SECRET", secret_value)
+    _write_script_tool_config(
+        tmp_path,
+        script="""
+import json
+import os
+from pathlib import Path
+
+checkpoint_dir = Path(os.environ["BRIGADE_TOOL_CHECKPOINT_DIR"])
+checkpoint_dir.mkdir(parents=True, exist_ok=True)
+if os.environ.get("BRIGADE_TOOL_RESUME_CHECKPOINT_ID"):
+    print("secret=" + os.environ.get("SAFE_LABEL", ""))
+else:
+    (checkpoint_dir / "request.json").write_text(json.dumps({
+        "reason": "needs secret-safe review",
+        "requested_action": "continue",
+        "prompt": "secret=" + os.environ.get("SAFE_LABEL", ""),
+        "context": {"secret": os.environ.get("SAFE_LABEL", ""), "api_token": "argument-secret"},
+        "choices": ["continue"]
+    }))
+""",
+    )
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.write_text(config.read_text() + 'env_labels = ["SAFE_LABEL"]\n')
+    _write_policy_config(tmp_path, env_bindings={"SAFE_LABEL": "BRIGADE_TEST_SECRET"})
+    call = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"README.md","api_token":"argument-secret"}')
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    checkpoint_id = payload["receipt"]["checkpoint_id"]
+    rendered = json.dumps(payload)
+    assert secret_value not in rendered
+    assert "argument-secret" not in rendered
+
+    assert tools_cmd.checkpoint_approve(target=tmp_path, checkpoint_id=checkpoint_id, choice="continue", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.checkpoint_resume(target=tmp_path, checkpoint_id=checkpoint_id, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    rendered = json.dumps(payload)
+    assert secret_value not in rendered
+    assert "argument-secret" not in rendered
+    assert secret_value not in Path(payload["receipt"]["receipt_path"]).read_text()
+    assert secret_value not in Path(payload["receipt"]["stdout_log_path"]).read_text()
+
+
 def test_tools_runtime_init_list_show_status_and_json(tmp_path, capsys):
     _init_git_repo(tmp_path)
     assert tools_cmd.runtime_init(target=tmp_path) == 0
@@ -5196,6 +5421,26 @@ def test_tools_cli(tmp_path, monkeypatch):
         seen.append(("run-replay", kwargs))
         return 0
 
+    def fake_checkpoint_list(**kwargs):
+        seen.append(("checkpoint-list", kwargs))
+        return 0
+
+    def fake_checkpoint_show(**kwargs):
+        seen.append(("checkpoint-show", kwargs))
+        return 0
+
+    def fake_checkpoint_approve(**kwargs):
+        seen.append(("checkpoint-approve", kwargs))
+        return 0
+
+    def fake_checkpoint_reject(**kwargs):
+        seen.append(("checkpoint-reject", kwargs))
+        return 0
+
+    def fake_checkpoint_resume(**kwargs):
+        seen.append(("checkpoint-resume", kwargs))
+        return 0
+
     def fake_runtime_init(**kwargs):
         seen.append(("runtime-init", kwargs))
         return 0
@@ -5274,6 +5519,11 @@ def test_tools_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(tools_cmd, "run_show", fake_run_show)
     monkeypatch.setattr(tools_cmd, "run_latest", fake_run_latest)
     monkeypatch.setattr(tools_cmd, "run_replay", fake_run_replay)
+    monkeypatch.setattr(tools_cmd, "checkpoint_list", fake_checkpoint_list)
+    monkeypatch.setattr(tools_cmd, "checkpoint_show", fake_checkpoint_show)
+    monkeypatch.setattr(tools_cmd, "checkpoint_approve", fake_checkpoint_approve)
+    monkeypatch.setattr(tools_cmd, "checkpoint_reject", fake_checkpoint_reject)
+    monkeypatch.setattr(tools_cmd, "checkpoint_resume", fake_checkpoint_resume)
     monkeypatch.setattr(tools_cmd, "runtime_init", fake_runtime_init)
     monkeypatch.setattr(tools_cmd, "runtime_list", fake_runtime_list)
     monkeypatch.setattr(tools_cmd, "runtime_show", fake_runtime_show)
@@ -5309,6 +5559,11 @@ def test_tools_cli(tmp_path, monkeypatch):
     assert cli.main(["tools", "run", "show", "run-123", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "run", "latest", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "run", "replay", "run-123", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "checkpoint", "list", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "checkpoint", "show", "checkpoint-123", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "checkpoint", "approve", "checkpoint-123", "--choice", "continue", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "checkpoint", "reject", "checkpoint-123", "--reason", "no", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "checkpoint", "resume", "checkpoint-123", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "runtime", "init", "--target", str(tmp_path), "--force"]) == 0
     assert cli.main(["tools", "runtime", "list", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "runtime", "show", "helper", "--target", str(tmp_path), "--json"]) == 0
@@ -5364,6 +5619,11 @@ def test_tools_cli(tmp_path, monkeypatch):
         ("run-show", {"target": tmp_path, "run_id": "run-123", "json_output": True}),
         ("run-latest", {"target": tmp_path, "json_output": True}),
         ("run-replay", {"target": tmp_path, "run_id": "run-123", "json_output": True}),
+        ("checkpoint-list", {"target": tmp_path, "json_output": True}),
+        ("checkpoint-show", {"target": tmp_path, "checkpoint_id": "checkpoint-123", "json_output": True}),
+        ("checkpoint-approve", {"target": tmp_path, "checkpoint_id": "checkpoint-123", "choice": "continue", "json_output": True}),
+        ("checkpoint-reject", {"target": tmp_path, "checkpoint_id": "checkpoint-123", "reason": "no", "json_output": True}),
+        ("checkpoint-resume", {"target": tmp_path, "checkpoint_id": "checkpoint-123", "json_output": True}),
         ("runtime-init", {"target": tmp_path, "force": True}),
         ("runtime-list", {"target": tmp_path, "json_output": True}),
         ("runtime-show", {"target": tmp_path, "runtime_id": "helper", "json_output": True}),
