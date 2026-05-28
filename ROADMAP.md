@@ -33,6 +33,7 @@ Goal: make Brigade a safe target for local automations that discover useful work
 - Warn on stale, noisy, or incomplete scanner queues. Status: started in `brigade work doctor`.
 - Keep scanner producer ingestion idempotent so repeated chat and memory sweeps skip equivalent pending or promoted imports, and dismissed items stay dismissed until source fingerprints change. Status: implemented for chat-sweep and memory-refresh producers.
 - Describe local scanner producers and plan safe schedules without executing them. Status: implemented with gitignored `.brigade/scanners.toml`, `brigade work scanners`, daily brief visibility, work doctor checks, and scanner-health imports.
+- Explicitly execute configured local scanner producers with foreground receipts, due-run selection, output snapshots, and pending import count reporting. Status: implemented with `brigade work scanners run`, `run --all`, `run --due`, `runs`, `run-show`, and scanner execution health imports, without a daemon or automatic promotion.
 
 ## Later Phase: Chat Surface Scanners
 

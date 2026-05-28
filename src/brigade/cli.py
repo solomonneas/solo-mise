@@ -231,6 +231,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_scanners_plan = scanners_sub.add_parser("plan", help="Plan scanner run windows without executing scanners.")
     p_work_scanners_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_scanners_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_run = scanners_sub.add_parser("run", help="Run configured local scanners explicitly.")
+    p_work_scanners_run.add_argument("scanner_id", nargs="?", default=None, help="Scanner id to run.")
+    p_work_scanners_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_scanners_run.add_argument("--all", action="store_true", help="Run all configured scanners.")
+    p_work_scanners_run.add_argument("--due", action="store_true", help="Run due scanners only.")
+    p_work_scanners_run.add_argument("--include-disabled", action="store_true", help="Allow disabled scanners to run.")
+    p_work_scanners_run.add_argument("--force", action="store_true", help="Run even when another scanner receipt is marked running.")
+    p_work_scanners_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_runs = scanners_sub.add_parser("runs", help="List local scanner run receipts.")
+    p_work_scanners_runs.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_scanners_runs.add_argument("--limit", type=int, default=20, help="Maximum runs to list.")
+    p_work_scanners_runs.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_scanners_run_show = scanners_sub.add_parser("run-show", help="Show one scanner run receipt.")
+    p_work_scanners_run_show.add_argument("run_id", help="Run id or unique prefix.")
+    p_work_scanners_run_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_scanners_run_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_scanners_doctor = scanners_sub.add_parser("doctor", help="Check scanner registry health.")
     p_work_scanners_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_scanners_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -1076,6 +1092,20 @@ def main(argv=None) -> int:
                 return work_cmd.scanners_show(target=args.target, scanner_id=args.scanner_id, json_output=args.json)
             if args.scanners_command == "plan":
                 return work_cmd.scanners_plan(target=args.target, json_output=args.json)
+            if args.scanners_command == "run":
+                return work_cmd.scanners_run(
+                    target=args.target,
+                    scanner_id=args.scanner_id,
+                    all_matching=args.all,
+                    due=args.due,
+                    include_disabled=args.include_disabled,
+                    force=args.force,
+                    json_output=args.json,
+                )
+            if args.scanners_command == "runs":
+                return work_cmd.scanners_runs(target=args.target, limit=args.limit, json_output=args.json)
+            if args.scanners_command == "run-show":
+                return work_cmd.scanners_run_show(target=args.target, run_id=args.run_id, json_output=args.json)
             if args.scanners_command == "doctor":
                 return work_cmd.scanners_doctor(
                     target=args.target,

@@ -141,7 +141,10 @@ BACKUP_DEFAULTS = (
 )
 SCANNER_CONFIG_REL_PATH = ".brigade/scanners.toml"
 SCANNER_OUTPUT_STALE_HOURS = 48
+SCANNER_RUN_STALE_HOURS = 48
 SCANNER_REQUIRED_IDS = ("chat-memory-sweep", "memory-refresh", "handoff-ingest")
+SCANNER_HIGH_RISK_COMMANDS = {"bash", "sh", "zsh", "fish", "powershell", "pwsh", "ssh", "scp", "rsync"}
+SCANNER_SHELL_META_RE = re.compile(r"[;&|`<>]|\$\(")
 SCANNER_DEFAULTS = (
     {
         "id": "chat-memory-sweep",
@@ -305,6 +308,10 @@ def _backup_config_path(target: Path) -> Path:
 
 def _scanner_config_path(target: Path) -> Path:
     return target / SCANNER_CONFIG_REL_PATH
+
+
+def _scanner_runs_root(target: Path) -> Path:
+    return target / ".brigade" / "scanners" / "runs"
 
 
 def _git_snapshot(target: Path) -> dict[str, Any]:
@@ -1680,6 +1687,15 @@ def _load_scanner_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]
                 errors.append(f"{label}: {field} must be a non-empty string")
             else:
                 scanner[field] = value.strip()
+        cwd = item.get("cwd", item.get("target"))
+        if cwd is not None:
+            field = "cwd" if "cwd" in item else "target"
+            if not isinstance(cwd, str) or not cwd.strip():
+                errors.append(f"{label}: {field} must be a non-empty string when present")
+            elif Path(cwd).is_absolute() or ".." in Path(cwd).parts:
+                errors.append(f"{label}: {field} must be relative and must not contain '..'")
+            else:
+                scanner["cwd"] = cwd.strip()
         enabled = item.get("enabled", True)
         if not isinstance(enabled, bool):
             errors.append(f"{label}: enabled must be true or false")
@@ -1762,6 +1778,240 @@ def _scanner_command_ok(command: str) -> bool:
     if "/" in executable:
         return Path(executable).expanduser().exists()
     return shutil.which(executable) is not None
+
+
+def _scanner_argv(command: str) -> tuple[list[str] | None, str | None]:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        return None, f"invalid command: {exc}"
+    if not parts:
+        return None, "empty command"
+    executable = Path(parts[0]).name
+    if executable in SCANNER_HIGH_RISK_COMMANDS:
+        return None, f"high-risk scanner command: {executable}"
+    if any(SCANNER_SHELL_META_RE.search(part) for part in parts):
+        return None, "high-risk scanner command contains shell metacharacters"
+    if not _scanner_command_ok(command):
+        return None, f"scanner command is not resolvable: {parts[0]}"
+    return parts, None
+
+
+def _scanner_output_path(target: Path, scanner: dict[str, Any]) -> Path | None:
+    output = scanner.get("output_path")
+    if not isinstance(output, str) or not output.strip():
+        return None
+    path = Path(output).expanduser()
+    return path if path.is_absolute() else target / path
+
+
+def _scanner_cwd(target: Path, scanner: dict[str, Any]) -> Path:
+    raw = scanner.get("cwd")
+    if isinstance(raw, str) and raw.strip():
+        return (target / raw).resolve()
+    return target
+
+
+def _scanner_read_receipt(path: Path) -> dict[str, Any] | None:
+    receipt = path / "receipt.json" if path.is_dir() else path
+    if not receipt.is_file():
+        return None
+    try:
+        data = json.loads(receipt.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    data.setdefault("path", str(receipt.parent))
+    return data
+
+
+def _scanner_receipts(target: Path) -> list[dict[str, Any]]:
+    root = _scanner_runs_root(target)
+    if not root.is_dir():
+        return []
+    receipts = [_scanner_read_receipt(path) for path in root.iterdir() if path.is_dir()]
+    valid = [item for item in receipts if isinstance(item, dict)]
+    valid.sort(key=lambda item: str(item.get("started_at") or item.get("run_id") or ""), reverse=True)
+    return valid
+
+
+def _scanner_latest_success(target: Path, scanner_id: str) -> dict[str, Any] | None:
+    for receipt in _scanner_receipts(target):
+        if receipt.get("scanner_id") == scanner_id and receipt.get("status") == "completed" and receipt.get("exit_code") == 0:
+            return receipt
+    return None
+
+
+def _scanner_is_due(target: Path, scanner: dict[str, Any], *, now: datetime | None = None) -> bool:
+    now = now or _now()
+    scanner_id = str(scanner.get("id") or "")
+    latest = _scanner_latest_success(target, scanner_id)
+    if latest is None:
+        return True
+    started = _parse_iso_datetime(latest.get("completed_at") or latest.get("started_at"))
+    if started is None:
+        return True
+    cadence = str(scanner.get("cadence") or "")
+    if cadence.startswith("hourly@"):
+        return (now - started).total_seconds() >= 3600
+    if cadence.startswith("daily@"):
+        return now.date() > started.date()
+    return False
+
+
+def _scanner_due_items(target: Path, scanners: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [scanner for scanner in scanners if scanner.get("enabled", True) and _scanner_is_due(target, scanner)]
+
+
+def _scanner_running_receipts(target: Path) -> list[dict[str, Any]]:
+    return [receipt for receipt in _scanner_receipts(target) if receipt.get("status") == "running"]
+
+
+def _scanner_output_snapshot(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    if not path.exists():
+        return {"path": str(path), "exists": False}
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "exists": True,
+        "is_dir": path.is_dir(),
+        "size": stat.st_size if path.is_file() else None,
+        "mtime": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+    }
+
+
+def _scanner_run_summary(text: str, limit: int = 1200) -> str:
+    rendered = text.strip()
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 3].rstrip() + "..."
+
+
+def _scanner_run_one(
+    target: Path,
+    scanner: dict[str, Any],
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    scanner_id = str(scanner.get("id") or "scanner")
+    command = str(scanner.get("command") or "")
+    argv, blocker = _scanner_argv(command)
+    output_path = _scanner_output_path(target, scanner)
+    cwd = _scanner_cwd(target, scanner)
+    started = _now()
+    run_id = f"{started.strftime('%Y%m%d-%H%M%S')}-{_slug(scanner_id)}-{uuid4().hex[:6]}"
+    run_dir = _scanner_runs_root(target) / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
+    receipt_path = run_dir / "receipt.json"
+    receipt: dict[str, Any] = {
+        "run_id": run_id,
+        "scanner_id": scanner_id,
+        "source": scanner.get("source"),
+        "status": "running",
+        "target": str(target),
+        "cwd": str(cwd),
+        "command": command,
+        "argv": argv or [],
+        "started_at": started.isoformat(),
+        "timeout": scanner.get("timeout"),
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "output_path": str(output_path) if output_path is not None else None,
+        "output_before": _scanner_output_snapshot(output_path),
+        "forced": force,
+    }
+    _write_json(receipt_path, receipt)
+    if blocker is not None:
+        completed = _now()
+        receipt.update(
+            {
+                "status": "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": None,
+                "timed_out": False,
+                "error": blocker,
+                "stdout_summary": "",
+                "stderr_summary": blocker,
+                "output_after": _scanner_output_snapshot(output_path),
+            }
+        )
+        stdout_path.write_text("")
+        stderr_path.write_text(blocker + "\n")
+        _write_json(receipt_path, receipt)
+        return receipt
+    if not cwd.is_dir():
+        completed = _now()
+        error = f"scanner cwd does not exist: {cwd}"
+        receipt.update(
+            {
+                "status": "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": None,
+                "timed_out": False,
+                "error": error,
+                "stdout_summary": "",
+                "stderr_summary": error,
+                "output_after": _scanner_output_snapshot(output_path),
+            }
+        )
+        stdout_path.write_text("")
+        stderr_path.write_text(error + "\n")
+        _write_json(receipt_path, receipt)
+        return receipt
+    try:
+        completed_process = subprocess.run(
+            argv,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            timeout=float(scanner.get("timeout") or 300),
+            shell=False,
+        )
+        stdout = completed_process.stdout or ""
+        stderr = completed_process.stderr or ""
+        stdout_path.write_text(stdout)
+        stderr_path.write_text(stderr)
+        completed = _now()
+        receipt.update(
+            {
+                "status": "completed" if completed_process.returncode == 0 else "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": completed_process.returncode,
+                "timed_out": False,
+                "stdout_summary": _scanner_run_summary(stdout),
+                "stderr_summary": _scanner_run_summary(stderr),
+                "output_after": _scanner_output_snapshot(output_path),
+            }
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        stdout_path.write_text(stdout)
+        stderr_path.write_text(stderr)
+        completed = _now()
+        receipt.update(
+            {
+                "status": "failed",
+                "completed_at": completed.isoformat(),
+                "duration_seconds": (completed - started).total_seconds(),
+                "exit_code": None,
+                "timed_out": True,
+                "error": f"scanner timed out after {scanner.get('timeout')} seconds",
+                "stdout_summary": _scanner_run_summary(stdout),
+                "stderr_summary": _scanner_run_summary(stderr),
+                "output_after": _scanner_output_snapshot(output_path),
+            }
+        )
+    _write_json(receipt_path, receipt)
+    return receipt
 
 
 def _scanner_plan_payload(target: Path) -> dict[str, Any]:
@@ -1870,11 +2120,13 @@ def _scanner_health(target: Path) -> dict[str, Any]:
     else:
         checks.append({"status": OK, "name": "scanner_required", "detail": "required local producers are enabled"})
 
-    bad_commands = [
-        str(scanner.get("id"))
-        for scanner in scanners
-        if scanner.get("enabled", True) and not _scanner_command_ok(str(scanner.get("command") or ""))
-    ]
+    bad_commands = []
+    for scanner in scanners:
+        if not scanner.get("enabled", True):
+            continue
+        _, blocker = _scanner_argv(str(scanner.get("command") or ""))
+        if blocker is not None:
+            bad_commands.append(str(scanner.get("id")))
     if bad_commands:
         checks.append({"status": WARN, "name": "scanner_commands", "detail": ", ".join(bad_commands)})
     else:
@@ -1916,13 +2168,79 @@ def _scanner_health(target: Path) -> dict[str, Any]:
     elif plan.get("valid"):
         checks.append({"status": OK, "name": "scanner_schedule", "detail": "no scanner schedule conflicts"})
 
+    receipts = _scanner_receipts(target)
+    malformed_receipts = []
+    runs_root = _scanner_runs_root(target)
+    if runs_root.is_dir():
+        for path in runs_root.iterdir():
+            if path.is_dir() and _scanner_read_receipt(path) is None:
+                malformed_receipts.append(path.name)
+    if malformed_receipts:
+        checks.append({"status": FAIL, "name": "scanner_run_receipts", "detail": ", ".join(malformed_receipts[:5])})
+
+    running = [receipt for receipt in receipts if receipt.get("status") == "running"]
+    if running:
+        checks.append({"status": WARN, "name": "scanner_runs_running", "detail": ", ".join(str(item.get("run_id")) for item in running[:5])})
+
+    recent_failed = [
+        receipt
+        for receipt in receipts
+        if receipt.get("status") == "failed" or receipt.get("timed_out")
+    ][:5]
+    if recent_failed:
+        rendered = ", ".join(f"{item.get('scanner_id')}:{item.get('run_id')}" for item in recent_failed)
+        checks.append({"status": WARN, "name": "scanner_runs_failed", "detail": rendered})
+    elif receipts:
+        checks.append({"status": OK, "name": "scanner_runs_failed", "detail": "none"})
+
+    missing_logs = []
+    for receipt in receipts[:20]:
+        for key in ("stdout_path", "stderr_path"):
+            value = receipt.get(key)
+            if isinstance(value, str) and value and not Path(value).is_file():
+                missing_logs.append(f"{receipt.get('run_id')}:{key}")
+    if missing_logs:
+        checks.append({"status": WARN, "name": "scanner_run_logs", "detail": ", ".join(missing_logs[:5])})
+    elif receipts:
+        checks.append({"status": OK, "name": "scanner_run_logs", "detail": "receipt logs exist"})
+
+    stale_successes: list[str] = []
+    if scanners:
+        now = _now()
+        for scanner in scanners:
+            if not scanner.get("enabled", True):
+                continue
+            latest_success = _scanner_latest_success(target, str(scanner.get("id") or ""))
+            if latest_success is None:
+                continue
+            completed = _parse_iso_datetime(latest_success.get("completed_at") or latest_success.get("started_at"))
+            if completed is None:
+                stale_successes.append(str(scanner.get("id")))
+                continue
+            age_hours = (now - completed).total_seconds() / 3600
+            if age_hours > SCANNER_RUN_STALE_HOURS:
+                stale_successes.append(f"{scanner.get('id')}={age_hours:.1f}h")
+    if stale_successes:
+        checks.append({"status": WARN, "name": "scanner_runs_stale", "detail": ", ".join(stale_successes[:5])})
+    elif receipts and plan.get("valid"):
+        checks.append({"status": OK, "name": "scanner_runs_stale", "detail": "none"})
+
+    due = _scanner_due_items(target, scanners)
+    if due:
+        checks.append({"status": WARN, "name": "scanner_runs_due", "detail": ", ".join(str(item.get("id")) for item in due[:5])})
+    elif plan.get("valid"):
+        checks.append({"status": OK, "name": "scanner_runs_due", "detail": "none"})
+
     next_run = plan.get("planned", [None])[0] if plan.get("planned") else None
+    latest_run = receipts[0] if receipts else None
     return {
         "target": str(target),
         "config_path": str(_scanner_config_path(target)),
         "checks": checks,
         "plan": plan,
         "next_run": next_run,
+        "latest_run": latest_run,
+        "due": due,
     }
 
 
@@ -2435,6 +2753,8 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "config_path": scanner_health["config_path"],
             "checks": scanner_health["checks"],
             "next_run": scanner_health["next_run"],
+            "latest_run": scanner_health.get("latest_run"),
+            "due": scanner_health.get("due"),
         },
         "memory_care": {
             "config_path": memory_health["config_path"],
@@ -3003,6 +3323,16 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
                 "scanner_next_run: "
                 f"{next_scanner.get('id')} {next_scanner.get('start')} {next_scanner.get('cadence')}"
             )
+        latest_scanner_run = scanner_health.get("latest_run") if isinstance(scanner_health.get("latest_run"), dict) else None
+        if latest_scanner_run:
+            print(
+                "scanner_latest_run: "
+                f"{latest_scanner_run.get('scanner_id')} "
+                f"[{latest_scanner_run.get('status')}] {latest_scanner_run.get('run_id')}"
+            )
+        due_scanners = scanner_health.get("due") if isinstance(scanner_health.get("due"), list) else []
+        if due_scanners:
+            print(f"scanner_due: {', '.join(str(item.get('id')) for item in due_scanners[:5] if isinstance(item, dict))}")
 
     memory_care = payload.get("memory_care") if isinstance(payload.get("memory_care"), dict) else {}
     if memory_care:
@@ -4661,6 +4991,193 @@ def scanners_doctor(*, target: Path, json_output: bool = False, import_issues: b
         print(f"skipped_issues: {len(skipped)}")
         print(f"dismissed_issues: {len(skipped_dismissed)}")
     return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
+
+
+def _select_scanners_for_run(
+    target: Path,
+    *,
+    scanner_id: str | None,
+    all_matching: bool,
+    due: bool,
+    include_disabled: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    scanners, errors = _load_scanner_config(target)
+    if errors:
+        return [], [], errors
+    if scanner_id:
+        selected = [item for item in scanners if item.get("id") == scanner_id]
+        if not selected:
+            return [], [], [f"scanner not found: {scanner_id}"]
+    elif all_matching or due:
+        selected = list(scanners)
+    else:
+        return [], [], ["scanner id, --all, or --due is required"]
+    runnable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for scanner in selected:
+        if not scanner.get("enabled", True) and not include_disabled:
+            if scanner_id:
+                return [], [], [f"scanner disabled: {scanner_id}"]
+            skipped.append({"scanner": scanner, "reason": "disabled"})
+            continue
+        if due and not _scanner_is_due(target, scanner):
+            skipped.append({"scanner": scanner, "reason": "not_due"})
+            continue
+        runnable.append(scanner)
+    return runnable, skipped, []
+
+
+def scanners_run(
+    *,
+    target: Path,
+    scanner_id: str | None = None,
+    all_matching: bool = False,
+    due: bool = False,
+    include_disabled: bool = False,
+    force: bool = False,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    if sum(1 for item in (scanner_id, all_matching, due) if bool(item)) != 1:
+        error = "pass exactly one of scanner id, --all, or --due"
+        if json_output:
+            print(json.dumps({"target": str(target), "errors": [error], "runs": [], "skipped": []}, indent=2, sort_keys=True))
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 2
+    if not _scanner_config_path(target).is_file():
+        error = f"scanner config missing: {_scanner_config_path(target)}"
+        if json_output:
+            print(json.dumps({"target": str(target), "errors": [error], "runs": [], "skipped": []}, indent=2, sort_keys=True))
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 2
+    running = _scanner_running_receipts(target)
+    if running and not force:
+        error = f"scanner run already in progress: {running[0].get('run_id')}"
+        if json_output:
+            print(json.dumps({"target": str(target), "errors": [error], "runs": [], "skipped": []}, indent=2, sort_keys=True))
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 2
+    selected, skipped, errors = _select_scanners_for_run(
+        target,
+        scanner_id=scanner_id,
+        all_matching=all_matching,
+        due=due,
+        include_disabled=include_disabled,
+    )
+    if errors:
+        if json_output:
+            print(json.dumps({"target": str(target), "errors": errors, "runs": [], "skipped": skipped}, indent=2, sort_keys=True))
+        else:
+            for error in errors:
+                print(f"error: {error}", file=sys.stderr)
+        return 2
+    before_counts = _import_counts(_pending_imports(target))
+    runs = [_scanner_run_one(target, scanner, force=force) for scanner in selected]
+    after_counts = _import_counts(_pending_imports(target))
+    payload = {
+        "target": str(target),
+        "runs_root": str(_scanner_runs_root(target)),
+        "selected": len(selected),
+        "completed": len([run for run in runs if run.get("status") == "completed"]),
+        "failed": len([run for run in runs if run.get("status") != "completed"]),
+        "skipped": [
+            {"scanner_id": item["scanner"].get("id"), "reason": item["reason"]}
+            for item in skipped
+            if isinstance(item.get("scanner"), dict)
+        ],
+        "imports_before": before_counts,
+        "imports_after": after_counts,
+        "runs": runs,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["failed"] == 0 else 1
+    print(f"work scanners run: {target}")
+    print(f"runs_root: {payload['runs_root']}")
+    print(f"selected: {payload['selected']}")
+    print(f"completed: {payload['completed']}")
+    print(f"failed: {payload['failed']}")
+    for item in payload["skipped"]:
+        print(f"skipped: {item['scanner_id']} {item['reason']}")
+    for run in runs:
+        print(
+            f"- {run.get('run_id')} {run.get('scanner_id')} "
+            f"[{run.get('status')}] exit={run.get('exit_code')} timed_out={run.get('timed_out')}"
+        )
+        if run.get("error"):
+            print(f"  error: {run.get('error')}")
+        print(f"  logs: {run.get('stdout_path')} {run.get('stderr_path')}")
+    print(f"pending_imports_before: {before_counts.get('total', 0)}")
+    print(f"pending_imports_after: {after_counts.get('total', 0)}")
+    return 0 if payload["failed"] == 0 else 1
+
+
+def scanners_runs(*, target: Path, json_output: bool = False, limit: int = 20) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    receipts = _scanner_receipts(target)[:limit]
+    payload = {"target": str(target), "runs_root": str(_scanner_runs_root(target)), "runs": receipts}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"work scanner runs: {target}")
+    print(f"runs_root: {payload['runs_root']}")
+    if not receipts:
+        print("runs: none")
+        return 0
+    for receipt in receipts:
+        print(
+            f"- {receipt.get('run_id')} {receipt.get('scanner_id')} "
+            f"[{receipt.get('status')}] exit={receipt.get('exit_code')} {receipt.get('started_at')}"
+        )
+    return 0
+
+
+def scanners_run_show(*, target: Path, run_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    matches = [
+        receipt
+        for receipt in _scanner_receipts(target)
+        if str(receipt.get("run_id") or "").startswith(run_id)
+    ]
+    if not matches:
+        print(f"error: scanner run not found: {run_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: scanner run id is ambiguous: {run_id}", file=sys.stderr)
+        return 2
+    receipt = matches[0]
+    if json_output:
+        print(json.dumps({"target": str(target), "run": receipt}, indent=2, sort_keys=True))
+        return 0
+    print(f"scanner_run: {receipt.get('run_id')}")
+    print(f"scanner: {receipt.get('scanner_id')}")
+    print(f"source: {receipt.get('source')}")
+    print(f"status: {receipt.get('status')}")
+    print(f"started_at: {receipt.get('started_at')}")
+    if receipt.get("completed_at"):
+        print(f"completed_at: {receipt.get('completed_at')}")
+    print(f"duration_seconds: {receipt.get('duration_seconds')}")
+    print(f"exit_code: {receipt.get('exit_code')}")
+    print(f"timed_out: {receipt.get('timed_out')}")
+    print(f"stdout: {receipt.get('stdout_path')}")
+    print(f"stderr: {receipt.get('stderr_path')}")
+    if receipt.get("stdout_summary"):
+        print(f"stdout_summary: {_short(str(receipt.get('stdout_summary')))}")
+    if receipt.get("stderr_summary"):
+        print(f"stderr_summary: {_short(str(receipt.get('stderr_summary')))}")
+    return 0
 
 
 def next(*, target: Path, json_output: bool = False) -> int:

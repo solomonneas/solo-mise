@@ -177,6 +177,10 @@ brigade work scanners list
 brigade work scanners show chat-memory-sweep
 brigade work scanners plan
 brigade work scanners doctor
+brigade work scanners run chat-memory-sweep
+brigade work scanners run --due
+brigade work scanners runs
+brigade work scanners run-show <run-id>
 brigade tools init
 brigade tools list
 brigade tools show simplify
@@ -333,7 +337,8 @@ Start-of-day commands:
 - `brigade work resume` shows the active or latest session, latest dogfood run, extracted next step, and suggested command.
 - `brigade work inbox` groups pending scanner imports by source, kind, priority, age, and acceptance coverage, then suggests plan, promote, dismiss, or run commands.
 - `brigade work backup status` reads local backup health summaries and reports snapshot, check, prune, and restore rehearsal risk without running backup commands.
-- `brigade work scanners plan` inspects the local scanner registry and suggests staggered run windows without executing scanners.
+- `brigade work scanners plan` inspects the local scanner registry and suggests staggered run windows.
+- `brigade work scanners run --due` explicitly runs due enabled scanner producers, writes local receipts, and leaves promotion to the operator.
 - `brigade tools doctor` inspects the local portable tool catalog and reports source, projection, schema, MCP, auth-field, and command-shape issues without invoking tools.
 - `brigade work next` prints only the next task. Add `--json` for wrappers.
 
@@ -381,9 +386,11 @@ Scanner registry commands:
 - `brigade work scanners init` writes gitignored `.brigade/scanners.toml` with local producer entries for chat sweep, memory refresh, handoff ingest sync, security findings, backup health, and tool catalog health.
 - `brigade work scanners list` and `show <scanner-id>` inspect configured scanner commands, sources, cadence, timeout, output paths, and conflict windows.
 - `brigade work scanners plan` calculates intended run windows, reports overlaps or clustered jobs, and prints a suggested staggered schedule.
-- `brigade work scanners doctor --import-issues` reports missing config, disabled required producers, bad commands, missing or stale output paths, and schedule conflicts, then can import those health issues as local task imports.
+- `brigade work scanners run <scanner-id>`, `run --all`, and `run --due` execute configured enabled scanner entries explicitly, never through a shell, and refuse disabled, risky, or overlapping runs unless the matching review flag is present.
+- `brigade work scanners runs` and `run-show <run-id>` inspect receipts under `.brigade/scanners/runs/`, including exit code, timeout state, stdout/stderr summaries, log paths, output snapshots, and pending import counts after the run.
+- `brigade work scanners doctor --import-issues` reports missing config, disabled required producers, bad commands, missing or stale output paths, schedule conflicts, failed or timed-out runs, malformed receipts, missing logs, and due scanners, then can import those health issues as local task imports.
 
-The scanner registry is a planner and health surface only. Brigade does not install cron jobs, start a daemon, run scanners automatically, or promote scanner output automatically.
+The scanner registry is explicit and local. Brigade does not install cron jobs, start a daemon, run scanners from `brief` or `doctor`, promote scanner output automatically, or mutate scanner output beyond the configured command's own behavior.
 
 Portable tool catalog commands:
 
