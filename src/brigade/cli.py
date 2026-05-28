@@ -140,6 +140,31 @@ def _build_parser() -> argparse.ArgumentParser:
     p_handoff_sync_issues.add_argument("--category", action="append", default=[], help="Sync only one issue category. May be repeated.")
     p_handoff_sync_issues.add_argument("--no-close-stale", action="store_true", help="Do not dismiss stale imports or close stale tasks.")
 
+    # memory
+    p_memory = sub.add_parser("memory", help="Inspect local memory maintenance workflows.")
+    memory_sub = p_memory.add_subparsers(dest="memory_command", metavar="<memory-command>")
+    memory_sub.required = True
+    p_memory_care = memory_sub.add_parser("care", help="Scan local memory cards for refresh risk.")
+    memory_care_sub = p_memory_care.add_subparsers(dest="memory_care_command", metavar="<memory-care-command>")
+    memory_care_sub.required = True
+    p_memory_care_init = memory_care_sub.add_parser("init", help="Write local memory-care config.")
+    p_memory_care_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_memory_care_init.add_argument("--force", action="store_true", help="Overwrite an existing memory-care config.")
+    p_memory_care_init.add_argument("--no-gitignore", action="store_true", help="Do not update the target .gitignore.")
+    p_memory_care_scan = memory_care_sub.add_parser("scan", help="Scan local memory cards without editing them.")
+    p_memory_care_scan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_memory_care_scan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_memory_care_status = memory_care_sub.add_parser("status", help="Show local memory-care status.")
+    p_memory_care_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_memory_care_status.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_memory_care_doctor = memory_care_sub.add_parser("doctor", help="Check local memory-care health.")
+    p_memory_care_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_memory_care_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_memory_care_import = memory_care_sub.add_parser("import-issues", help="Import memory-care issues into the work inbox.")
+    p_memory_care_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_memory_care_import.add_argument("--dry-run", action="store_true", help="Report without writing imports.")
+    p_memory_care_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+
     # work
     p_work = sub.add_parser("work", help="Inspect and manage a daily Brigade work session.")
     work_sub = p_work.add_subparsers(dest="work_command", metavar="<work-command>")
@@ -971,6 +996,32 @@ def main(argv=None) -> int:
                 close_stale=not args.no_close_stale,
             )
         parser.error(f"unknown handoff command: {args.handoff_command}")
+        return 2
+    if cmd == "memory":
+        from . import memory_cmd
+
+        if args.memory_command == "care":
+            if args.memory_care_command == "init":
+                return memory_cmd.init(
+                    target=args.target,
+                    force=args.force,
+                    update_gitignore=not args.no_gitignore,
+                )
+            if args.memory_care_command == "scan":
+                return memory_cmd.scan(target=args.target, json_output=args.json)
+            if args.memory_care_command == "status":
+                return memory_cmd.status(target=args.target, json_output=args.json)
+            if args.memory_care_command == "doctor":
+                return memory_cmd.doctor(target=args.target, json_output=args.json)
+            if args.memory_care_command == "import-issues":
+                return memory_cmd.import_issues(
+                    target=args.target,
+                    dry_run=args.dry_run,
+                    json_output=args.json,
+                )
+            parser.error(f"unknown memory care command: {args.memory_care_command}")
+            return 2
+        parser.error(f"unknown memory command: {args.memory_command}")
         return 2
     if cmd == "work":
         from . import work_cmd

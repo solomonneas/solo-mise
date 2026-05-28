@@ -164,6 +164,16 @@ SCANNER_DEFAULTS = (
         "conflict_window": "02:30-03:00",
     },
     {
+        "id": "memory-care",
+        "source": "memory-care",
+        "command": "brigade memory care import-issues --json",
+        "cadence": "daily@03:00",
+        "enabled": False,
+        "timeout": 180,
+        "output_path": "memory/cards/decay/refresh-queue.json",
+        "conflict_window": "02:55-03:15",
+    },
+    {
         "id": "handoff-ingest",
         "source": "handoff-ingest",
         "command": "brigade handoff sync-issues --json",
@@ -2385,7 +2395,7 @@ def _suggested_command(active: dict[str, Any] | None, next_text: object, source:
 
 
 def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
-    from . import handoff_cmd, security_cmd, tools_cmd
+    from . import handoff_cmd, memory_cmd, security_cmd, tools_cmd
 
     target = target.expanduser().resolve()
     active = _active_session_info(target)
@@ -2401,6 +2411,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     pending_import_counts = _import_counts(pending_imports)
     scanner_candidate = _scanner_candidate(pending_imports)
     scanner_health = _scanner_health(target)
+    memory_health = memory_cmd.health(target)
     security_health = security_cmd.health(target)
     backup_health = _backup_health(target)
     tool_health = tools_cmd.health(target)
@@ -2424,6 +2435,14 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "config_path": scanner_health["config_path"],
             "checks": scanner_health["checks"],
             "next_run": scanner_health["next_run"],
+        },
+        "memory_care": {
+            "config_path": memory_health["config_path"],
+            "scan_path": memory_health["scan_path"],
+            "queue_path": memory_health["queue_path"],
+            "valid": memory_health["valid"],
+            "issue_count": memory_health["issue_count"],
+            "top_issue": memory_health["top_issue"],
         },
         "security_health": {
             "config_path": security_health["config_path"],
@@ -2983,6 +3002,18 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
             print(
                 "scanner_next_run: "
                 f"{next_scanner.get('id')} {next_scanner.get('start')} {next_scanner.get('cadence')}"
+            )
+
+    memory_care = payload.get("memory_care") if isinstance(payload.get("memory_care"), dict) else {}
+    if memory_care:
+        print(f"memory_care_config: {memory_care.get('config_path')}")
+        print(f"memory_care_health: {'ok' if memory_care.get('issue_count') == 0 else f'{memory_care.get('issue_count')} issue(s)'}")
+        top_memory = memory_care.get("top_issue") if isinstance(memory_care.get("top_issue"), dict) else None
+        if top_memory:
+            print(
+                "memory_care_top_issue: "
+                f"{top_memory.get('issue_type') or top_memory.get('name')} "
+                f"{top_memory.get('file') or _short(str(top_memory.get('detail', '')))}"
             )
 
     security_health = payload.get("security_health") if isinstance(payload.get("security_health"), dict) else {}
@@ -3582,11 +3613,22 @@ def _memory_refresh_cards(payload: dict[str, Any], *, queue_path: Path) -> tuple
             "reason": reason,
             "queue_path": str(queue_path),
         }
-        for key in ("confidence", "evidence_summary", "review_after", "last_reviewed_at", "freshness", "source"):
+        for key in (
+            "confidence",
+            "evidence_references",
+            "evidence_summary",
+            "issue_type",
+            "review_after",
+            "last_reviewed_at",
+            "freshness",
+            "safe_summary",
+            "source",
+            "suggested_refresh_action",
+        ):
             value = card.get(key)
             if value not in (None, ""):
                 metadata[key] = value
-        source_item_key = f"memory-refresh:{card_id}"
+        source_item_key = _string_field(card.get("source_item_key")) or f"memory-refresh:{card_id}"
         record = {
             "text": f"Refresh memory card {card_file}: {reason}",
             "kind": "task",
@@ -3597,13 +3639,14 @@ def _memory_refresh_cards(payload: dict[str, Any], *, queue_path: Path) -> tuple
             "acceptance": acceptance,
             "metadata": metadata,
         }
-        fingerprint = _stable_hash(
+        fingerprint = _string_field(card.get("source_fingerprint")) or _stable_hash(
             {
                 "card_id": card_id,
                 "card_file": card_file,
                 "reason": reason,
                 "acceptance": acceptance,
                 "evidence_summary": metadata.get("evidence_summary"),
+                "issue_type": metadata.get("issue_type"),
             }
         )
         metadata["source_item_key"] = source_item_key
@@ -4957,7 +5000,7 @@ def status(*, target: Path, limit: int = 12) -> int:
 
 
 def doctor(*, target: Path) -> int:
-    from . import handoff_cmd, security_cmd, tools_cmd
+    from . import handoff_cmd, memory_cmd, security_cmd, tools_cmd
 
     target = target.expanduser().resolve()
     failures = 0
@@ -5164,6 +5207,12 @@ def doctor(*, target: Path) -> int:
 
     scanner_health = _scanner_health(effective_target)
     for check in scanner_health["checks"]:
+        if check.get("status") == FAIL:
+            failures += 1
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+
+    memory_health = memory_cmd.health(effective_target)
+    for check in memory_health["checks"]:
         if check.get("status") == FAIL:
             failures += 1
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))

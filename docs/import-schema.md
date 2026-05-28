@@ -105,9 +105,11 @@ brigade work import memory-refresh
 brigade work import triage
 ```
 
-`memory-care` keeps the legacy source name `memory-care`. `memory-refresh` uses source `memory-refresh` and also accepts `candidates` or `refresh_candidates`.
+`memory-care` keeps the legacy source name `memory-care`. `brigade memory care scan` now produces this queue directly from local memory cards, and `brigade memory care import-issues` imports it into the work inbox. `memory-refresh` uses source `memory-refresh` and also accepts `candidates` or `refresh_candidates`.
 
-Memory-refresh candidates can include `id` or `card_id`, `file`, `refresh_reason`, `confidence`, `evidence_summary`, `priority`, `template`, and `acceptance`. The producer writes `task` imports preserving card identity, refresh reason, queue path, evidence summary, source item key, and source fingerprint metadata.
+Memory-refresh candidates can include `id` or `card_id`, `file`, `refresh_reason`, `issue_type`, `safe_summary`, `confidence`, `evidence_references`, `evidence_summary`, `suggested_refresh_action`, `source_item_key`, `source_fingerprint`, `priority`, `template`, and `acceptance`. The producer writes `task` imports preserving card identity, refresh reason, queue path, safe summary, evidence summary, source item key, and source fingerprint metadata.
+
+Memory-care issue types are `stale`, `expired`, `undersourced`, `contradictory`, `missing-index-link`, `orphaned-card`, `oversized-card`, and `missing-frontmatter`. Memory-care imports are review items only. Brigade does not edit memory cards automatically.
 
 ## Chat Memory Sweep Producer
 

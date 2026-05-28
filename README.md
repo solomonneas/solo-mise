@@ -239,6 +239,11 @@ brigade work import promote --all --source memory-care --kind task
 brigade work import promote --all --source handoff-ingest --metadata handoff_issue_category=route-skip
 brigade work import dismiss <import-id> --reason "not actionable"
 brigade work import dismiss --all --source handoff-ingest --metadata handoff_issue_category=skip --reason "historical noise"
+brigade memory care init
+brigade memory care scan
+brigade memory care status
+brigade memory care doctor
+brigade memory care import-issues
 brigade work run
 brigade work run --queue-next
 brigade work run "review today's changes"
@@ -352,6 +357,8 @@ Import inbox commands:
 - `brigade work import add "..."` creates a scanner-ready local import.
 - `brigade work import validate imports.jsonl` checks scanner output against [`docs/import-schema.md`](docs/import-schema.md).
 - `brigade work import ingest imports.jsonl` ingests scanner output.
+- `brigade memory care scan` scans local memory cards for stale, expired, undersourced, contradictory, missing-index-link, orphaned, oversized, and missing-frontmatter issues without editing memory.
+- `brigade memory care import-issues` routes the latest memory-care refresh queue into the work inbox.
 - `brigade work import memory-care` converts `memory/cards/decay/refresh-queue.json` into imports.
 - `brigade work import memory-refresh` converts memory-refresh candidates into task imports with card identity, reason, evidence summary, and acceptance criteria.
 - `brigade work import chat-sweep` converts `.brigade/chat-memory-sweeps/latest.json` issues into imports. Actionable sweep issues become task imports with acceptance criteria, while raw private chat text is omitted.
@@ -436,13 +443,15 @@ It also checks:
 
 - `memory/cards/*.md` budgets
 - `MEMORY.md` card links under `memory/cards/`
-- memory-care freshness from `memory/cards/decay/scan-latest.json`
+- memory-care config, scan freshness, open refresh candidates, and queue validity
 - corrupt scan or refresh-queue JSON once the loop is wired
 
-Workspace installs include `.brigade/memory-care.example.json` as a scanner wiring contract for whatever scheduler or memory owner produces the decay files.
+Workspace installs include `.brigade/memory-care.example.json` as a legacy scanner wiring contract, and `brigade memory care init` writes the active gitignored `.brigade/memory-care.toml` scanner config.
 They also include `.brigade/chat-memory-sweep.example.json` for nightly chat/session sweep summaries.
 Missing memory-care state is advisory for fresh installs.
 Bootstrap truncation is a hard failure to prevent, not a cosmetic warning.
+
+Memory care is local and explicit. Brigade writes scan reports and work imports, but it does not edit memory cards, run a scheduler, mutate canonical memory, or use LLM inference for contradictions.
 
 Inspect local work sessions with:
 

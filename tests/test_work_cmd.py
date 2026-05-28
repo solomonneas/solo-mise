@@ -3,7 +3,7 @@ import os
 import socket
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from brigade import cli
@@ -1392,7 +1392,7 @@ def test_work_scanners_init_list_show_plan_and_json(tmp_path, monkeypatch, capsy
     out = capsys.readouterr().out
     config = tmp_path / ".brigade" / "scanners.toml"
     assert f"scanner_config: {config}" in out
-    assert "scanners: 6" in out
+    assert "scanners: 7" in out
     assert ".brigade/scanners.toml" in (tmp_path / ".gitignore").read_text()
 
     assert work_cmd.scanners_list(target=tmp_path) == 0
@@ -3910,6 +3910,46 @@ def test_work_brief_and_doctor_include_security_health(tmp_path, monkeypatch, ca
     assert work_cmd.doctor(target=tmp_path) == 0
     out = capsys.readouterr().out
     assert "[warn] security_open_findings:" in out
+
+
+def test_work_brief_and_doctor_include_memory_care_health(tmp_path, monkeypatch, capsys):
+    from brigade import memory_cmd
+
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    monkeypatch.setattr(memory_cmd, "_today", lambda: date(2026, 5, 28))
+    assert memory_cmd.init(target=tmp_path, update_gitignore=False) == 0
+    cards = tmp_path / "memory" / "cards"
+    cards.mkdir(parents=True)
+    (cards / "stale.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "topic: stale",
+                "last_reviewed: 2026-01-01",
+                "confidence: high",
+                'evidence: ["README.md"]',
+                "---",
+                "",
+                "Body.",
+            ]
+        )
+    )
+    (tmp_path / "MEMORY.md").write_text("- [stale](memory/cards/stale.md)\n")
+    assert memory_cmd.scan(target=tmp_path) == 0
+    capsys.readouterr()
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "memory_care_config:" in out
+    assert "memory_care_health:" in out
+    assert "memory_care_top_issue:" in out
+
+    assert work_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] memory_care_open_issues:" in out
 
 
 def test_work_import_plan_previews_promoted_task(tmp_path, monkeypatch, capsys):
