@@ -65,8 +65,8 @@ Goal: make Brigade able to reason about callable tools across agent harnesses wi
 - Support source families such as MCP, OpenAPI, GraphQL, local scripts, and custom adapters through a registry contract. Status: started for `skill`, `slash-command`, `superpower`, `mcp`, `openapi`, `graphql`, `script`, and `custom` catalog entries.
 - Materialize reviewed harness projections from one local source of truth. Status: started with explicit `brigade tools plan` and `brigade tools apply`, managed projection fingerprints, dry-run support, and unmanaged or locally edited conflict protection.
 - Prefer schema-first tool descriptions so agents can discover by intent, inspect arguments, and produce typed calls. Status: started with `brigade tools describe`, `brigade tools contracts`, and read-only `brigade tools call plan`.
+- Track resumable executions for tools that pause for auth, approval, or human confirmation. Status: started with local non-executing call approval records in `.brigade/tools/calls.jsonl`.
 - Add a local daemon option with status, stop, restart, port tracking, and safe local auto-start for commands that need a runtime.
-- Track resumable executions for tools that pause for auth, approval, or human confirmation.
 - Keep shared auth, secrets, and policy decisions host-local and gitignored, while publishing only safe example configs.
 - Expose catalog health through `brigade doctor` and route broken source/auth/policy states into `brigade work import`. Status: started through `brigade work brief`, `brigade work doctor`, and `tool-catalog` imports.
 

@@ -25,6 +25,13 @@ brigade tools describe simplify
 brigade tools contracts
 brigade tools call plan simplify --args '{"path":"README.md"}'
 brigade tools call plan simplify --args-json args.json
+brigade tools call queue simplify --args '{"path":"README.md"}'
+brigade tools call queue simplify --args-json args.json
+brigade tools call list
+brigade tools call show <call-id>
+brigade tools call approve <call-id>
+brigade tools call reject <call-id> --reason "not needed"
+brigade tools call hold <call-id> --reason "needs review"
 brigade tools plan
 brigade tools plan simplify
 brigade tools apply simplify --dry-run
@@ -35,7 +42,7 @@ brigade tools doctor --json
 brigade tools import-issues
 ```
 
-`list`, `show`, and `search` inspect configured entries. `describe` and `contracts` inspect schema-backed call contracts. `call plan` validates arguments and returns a safe call plan without executing anything. `plan` previews projection writes without touching files. `apply` is the only command that writes projections, and it requires either one tool id or `--all`. `doctor` reports catalog health issues. `import-issues` writes those issues into the normal work import inbox as `tool-catalog` task imports with stable source fingerprints.
+`list`, `show`, and `search` inspect configured entries. `describe` and `contracts` inspect schema-backed call contracts. `call plan` validates arguments and returns a safe call plan without executing anything. `call queue` stores a plan for local review, and `call approve`, `reject`, and `hold` update review status only. `plan` previews projection writes without touching files. `apply` is the only command that writes projections, and it requires either one tool id or `--all`. `doctor` reports catalog health issues. `import-issues` writes those issues into the normal work import inbox as `tool-catalog` task imports with stable source fingerprints.
 
 ## Config Shape
 
@@ -155,6 +162,29 @@ Unsupported schema keywords are reported as contract health issues. `brigade too
 
 Call planning is read-only. It does not invoke the command, start daemons, start MCP servers, resolve approvals, fetch remote schemas, or store auth.
 
+## Call Approval Queue
+
+`brigade tools call queue` stores planned calls in:
+
+```text
+.brigade/tools/calls.jsonl
+```
+
+Each queued call stores:
+
+- status: `pending`, `approved`, `rejected`, or `held`
+- redacted args and rendered argument mapping
+- contract metadata, approval mode, permissions, and effects
+- blockers from call planning
+- projection summary
+- source and contract fingerprints
+- created and reviewed timestamps
+- review reason when rejected or held
+
+Equivalent valid plans dedupe while pending or approved. Rejected calls can be requeued only when args or the contract fingerprint changes. Blocked plans require `--include-blocked` to enter the queue, and blocked calls cannot be approved. Approval never executes a tool.
+
+`brigade tools doctor` warns on stale pending approvals, approved calls whose contract or source fingerprint has gone stale, blocked queued calls, and held or rejected calls. `brigade work brief` shows pending approval count and the highest-priority call approval issue. `brigade tools import-issues` routes call approval health problems into `tool-catalog` imports.
+
 ## Health Checks
 
 `brigade tools doctor` reports:
@@ -172,6 +202,8 @@ Call planning is read-only. It does not invoke the command, start daemons, start
 - missing, stale, unmanaged, or locally edited projection files
 - stale health files
 - unsafe auth or env field names in the local config
+- stale or blocked tool call approvals
+- approved tool calls with stale source or contract fingerprints
 - MCP config issues in local JSON files with `mcpServers`
 
 MCP discovery is structural only. Brigade summarizes server count and server ids, checks for missing commands and timeout metadata, and flags broad shell-like command shapes. It never starts an MCP server.
@@ -194,4 +226,4 @@ Repeated imports dedupe equivalent pending or promoted issues. Dismissed tool-ca
 
 Keep all catalog state local and gitignored. Do not put tokens, passwords, raw credentials, URLs with embedded secrets, private hostnames, or host-private paths in public templates. Brigade reports unsafe field names without copying their values into command output, work imports, session artifacts, docs, or handoffs.
 
-Projection apply is local and explicit. Call planning is local and read-only. Brigade does not invoke projected tools, install schedulers, start a daemon, fetch remote schemas, store auth, or mutate remote services.
+Projection apply is local and explicit. Call planning and call approval review are local and non-executing. Brigade does not invoke projected tools, install schedulers, start a daemon, fetch remote schemas, store auth, send notifications, or mutate remote services.

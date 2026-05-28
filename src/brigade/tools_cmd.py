@@ -24,7 +24,9 @@ OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 CONFIG_REL_PATH = ".brigade/tools.toml"
+CALLS_REL_PATH = ".brigade/tools/calls.jsonl"
 HEALTH_STALE_HOURS = 48
+CALL_STALE_HOURS = 72
 PROJECTION_MARKER = "brigade-tool-projection:"
 FAMILIES = ("skill", "slash-command", "superpower", "mcp", "openapi", "graphql", "script", "custom")
 KNOWN_HARNESSES = ("claude", "codex", "opencode", "hermes", "openclaw", "mcp", "scripts")
@@ -70,6 +72,29 @@ DEFAULT_TOOLS = (
 
 def config_path(target: Path) -> Path:
     return target / CONFIG_REL_PATH
+
+
+def calls_path(target: Path) -> Path:
+    return target / CALLS_REL_PATH
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    rendered = value.strip()
+    if rendered.endswith("Z"):
+        rendered = rendered[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(rendered)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _stable_hash(value: object) -> str:
@@ -455,6 +480,37 @@ def _contract_summary(target: Path, tool: dict[str, Any]) -> dict[str, Any]:
         "examples_path": str(examples_path) if examples_path is not None else None,
         "has_contract": _contract_defined(tool),
     }
+
+
+def _source_fingerprint(target: Path, tool: dict[str, Any]) -> str:
+    source_path = _as_path(target, tool.get("source_path"))
+    if source_path is not None:
+        source_hash = _file_hash(source_path)
+        if source_hash is not None:
+            return source_hash
+    return str(tool.get("fingerprint") or "")
+
+
+def _contract_fingerprint(target: Path, tool: dict[str, Any]) -> str:
+    paths: dict[str, str | None] = {}
+    for field in ("input_schema_path", "output_schema_path", "examples_path"):
+        path = _as_path(target, tool.get(field))
+        paths[field] = _file_hash(path) if path is not None else None
+    return _stable_hash(
+        {
+            "tool_id": tool.get("id"),
+            "command": tool.get("command"),
+            "timeout": tool.get("timeout"),
+            "auth_label": tool.get("auth_label"),
+            "cwd": tool.get("cwd"),
+            "approval_mode": tool.get("approval_mode"),
+            "permissions": tool.get("permissions", []),
+            "effects": tool.get("effects", []),
+            "env_labels": tool.get("env_labels", []),
+            "argument_template": tool.get("argument_template", {}),
+            "paths": paths,
+        }
+    )
 
 
 def _contract_issues(target: Path, tool: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1003,6 +1059,26 @@ def _call_plan_payload(
         "approval_required": (tool.get("approval_mode") if tool is not None else "never") != "never",
         "approval_mode": tool.get("approval_mode", "never") if tool is not None else "never",
     }
+    projection_summary: dict[str, Any] = {"counts": {}, "projections": []}
+    contract_fingerprint = None
+    source_fingerprint = None
+    if tool is not None:
+        projection_summary = _projection_plan_payload(target, tool_id=tool_id)["counts"]
+        projection_items = _projection_plan_payload(target, tool_id=tool_id)["projections"]
+        projection_summary = {
+            "counts": projection_summary,
+            "projections": [
+                {
+                    "harness": item.get("harness"),
+                    "status": item.get("status"),
+                    "action": item.get("action"),
+                    "projection_path": item.get("projection_path"),
+                }
+                for item in projection_items
+            ],
+        }
+        contract_fingerprint = _contract_fingerprint(target, tool)
+        source_fingerprint = _source_fingerprint(target, tool)
     return {
         "target": str(target),
         "config_path": str(config_path(target)),
@@ -1012,6 +1088,221 @@ def _call_plan_payload(
         "blockers": blockers,
         "validation_errors": validation_errors,
         "projection_blockers": projection_blockers,
+        "projection_summary": projection_summary,
+        "contract_fingerprint": contract_fingerprint,
+        "source_fingerprint": source_fingerprint,
+    }
+
+
+def _read_calls(target: Path) -> list[dict[str, Any]]:
+    path = calls_path(target)
+    if not path.is_file():
+        return []
+    calls: list[dict[str, Any]] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            calls.append(item)
+    return calls
+
+
+def _write_calls(target: Path, calls: list[dict[str, Any]]) -> None:
+    path = calls_path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n" for item in calls)
+    path.write_text(text)
+
+
+def _call_fingerprint(plan_payload: dict[str, Any]) -> str:
+    return _stable_hash(
+        {
+            "tool_id": plan_payload.get("tool_id"),
+            "plan": plan_payload.get("plan"),
+            "contract_fingerprint": plan_payload.get("contract_fingerprint"),
+            "source_fingerprint": plan_payload.get("source_fingerprint"),
+        }
+    )
+
+
+def _make_call_record(plan_payload: dict[str, Any]) -> dict[str, Any]:
+    fingerprint = _call_fingerprint(plan_payload)
+    now = _now().isoformat()
+    plan = plan_payload.get("plan") if isinstance(plan_payload.get("plan"), dict) else {}
+    return {
+        "id": f"call-{fingerprint}",
+        "status": "pending",
+        "created_at": now,
+        "reviewed_at": None,
+        "review_reason": None,
+        "tool_id": plan_payload.get("tool_id"),
+        "family": plan.get("family"),
+        "command": plan.get("command"),
+        "args": plan.get("args"),
+        "arguments": plan.get("arguments"),
+        "contract": {
+            "approval_mode": plan.get("approval_mode"),
+            "approval_required": plan.get("approval_required"),
+            "permissions": plan.get("permissions", []),
+            "effects": plan.get("effects", []),
+            "auth_label": plan.get("auth_label"),
+            "env_labels": plan.get("env_labels", []),
+            "cwd": plan.get("cwd"),
+            "timeout": plan.get("timeout"),
+        },
+        "blockers": plan_payload.get("blockers", []),
+        "projection_summary": plan_payload.get("projection_summary", {}),
+        "contract_fingerprint": plan_payload.get("contract_fingerprint"),
+        "source_fingerprint": plan_payload.get("source_fingerprint"),
+        "call_fingerprint": fingerprint,
+    }
+
+
+def _queue_call_payload(
+    target: Path,
+    tool_id: str,
+    *,
+    args: str | None = None,
+    args_json: Path | None = None,
+    include_blocked: bool = False,
+) -> tuple[dict[str, Any], int]:
+    target = target.expanduser().resolve()
+    plan_payload = _call_plan_payload(target, tool_id, args=args, args_json=args_json)
+    record = _make_call_record(plan_payload)
+    if record["blockers"] and not include_blocked:
+        return {
+            "target": str(target),
+            "calls_path": str(calls_path(target)),
+            "created": 0,
+            "skipped": 0,
+            "blocked": 1,
+            "call": record,
+            "reason": "blocked call plans require --include-blocked",
+        }, 1
+    calls = _read_calls(target)
+    for existing in calls:
+        if existing.get("call_fingerprint") != record["call_fingerprint"]:
+            continue
+        if existing.get("status") in {"pending", "approved"}:
+            return {
+                "target": str(target),
+                "calls_path": str(calls_path(target)),
+                "created": 0,
+                "skipped": 1,
+                "blocked": 0,
+                "call": existing,
+                "reason": f"equivalent call already {existing.get('status')}",
+            }, 0
+        if existing.get("status") == "rejected":
+            return {
+                "target": str(target),
+                "calls_path": str(calls_path(target)),
+                "created": 0,
+                "skipped": 1,
+                "blocked": 0,
+                "call": existing,
+                "reason": "equivalent rejected call requires changed args or contract fingerprint",
+            }, 0
+    calls.append(record)
+    _write_calls(target, calls)
+    return {
+        "target": str(target),
+        "calls_path": str(calls_path(target)),
+        "created": 1,
+        "skipped": 0,
+        "blocked": 0,
+        "call": record,
+        "reason": None,
+    }, 0
+
+
+def _resolve_call(target: Path, call_id: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str | None]:
+    calls = _read_calls(target)
+    matches = [item for item in calls if str(item.get("id", "")).startswith(call_id)]
+    if not matches:
+        return None, calls, f"call not found: {call_id}"
+    if len(matches) > 1:
+        return None, calls, f"call id is ambiguous: {call_id}"
+    return matches[0], calls, None
+
+
+def _call_current_fingerprints(target: Path, call: dict[str, Any]) -> tuple[str | None, str | None]:
+    tool_id = str(call.get("tool_id") or "")
+    tool, _ = _find_tool(target, tool_id)
+    if tool is None:
+        return None, None
+    return _contract_fingerprint(target, tool), _source_fingerprint(target, tool)
+
+
+def _call_health(target: Path) -> dict[str, Any]:
+    calls = _read_calls(target)
+    now = _now()
+    issues: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    for call in calls:
+        status = str(call.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        created = _parse_iso_datetime(call.get("created_at"))
+        if status == "pending" and created is not None:
+            age_hours = (now - created).total_seconds() / 3600
+            if age_hours > CALL_STALE_HOURS:
+                issues.append(
+                    {
+                        "status": WARN,
+                        "name": "tool_call_stale_pending",
+                        "issue_type": "call_stale_pending",
+                        "tool_id": call.get("tool_id"),
+                        "call_id": call.get("id"),
+                        "detail": f"{call.get('id')} pending for {age_hours:.1f}h",
+                    }
+                )
+        if status == "pending" and call.get("blockers"):
+            issues.append(
+                {
+                    "status": WARN,
+                    "name": "tool_call_blocked",
+                    "issue_type": "call_blocked",
+                    "tool_id": call.get("tool_id"),
+                    "call_id": call.get("id"),
+                    "detail": f"{call.get('id')} has {len(call.get('blockers', []))} blocker(s)",
+                }
+            )
+        if status == "approved":
+            current_contract, current_source = _call_current_fingerprints(target, call)
+            if current_contract != call.get("contract_fingerprint") or current_source != call.get("source_fingerprint"):
+                issues.append(
+                    {
+                        "status": WARN,
+                        "name": "tool_call_stale_approved",
+                        "issue_type": "call_stale_approved",
+                        "tool_id": call.get("tool_id"),
+                        "call_id": call.get("id"),
+                        "detail": f"{call.get('id')} approved with stale contract or source fingerprint",
+                    }
+                )
+        if status in {"held", "rejected"}:
+            issues.append(
+                {
+                    "status": WARN,
+                    "name": f"tool_call_{status}",
+                    "issue_type": f"call_{status}",
+                    "tool_id": call.get("tool_id"),
+                    "call_id": call.get("id"),
+                    "detail": f"{call.get('id')} is {status}: {call.get('review_reason') or ''}".strip(),
+                }
+            )
+    return {
+        "calls_path": str(calls_path(target)),
+        "calls": calls,
+        "counts": counts,
+        "pending_count": counts.get("pending", 0),
+        "issue_count": len(issues),
+        "issues": issues,
+        "top_issue": issues[0] if issues else None,
     }
 
 
@@ -1027,6 +1318,8 @@ def _catalog_payload(target: Path) -> dict[str, Any]:
         summary, tool_issues = _inspect_tool(target, tool, now=now)
         summaries.append(summary)
         issues.extend(tool_issues)
+    call_health = _call_health(target)
+    issues.extend(call_health["issues"])
     if errors:
         issues.insert(0, {"status": WARN, "name": "tool_config", "issue_type": "config", "detail": "; ".join(errors)})
     return {
@@ -1039,6 +1332,13 @@ def _catalog_payload(target: Path) -> dict[str, Any]:
         "issues": issues,
         "issue_count": len(issues),
         "top_issue": issues[0] if issues else None,
+        "call_queue": {
+            "calls_path": call_health["calls_path"],
+            "counts": call_health["counts"],
+            "pending_count": call_health["pending_count"],
+            "issue_count": call_health["issue_count"],
+            "top_issue": call_health["top_issue"],
+        },
     }
 
 
@@ -1051,6 +1351,7 @@ def health(target: Path) -> dict[str, Any]:
         "issue_count": payload["issue_count"],
         "top_issue": payload["top_issue"],
         "issues": payload["issues"],
+        "call_queue": payload["call_queue"],
     }
 
 
@@ -1066,15 +1367,17 @@ def _issue_records(target: Path) -> list[dict[str, Any]]:
             "tool_family": issue.get("family"),
             "tool_issue_type": issue_type,
             "tool_harness": issue.get("harness"),
+            "tool_call_id": issue.get("call_id"),
             "projection_target": issue.get("projection_target"),
             "tool_issue_detail": detail,
-            "source_item_key": f"tool-catalog:{tool_id}:{issue_type}:{issue.get('harness') or ''}",
+            "source_item_key": f"tool-catalog:{tool_id}:{issue_type}:{issue.get('harness') or ''}:{issue.get('call_id') or ''}",
             "source_fingerprint": _stable_hash(
                 {
                     "tool_id": tool_id,
                     "issue_type": issue_type,
                     "detail": detail,
                     "harness": issue.get("harness"),
+                    "call_id": issue.get("call_id"),
                     "projection_target": issue.get("projection_target"),
                 }
             ),
@@ -1292,6 +1595,148 @@ def call_plan(
     for key, value in plan_payload.get("arguments", {}).items():
         print(f"  {key}: {value}")
     return 0
+
+
+def call_queue(
+    *,
+    target: Path,
+    tool_id: str,
+    args: str | None = None,
+    args_json: Path | None = None,
+    include_blocked: bool = False,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload, rc = _queue_call_payload(
+        target,
+        tool_id,
+        args=args,
+        args_json=args_json,
+        include_blocked=include_blocked,
+    )
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    print(f"tools call queue: {tool_id}")
+    print(f"calls_path: {payload['calls_path']}")
+    print(f"created: {payload['created']}")
+    print(f"skipped: {payload['skipped']}")
+    print(f"blocked: {payload['blocked']}")
+    if payload.get("reason"):
+        print(f"reason: {payload['reason']}")
+    call = payload.get("call") if isinstance(payload.get("call"), dict) else {}
+    if call:
+        print(f"call: {call.get('id')}")
+        print(f"status: {call.get('status')}")
+        print(f"blockers: {len(call.get('blockers', [])) if isinstance(call.get('blockers'), list) else 0}")
+    return rc
+
+
+def call_list(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    calls = _read_calls(target)
+    counts: dict[str, int] = {}
+    for call in calls:
+        status = str(call.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    payload = {"target": str(target), "calls_path": str(calls_path(target)), "calls": calls, "counts": counts}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"tools call list: {target}")
+    print(f"calls_path: {calls_path(target)}")
+    print(f"calls: {len(calls)}")
+    for status, count in sorted(counts.items()):
+        print(f"{status}: {count}")
+    for call in calls:
+        print(f"- {call.get('id')} [{call.get('status')}] {call.get('tool_id')} blockers={len(call.get('blockers', []))}")
+    return 0
+
+
+def call_show(*, target: Path, call_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    call, _, error = _resolve_call(target, call_id)
+    payload = {"target": str(target), "calls_path": str(calls_path(target)), "call": call, "error": error}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if call is not None else 1
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    assert call is not None
+    print(f"call: {call.get('id')}")
+    print(f"tool_id: {call.get('tool_id')}")
+    print(f"status: {call.get('status')}")
+    print(f"created_at: {call.get('created_at')}")
+    if call.get("reviewed_at"):
+        print(f"reviewed_at: {call.get('reviewed_at')}")
+    if call.get("review_reason"):
+        print(f"review_reason: {call.get('review_reason')}")
+    print(f"blockers: {len(call.get('blockers', []))}")
+    return 0
+
+
+def _call_review(
+    *,
+    target: Path,
+    call_id: str,
+    status: str,
+    reason: str | None = None,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    call, calls, error = _resolve_call(target, call_id)
+    if call is None:
+        payload = {"target": str(target), "error": error}
+        if json_output:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+    if status == "approved" and call.get("blockers"):
+        payload = {"target": str(target), "error": "blocked calls cannot be approved", "call": call}
+        if json_output:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("error: blocked calls cannot be approved", file=sys.stderr)
+        return 1
+    call["status"] = status
+    call["reviewed_at"] = _now().isoformat()
+    call["review_reason"] = reason
+    _write_calls(target, calls)
+    payload = {"target": str(target), "calls_path": str(calls_path(target)), "call": call}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"call: {call.get('id')}")
+    print(f"status: {call.get('status')}")
+    if reason:
+        print(f"review_reason: {reason}")
+    return 0
+
+
+def call_approve(*, target: Path, call_id: str, json_output: bool = False) -> int:
+    return _call_review(target=target, call_id=call_id, status="approved", json_output=json_output)
+
+
+def call_reject(*, target: Path, call_id: str, reason: str, json_output: bool = False) -> int:
+    return _call_review(target=target, call_id=call_id, status="rejected", reason=reason, json_output=json_output)
+
+
+def call_hold(*, target: Path, call_id: str, reason: str, json_output: bool = False) -> int:
+    return _call_review(target=target, call_id=call_id, status="held", reason=reason, json_output=json_output)
 
 
 def plan(*, target: Path, tool_id: str | None = None, json_output: bool = False) -> int:

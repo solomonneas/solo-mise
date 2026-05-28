@@ -642,6 +642,34 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tools_call_plan.add_argument("--args", dest="args", default=None, help="Inline JSON object arguments.")
     p_tools_call_plan.add_argument("--args-json", type=Path, default=None, help="Path to a JSON object argument file.")
     p_tools_call_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_queue = tools_call_sub.add_parser("queue", help="Queue one planned portable tool call for review.")
+    p_tools_call_queue.add_argument("tool_id", help="Logical tool id.")
+    p_tools_call_queue.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_call_queue.add_argument("--args", dest="args", default=None, help="Inline JSON object arguments.")
+    p_tools_call_queue.add_argument("--args-json", type=Path, default=None, help="Path to a JSON object argument file.")
+    p_tools_call_queue.add_argument("--include-blocked", action="store_true", help="Queue plans that have blockers.")
+    p_tools_call_queue.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_list = tools_call_sub.add_parser("list", help="List queued portable tool calls.")
+    p_tools_call_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_call_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_show = tools_call_sub.add_parser("show", help="Show one queued portable tool call.")
+    p_tools_call_show.add_argument("call_id", help="Call id or unique prefix.")
+    p_tools_call_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_call_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_approve = tools_call_sub.add_parser("approve", help="Approve one queued portable tool call without executing it.")
+    p_tools_call_approve.add_argument("call_id", help="Call id or unique prefix.")
+    p_tools_call_approve.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_call_approve.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_reject = tools_call_sub.add_parser("reject", help="Reject one queued portable tool call.")
+    p_tools_call_reject.add_argument("call_id", help="Call id or unique prefix.")
+    p_tools_call_reject.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_call_reject.add_argument("--reason", required=True, help="Review reason.")
+    p_tools_call_reject.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_hold = tools_call_sub.add_parser("hold", help="Hold one queued portable tool call.")
+    p_tools_call_hold.add_argument("call_id", help="Call id or unique prefix.")
+    p_tools_call_hold.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_call_hold.add_argument("--reason", required=True, help="Review reason.")
+    p_tools_call_hold.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_tools_plan = tools_sub.add_parser("plan", help="Plan portable tool projection writes.")
     p_tools_plan.add_argument("tool_id", nargs="?", help="Optional logical tool id.")
     p_tools_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -1195,6 +1223,25 @@ def main(argv=None) -> int:
                     args_json=args.args_json,
                     json_output=args.json,
                 )
+            if args.tools_call_command == "queue":
+                return tools_cmd.call_queue(
+                    target=args.target,
+                    tool_id=args.tool_id,
+                    args=args.args,
+                    args_json=args.args_json,
+                    include_blocked=args.include_blocked,
+                    json_output=args.json,
+                )
+            if args.tools_call_command == "list":
+                return tools_cmd.call_list(target=args.target, json_output=args.json)
+            if args.tools_call_command == "show":
+                return tools_cmd.call_show(target=args.target, call_id=args.call_id, json_output=args.json)
+            if args.tools_call_command == "approve":
+                return tools_cmd.call_approve(target=args.target, call_id=args.call_id, json_output=args.json)
+            if args.tools_call_command == "reject":
+                return tools_cmd.call_reject(target=args.target, call_id=args.call_id, reason=args.reason, json_output=args.json)
+            if args.tools_call_command == "hold":
+                return tools_cmd.call_hold(target=args.target, call_id=args.call_id, reason=args.reason, json_output=args.json)
             parser.error(f"unknown tools call command: {args.tools_call_command}")
             return 2
         if args.tools_command == "plan":
