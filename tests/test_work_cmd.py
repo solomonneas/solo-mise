@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -2405,6 +2406,39 @@ supported_harnesses = []
     )
 
 
+def _write_runtime_config(
+    tmp_path,
+    *,
+    runtime_id="helper",
+    command=None,
+    health_command=None,
+    health_path=None,
+    cwd=".",
+    port=None,
+):
+    command = command or f'{sys.executable} -c "import time; time.sleep(30)"'
+    lines = [
+        "[[runtime]]",
+        f'id = "{runtime_id}"',
+        'name = "Helper"',
+        "enabled = true",
+        f"command = {json.dumps(command)}",
+        f"cwd = {json.dumps(cwd)}",
+        f'pid_path = ".brigade/tools/runtime/{runtime_id}.pid"',
+        f'log_path = ".brigade/tools/runtime/{runtime_id}.log"',
+        "timeout = 2",
+    ]
+    if health_command is not None:
+        lines.append(f"health_command = {json.dumps(health_command)}")
+    if health_path is not None:
+        lines.append(f"health_path = {json.dumps(health_path)}")
+    if port is not None:
+        lines.append(f"port = {port}")
+    config = tmp_path / ".brigade" / "tools" / "runtimes.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("\n".join(lines) + "\n")
+
+
 def _queue_and_approve_runner(tmp_path, capsys, args='{"path":"README.md"}'):
     assert tools_cmd.call_queue(target=tmp_path, tool_id="runner", args=args, json_output=True) == 0
     call = json.loads(capsys.readouterr().out)["call"]
@@ -2559,6 +2593,180 @@ def test_tools_call_run_next_failure_timeout_health_and_imports(tmp_path, monkey
     payload = json.loads(capsys.readouterr().out)
     issue_types = {item["metadata"]["tool_issue_type"] for item in payload["imports"]}
     assert {"call_failed", "call_running_stale"} <= issue_types
+
+
+def test_tools_runtime_init_list_show_status_and_json(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    assert tools_cmd.runtime_init(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "runtime_config:" in out
+    assert (tmp_path / ".brigade" / "tools" / "runtimes.toml").is_file()
+
+    assert tools_cmd.runtime_list(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tools runtime list:" in out
+    assert "local-helper" in out
+
+    assert tools_cmd.runtime_list(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runtime_count"] == 1
+
+    assert tools_cmd.runtime_show(target=tmp_path, runtime_id="local-helper") == 0
+    out = capsys.readouterr().out
+    assert "runtime: local-helper" in out
+
+    assert tools_cmd.runtime_status(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["counts"]["stopped"] == 1
+
+
+def test_tools_runtime_start_stop_restart_with_pid_logs_and_unmanaged_refusal(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_runtime_config(tmp_path)
+
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    pid = payload["pid"]
+    assert payload["runtime"]["state"] == "running"
+    assert os.path.isfile(payload["runtime"]["pid_path"])
+    assert os.path.isfile(payload["runtime"]["stdout_log_path"])
+    assert os.path.isfile(payload["runtime"]["stderr_log_path"])
+
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skipped"] == 1
+    assert payload["runtime"]["pid"] == pid
+
+    assert tools_cmd.runtime_restart(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runtime"]["state"] == "running"
+    assert payload["runtime"]["pid"] != pid
+
+    assert tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped"] == 1
+    assert payload["runtime"]["state"] == "stopped"
+
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        pid_path = tmp_path / ".brigade" / "tools" / "runtime" / "helper.pid"
+        pid_path.write_text(f"{process.pid}\n")
+        assert tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert "unmanaged" in payload["error"]
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+def test_tools_runtime_doctor_safety_warnings(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_runtime_config(
+        tmp_path,
+        runtime_id="bad",
+        command="bash -c echo hi",
+        cwd="missing",
+        health_command=f'{sys.executable} -c "import sys; sys.exit(2)"',
+    )
+
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="bad", json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "runtime command shape is high risk" in payload["blockers"]
+    assert any("runtime cwd missing" in blocker for blocker in payload["blockers"])
+
+    _write_runtime_config(tmp_path, runtime_id="stale")
+    stale_pid = tmp_path / ".brigade" / "tools" / "runtime" / "stale.pid"
+    stale_pid.parent.mkdir(parents=True, exist_ok=True)
+    stale_pid.write_text("999999\n")
+    assert tools_cmd.runtime_doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] tool_runtime_stale_pid:" in out
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((".".join(("127", "0", "0", "1")), 0))
+        sock.listen()
+        port = sock.getsockname()[1]
+        _write_runtime_config(tmp_path, runtime_id="porty", port=port)
+        assert tools_cmd.runtime_doctor(target=tmp_path) == 0
+        out = capsys.readouterr().out
+        assert "[warn] tool_runtime_port_conflict:" in out
+
+    _write_runtime_config(
+        tmp_path,
+        runtime_id="health",
+        health_command=f'{sys.executable} -c "import sys; sys.exit(3)"',
+    )
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="health", json_output=True) == 0
+    capsys.readouterr()
+    try:
+        assert tools_cmd.runtime_doctor(target=tmp_path) == 0
+        out = capsys.readouterr().out
+        assert "[warn] tool_runtime_health_failed:" in out
+    finally:
+        tools_cmd.runtime_stop(target=tmp_path, runtime_id="health", json_output=True)
+        capsys.readouterr()
+
+
+def test_tools_call_run_requires_healthy_runtime_and_receipt_snapshot(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.write_text(
+        config.read_text()
+        + """
+runtime_id = "helper"
+requires_runtime = true
+"""
+    )
+    _write_runtime_config(tmp_path)
+    call = _queue_and_approve_runner(tmp_path, capsys)
+
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "required runtime is not running: helper" in payload["blockers"]
+
+    assert tools_cmd.runtime_start(target=tmp_path, runtime_id="helper", json_output=True) == 0
+    capsys.readouterr()
+    try:
+        assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["receipt"]["runtime_id"] == "helper"
+        assert payload["receipt"]["runtime"]["state"] == "running"
+        assert payload["receipt"]["runtime"]["managed"] is True
+    finally:
+        tools_cmd.runtime_stop(target=tmp_path, runtime_id="helper", json_output=True)
+        capsys.readouterr()
+
+
+def test_tools_runtime_health_integrates_with_doctor_brief_and_imports(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+    _write_runtime_config(tmp_path, runtime_id="other")
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.write_text(
+        config.read_text()
+        + """
+runtime_id = "missing-runtime"
+requires_runtime = true
+"""
+    )
+
+    assert tools_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] tool_runtime_missing:" in out
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tool_top_issue: runner/runtime_missing" in out
+
+    assert tools_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    issue_types = {item["metadata"]["tool_issue_type"] for item in payload["imports"]}
+    assert "runtime_missing" in issue_types
 
 
 def test_work_backup_init_status_doctor_and_json(tmp_path, monkeypatch, capsys):
@@ -4645,6 +4853,38 @@ def test_tools_cli(tmp_path, monkeypatch):
         seen.append(("call-run", kwargs))
         return 0
 
+    def fake_runtime_init(**kwargs):
+        seen.append(("runtime-init", kwargs))
+        return 0
+
+    def fake_runtime_list(**kwargs):
+        seen.append(("runtime-list", kwargs))
+        return 0
+
+    def fake_runtime_show(**kwargs):
+        seen.append(("runtime-show", kwargs))
+        return 0
+
+    def fake_runtime_status(**kwargs):
+        seen.append(("runtime-status", kwargs))
+        return 0
+
+    def fake_runtime_start(**kwargs):
+        seen.append(("runtime-start", kwargs))
+        return 0
+
+    def fake_runtime_stop(**kwargs):
+        seen.append(("runtime-stop", kwargs))
+        return 0
+
+    def fake_runtime_restart(**kwargs):
+        seen.append(("runtime-restart", kwargs))
+        return 0
+
+    def fake_runtime_doctor(**kwargs):
+        seen.append(("runtime-doctor", kwargs))
+        return 0
+
     def fake_plan(**kwargs):
         seen.append(("plan", kwargs))
         return 0
@@ -4675,6 +4915,14 @@ def test_tools_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(tools_cmd, "call_reject", fake_call_reject)
     monkeypatch.setattr(tools_cmd, "call_hold", fake_call_hold)
     monkeypatch.setattr(tools_cmd, "call_run", fake_call_run)
+    monkeypatch.setattr(tools_cmd, "runtime_init", fake_runtime_init)
+    monkeypatch.setattr(tools_cmd, "runtime_list", fake_runtime_list)
+    monkeypatch.setattr(tools_cmd, "runtime_show", fake_runtime_show)
+    monkeypatch.setattr(tools_cmd, "runtime_status", fake_runtime_status)
+    monkeypatch.setattr(tools_cmd, "runtime_start", fake_runtime_start)
+    monkeypatch.setattr(tools_cmd, "runtime_stop", fake_runtime_stop)
+    monkeypatch.setattr(tools_cmd, "runtime_restart", fake_runtime_restart)
+    monkeypatch.setattr(tools_cmd, "runtime_doctor", fake_runtime_doctor)
     monkeypatch.setattr(tools_cmd, "plan", fake_plan)
     monkeypatch.setattr(tools_cmd, "apply", fake_apply)
     monkeypatch.setattr(tools_cmd, "doctor", fake_doctor)
@@ -4695,6 +4943,14 @@ def test_tools_cli(tmp_path, monkeypatch):
     assert cli.main(["tools", "call", "hold", "call-123", "--target", str(tmp_path), "--reason", "wait", "--json"]) == 0
     assert cli.main(["tools", "call", "run", "call-123", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "call", "run", "--next", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "init", "--target", str(tmp_path), "--force"]) == 0
+    assert cli.main(["tools", "runtime", "list", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "show", "helper", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "status", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "start", "helper", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "stop", "helper", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "restart", "helper", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "runtime", "doctor", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "plan", "simplify", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "apply", "simplify", "--target", str(tmp_path), "--dry-run", "--force", "--json"]) == 0
     assert cli.main(["tools", "apply", "--all", "--target", str(tmp_path), "--json"]) == 0
@@ -4735,6 +4991,14 @@ def test_tools_cli(tmp_path, monkeypatch):
         ("call-hold", {"target": tmp_path, "call_id": "call-123", "reason": "wait", "json_output": True}),
         ("call-run", {"target": tmp_path, "call_id": "call-123", "next_call": False, "json_output": True}),
         ("call-run", {"target": tmp_path, "call_id": None, "next_call": True, "json_output": True}),
+        ("runtime-init", {"target": tmp_path, "force": True}),
+        ("runtime-list", {"target": tmp_path, "json_output": True}),
+        ("runtime-show", {"target": tmp_path, "runtime_id": "helper", "json_output": True}),
+        ("runtime-status", {"target": tmp_path, "json_output": True}),
+        ("runtime-start", {"target": tmp_path, "runtime_id": "helper", "json_output": True}),
+        ("runtime-stop", {"target": tmp_path, "runtime_id": "helper", "json_output": True}),
+        ("runtime-restart", {"target": tmp_path, "runtime_id": "helper", "json_output": True}),
+        ("runtime-doctor", {"target": tmp_path, "json_output": True}),
         ("plan", {"target": tmp_path, "tool_id": "simplify", "json_output": True}),
         (
             "apply",

@@ -6,7 +6,9 @@ import json
 import os
 import re
 import shlex
+import signal
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -29,6 +31,8 @@ FAIL = "fail"
 CONFIG_REL_PATH = ".brigade/tools.toml"
 CALLS_REL_PATH = ".brigade/tools/calls.jsonl"
 RUNS_REL_PATH = ".brigade/tools/runs"
+RUNTIMES_REL_PATH = ".brigade/tools/runtimes.toml"
+RUNTIME_STATE_REL_PATH = ".brigade/tools/runtime"
 HEALTH_STALE_HOURS = 48
 CALL_STALE_HOURS = 72
 CALL_RUNNING_STALE_HOURS = 2
@@ -73,6 +77,21 @@ DEFAULT_TOOLS = (
         },
     },
 )
+DEFAULT_RUNTIMES = (
+    {
+        "id": "local-helper",
+        "name": "Local Helper",
+        "enabled": True,
+        "command": "python3 -m http.server 8765",
+        "cwd": ".",
+        "port": 8765,
+        "health_command": "python3 --version",
+        "health_path": ".brigade/tools/runtime/local-helper.json",
+        "pid_path": ".brigade/tools/runtime/local-helper.pid",
+        "log_path": ".brigade/tools/runtime/local-helper.log",
+        "timeout": 10,
+    },
+)
 
 
 def config_path(target: Path) -> Path:
@@ -85,6 +104,14 @@ def calls_path(target: Path) -> Path:
 
 def runs_path(target: Path) -> Path:
     return target / RUNS_REL_PATH
+
+
+def runtimes_config_path(target: Path) -> Path:
+    return target / RUNTIMES_REL_PATH
+
+
+def runtime_state_path(target: Path) -> Path:
+    return target / RUNTIME_STATE_REL_PATH
 
 
 def _now() -> datetime:
@@ -161,6 +188,19 @@ def _format_tools_toml(tools: tuple[dict[str, Any], ...] = DEFAULT_TOOLS) -> str
     return "\n".join(lines)
 
 
+def _format_runtimes_toml(runtimes: tuple[dict[str, Any], ...] = DEFAULT_RUNTIMES) -> str:
+    lines = [
+        "# Local portable tool runtimes. Brigade starts and stops only explicit local runtimes.",
+        "",
+    ]
+    for runtime in runtimes:
+        lines.append("[[runtime]]")
+        for key in ("id", "name", "enabled", "command", "cwd", "port", "health_command", "health_path", "pid_path", "log_path", "timeout"):
+            lines.append(f"{key} = {dogfood_cmd._format_toml_value(runtime[key])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
     path = config_path(target)
     if not path.is_file():
@@ -215,6 +255,8 @@ def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
             "examples_path",
             "approval_mode",
             "cwd",
+            "runtime_id",
+            "runtime_health_path",
         ):
             value = raw_tool.get(field)
             if value is not None:
@@ -224,6 +266,11 @@ def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
                     tool[field] = value.strip()
         if tool.get("approval_mode") and tool["approval_mode"] not in APPROVAL_MODES:
             errors.append(f"{label}: approval_mode must be one of: {', '.join(APPROVAL_MODES)}")
+        requires_runtime = raw_tool.get("requires_runtime", False)
+        if not isinstance(requires_runtime, bool):
+            errors.append(f"{label}: requires_runtime must be true or false")
+            requires_runtime = False
+        tool["requires_runtime"] = requires_runtime
         for field in ("permissions", "effects", "env_labels"):
             values = raw_tool.get(field, [])
             if not isinstance(values, list) or any(not isinstance(item, str) or not item.strip() for item in values):
@@ -262,6 +309,434 @@ def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
         tool["projection_fingerprints"] = {str(key): str(value) for key, value in projection_fingerprints.items()}
         tools.append(tool)
     return tools, errors
+
+
+def _load_runtime_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    path = runtimes_config_path(target)
+    if not path.is_file():
+        return [], [f"tool runtime config missing: {path}"]
+    if tomllib is None:
+        return [], ["tool runtime config requires Python tomllib support"]
+    try:
+        payload = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:  # type: ignore[union-attr]
+        return [], [f"invalid tool runtime config: {exc}"]
+    values = payload.get("runtime")
+    if not isinstance(values, list):
+        return [], ["tool runtime config must contain [[runtime]] entries"]
+    runtimes: list[dict[str, Any]] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, raw_runtime in enumerate(values, start=1):
+        label = f"runtime {index}"
+        if not isinstance(raw_runtime, dict):
+            errors.append(f"{label} must be a table")
+            continue
+        runtime: dict[str, Any] = {"raw": raw_runtime}
+        for field in ("id", "name", "command"):
+            value = raw_runtime.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{label}: {field} must be a non-empty string")
+            else:
+                runtime[field] = value.strip()
+        runtime_id = runtime.get("id")
+        if isinstance(runtime_id, str):
+            if runtime_id in seen:
+                errors.append(f"{label}: duplicate id {runtime_id}")
+            seen.add(runtime_id)
+        enabled = raw_runtime.get("enabled", True)
+        if not isinstance(enabled, bool):
+            errors.append(f"{label}: enabled must be true or false")
+        else:
+            runtime["enabled"] = enabled
+        for field in ("cwd", "health_command", "health_path", "pid_path", "log_path"):
+            value = raw_runtime.get(field)
+            if value is not None:
+                if not isinstance(value, str):
+                    errors.append(f"{label}: {field} must be a string")
+                else:
+                    runtime[field] = value.strip()
+        port = raw_runtime.get("port")
+        if port is not None:
+            if not isinstance(port, int) or isinstance(port, bool) or port <= 0 or port > 65535:
+                errors.append(f"{label}: port must be an integer from 1 to 65535")
+            else:
+                runtime["port"] = port
+        timeout = raw_runtime.get("timeout")
+        if timeout is not None:
+            if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+                errors.append(f"{label}: timeout must be a positive number")
+            else:
+                runtime["timeout"] = float(timeout)
+        runtimes.append(runtime)
+    return runtimes, errors
+
+
+def _find_runtime(target: Path, runtime_id: str) -> tuple[dict[str, Any] | None, list[str]]:
+    runtimes, errors = _load_runtime_config(target)
+    for runtime in runtimes:
+        if runtime.get("enabled", True) and runtime.get("id") == runtime_id:
+            return runtime, errors
+    if not errors:
+        errors.append(f"runtime not found: {runtime_id}")
+    return None, errors
+
+
+def _runtime_file(target: Path, runtime: dict[str, Any], field: str, default_suffix: str) -> Path:
+    runtime_id = str(runtime.get("id") or "runtime")
+    configured = runtime.get(field)
+    if isinstance(configured, str) and configured.strip():
+        return _as_path(target, configured) or (runtime_state_path(target) / f"{runtime_id}{default_suffix}")
+    return runtime_state_path(target) / f"{runtime_id}{default_suffix}"
+
+
+def _runtime_pid_path(target: Path, runtime: dict[str, Any]) -> Path:
+    return _runtime_file(target, runtime, "pid_path", ".pid")
+
+
+def _runtime_metadata_path(target: Path, runtime: dict[str, Any]) -> Path:
+    return runtime_state_path(target) / f"{runtime.get('id')}.json"
+
+
+def _runtime_health_path(target: Path, runtime: dict[str, Any]) -> Path | None:
+    value = runtime.get("health_path")
+    return _as_path(target, value) if value else None
+
+
+def _runtime_log_paths(target: Path, runtime: dict[str, Any]) -> tuple[Path, Path]:
+    runtime_id = str(runtime.get("id") or "runtime")
+    configured = runtime.get("log_path")
+    base = _as_path(target, configured) if configured else runtime_state_path(target) / f"{runtime_id}.log"
+    assert base is not None
+    return base.with_suffix(base.suffix + ".stdout"), base.with_suffix(base.suffix + ".stderr")
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        raw = path.read_text().strip()
+    except OSError:
+        return None
+    try:
+        pid = int(raw)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _process_alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    stat_path = Path(f"/proc/{pid}/stat")
+    if stat_path.is_file():
+        try:
+            parts = stat_path.read_text().split()
+        except OSError:
+            parts = []
+        if len(parts) > 2 and parts[2] == "Z":
+            return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_runtime_metadata(target: Path, runtime: dict[str, Any]) -> dict[str, Any] | None:
+    path = _runtime_metadata_path(target, runtime)
+    payload, error = _read_json(path) if path.is_file() else (None, None)
+    if error is not None or not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _write_runtime_metadata(target: Path, runtime: dict[str, Any], metadata: dict[str, Any]) -> None:
+    path = _runtime_metadata_path(target, runtime)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+
+
+def _port_in_use(port: object) -> bool:
+    if not isinstance(port, int):
+        return False
+    loopback = ".".join(("127", "0", "0", "1"))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.1)
+        return sock.connect_ex((loopback, port)) == 0
+
+
+def _runtime_cwd(target: Path, runtime: dict[str, Any]) -> Path:
+    cwd = _as_path(target, runtime.get("cwd"))
+    return cwd or target
+
+
+def _runtime_status_item(target: Path, runtime: dict[str, Any], *, run_health: bool = True) -> dict[str, Any]:
+    pid_path = _runtime_pid_path(target, runtime)
+    metadata_path = _runtime_metadata_path(target, runtime)
+    stdout_path, stderr_path = _runtime_log_paths(target, runtime)
+    pid = _read_pid(pid_path)
+    alive = _process_alive(pid)
+    stale_pid = pid is not None and not alive
+    metadata = _read_runtime_metadata(target, runtime)
+    managed = bool(metadata and metadata.get("runtime_id") == runtime.get("id") and metadata.get("pid") == pid)
+    cwd = _runtime_cwd(target, runtime)
+    issues: list[dict[str, Any]] = []
+    if _high_risk_command(runtime.get("command")):
+        issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_high_risk_command", "runtime command shape is high risk"))
+    if not _command_parts(runtime.get("command")):
+        issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_bad_command", "runtime command could not be parsed"))
+    if not cwd.is_dir():
+        issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_missing_cwd", f"runtime cwd missing: {cwd}"))
+    if stale_pid:
+        issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_stale_pid", f"stale pid file: {pid_path}"))
+    if isinstance(runtime.get("port"), int) and _port_in_use(runtime["port"]) and not alive:
+        issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_port_conflict", f"port is already in use: {runtime['port']}"))
+    health_path = _runtime_health_path(target, runtime)
+    health_ok = True
+    health_detail = "not configured"
+    if alive and health_path is not None:
+        if health_path.exists():
+            health_detail = f"health path present: {health_path}"
+        else:
+            health_ok = False
+            health_detail = f"health path missing: {health_path}"
+            issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_health_failed", health_detail))
+    health_command = runtime.get("health_command")
+    if alive and run_health and isinstance(health_command, str) and health_command.strip():
+        parts = _command_parts(health_command)
+        if not parts:
+            health_ok = False
+            health_detail = "health command could not be parsed"
+            issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_health_failed", health_detail))
+        elif _high_risk_command(health_command):
+            health_ok = False
+            health_detail = "health command shape is high risk"
+            issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_health_failed", health_detail))
+        else:
+            try:
+                completed = subprocess.run(
+                    parts,
+                    cwd=cwd if cwd.is_dir() else target,
+                    text=True,
+                    capture_output=True,
+                    timeout=float(runtime.get("timeout") or 5),
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                health_ok = False
+                health_detail = f"health command failed: {_short(str(exc))}"
+                issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_health_failed", health_detail))
+            else:
+                health_ok = completed.returncode == 0
+                health_detail = f"health command exit_code={completed.returncode}"
+                if completed.returncode != 0:
+                    issues.append(_tool_issue({"id": runtime.get("id"), "family": "runtime"}, "runtime_health_failed", health_detail))
+    state = "running" if alive else ("stale" if stale_pid else "stopped")
+    return {
+        "id": runtime.get("id"),
+        "name": runtime.get("name"),
+        "enabled": runtime.get("enabled", True),
+        "command": runtime.get("command"),
+        "cwd": str(cwd),
+        "port": runtime.get("port"),
+        "pid": pid,
+        "state": state,
+        "running": alive,
+        "managed": managed,
+        "stale_pid": stale_pid,
+        "pid_path": str(pid_path),
+        "metadata_path": str(metadata_path),
+        "stdout_log_path": str(stdout_path),
+        "stderr_log_path": str(stderr_path),
+        "health_path": str(health_path) if health_path is not None else None,
+        "health_ok": health_ok if alive else None,
+        "health_detail": health_detail,
+        "metadata": metadata,
+        "issues": issues,
+        "issue_count": len(issues),
+    }
+
+
+def _runtime_payload(target: Path, runtime_id: str | None = None, *, run_health: bool = True) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    runtimes, errors = _load_runtime_config(target)
+    if runtime_id is not None:
+        runtimes = [runtime for runtime in runtimes if runtime.get("id") == runtime_id]
+        if not runtimes and not errors:
+            errors.append(f"runtime not found: {runtime_id}")
+    statuses = [_runtime_status_item(target, runtime, run_health=run_health) for runtime in runtimes if runtime.get("enabled", True)]
+    issues = [issue for item in statuses for issue in item.get("issues", [])]
+    if errors:
+        issues.insert(0, {"status": WARN, "name": "runtime_config", "issue_type": "runtime_config", "detail": "; ".join(errors)})
+    counts: dict[str, int] = {}
+    for item in statuses:
+        state = str(item.get("state") or "unknown")
+        counts[state] = counts.get(state, 0) + 1
+    return {
+        "target": str(target),
+        "config_path": str(runtimes_config_path(target)),
+        "state_path": str(runtime_state_path(target)),
+        "valid": not errors,
+        "errors": errors,
+        "runtimes": statuses,
+        "runtime_count": len(statuses),
+        "counts": counts,
+        "issues": issues,
+        "issue_count": len(issues),
+        "top_issue": issues[0] if issues else None,
+    }
+
+
+def _tool_runtime_issues(target: Path, tools: list[dict[str, Any]], runtime_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    runtimes_by_id = {str(item.get("id")): item for item in runtime_payload.get("runtimes", []) if item.get("id")}
+    issues: list[dict[str, Any]] = []
+    for tool in tools:
+        if not tool.get("enabled", True):
+            continue
+        runtime_id = tool.get("runtime_id")
+        requires_runtime = bool(tool.get("requires_runtime"))
+        if requires_runtime and (not isinstance(runtime_id, str) or not runtime_id.strip()):
+            issues.append(_tool_issue(tool, "runtime_missing", "tool requires a runtime but runtime_id is missing"))
+            continue
+        if not isinstance(runtime_id, str) or not runtime_id.strip():
+            continue
+        runtime = runtimes_by_id.get(runtime_id)
+        if runtime is None:
+            issues.append(_tool_issue(tool, "runtime_missing", f"tool runtime is not configured: {runtime_id}"))
+            continue
+        if requires_runtime and not runtime.get("running"):
+            issues.append(_tool_issue(tool, "runtime_stopped", f"required runtime is not running: {runtime_id}"))
+        if requires_runtime and runtime.get("health_ok") is False:
+            issues.append(_tool_issue(tool, "runtime_unhealthy", f"required runtime is unhealthy: {runtime_id}"))
+    return issues
+
+
+def _start_runtime_payload(target: Path, runtime_id: str) -> tuple[dict[str, Any], int]:
+    target = target.expanduser().resolve()
+    runtime, errors = _find_runtime(target, runtime_id)
+    if runtime is None:
+        return {"target": str(target), "error": "; ".join(errors)}, 1
+    status = _runtime_status_item(target, runtime, run_health=False)
+    blockers: list[str] = []
+    if status.get("running"):
+        return {
+            "target": str(target),
+            "runtime": status,
+            "started": 0,
+            "skipped": 1,
+            "reason": "runtime already running",
+        }, 0
+    command = str(runtime.get("command") or "")
+    parts = _command_parts(command)
+    cwd = _runtime_cwd(target, runtime)
+    if _high_risk_command(command):
+        blockers.append("runtime command shape is high risk")
+    if not parts:
+        blockers.append("runtime command could not be parsed")
+    if not cwd.is_dir():
+        blockers.append(f"runtime cwd missing: {cwd}")
+    if status.get("stale_pid"):
+        blockers.append(f"stale pid file: {status.get('pid_path')}")
+    if isinstance(runtime.get("port"), int) and _port_in_use(runtime["port"]):
+        blockers.append(f"port is already in use: {runtime['port']}")
+    if blockers:
+        return {"target": str(target), "runtime": status, "started": 0, "blockers": blockers, "error": "runtime is not startable"}, 1
+    pid_path = _runtime_pid_path(target, runtime)
+    metadata_path = _runtime_metadata_path(target, runtime)
+    stdout_path, stderr_path = _runtime_log_paths(target, runtime)
+    for path in (pid_path, metadata_path, stdout_path, stderr_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    stdout_file = stdout_path.open("a")
+    stderr_file = stderr_path.open("a")
+    try:
+        process = subprocess.Popen(
+            parts,
+            cwd=cwd,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        stdout_file.close()
+        stderr_file.close()
+    started_at = _now().isoformat()
+    pid_path.write_text(f"{process.pid}\n")
+    metadata = {
+        "runtime_id": runtime.get("id"),
+        "pid": process.pid,
+        "command": command,
+        "cwd": str(cwd),
+        "started_at": started_at,
+        "pid_path": str(pid_path),
+        "stdout_log_path": str(stdout_path),
+        "stderr_log_path": str(stderr_path),
+    }
+    _write_runtime_metadata(target, runtime, metadata)
+    health_path = _runtime_health_path(target, runtime)
+    if health_path is not None:
+        health_path.parent.mkdir(parents=True, exist_ok=True)
+        health_path.write_text(json.dumps({"runtime_id": runtime.get("id"), "pid": process.pid, "started_at": started_at}, sort_keys=True) + "\n")
+    status = _runtime_status_item(target, runtime)
+    return {
+        "target": str(target),
+        "runtime": status,
+        "started": 1,
+        "skipped": 0,
+        "pid": process.pid,
+        "pid_path": str(pid_path),
+        "metadata_path": str(metadata_path),
+    }, 0
+
+
+def _stop_runtime_payload(target: Path, runtime_id: str) -> tuple[dict[str, Any], int]:
+    target = target.expanduser().resolve()
+    runtime, errors = _find_runtime(target, runtime_id)
+    if runtime is None:
+        return {"target": str(target), "error": "; ".join(errors)}, 1
+    pid_path = _runtime_pid_path(target, runtime)
+    pid = _read_pid(pid_path)
+    metadata = _read_runtime_metadata(target, runtime)
+    if pid is None:
+        return {"target": str(target), "runtime": _runtime_status_item(target, runtime), "stopped": 0, "reason": "runtime is not running"}, 0
+    if not metadata or metadata.get("runtime_id") != runtime.get("id") or metadata.get("pid") != pid or metadata.get("command") != runtime.get("command"):
+        return {
+            "target": str(target),
+            "runtime": _runtime_status_item(target, runtime),
+            "stopped": 0,
+            "error": "refusing to stop unmanaged runtime process",
+        }, 1
+    if not _process_alive(pid):
+        pid_path.unlink(missing_ok=True)
+        metadata["stopped_at"] = _now().isoformat()
+        metadata["stop_reason"] = "stale pid"
+        _write_runtime_metadata(target, runtime, metadata)
+        return {"target": str(target), "runtime": _runtime_status_item(target, runtime), "stopped": 0, "reason": "stale pid removed"}, 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        return {"target": str(target), "runtime": _runtime_status_item(target, runtime), "stopped": 0, "error": str(exc)}, 1
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if not _process_alive(pid):
+            break
+        time.sleep(0.05)
+    if _process_alive(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    pid_path.unlink(missing_ok=True)
+    metadata["stopped_at"] = _now().isoformat()
+    _write_runtime_metadata(target, runtime, metadata)
+    return {"target": str(target), "runtime": _runtime_status_item(target, runtime), "stopped": 1, "pid": pid}, 0
+
+
+def _restart_runtime_payload(target: Path, runtime_id: str) -> tuple[dict[str, Any], int]:
+    stop_payload, stop_rc = _stop_runtime_payload(target, runtime_id)
+    if stop_rc != 0:
+        return {"target": str(target.expanduser().resolve()), "stop": stop_payload, "error": stop_payload.get("error")}, stop_rc
+    start_payload, start_rc = _start_runtime_payload(target, runtime_id)
+    return {"target": str(target.expanduser().resolve()), "stop": stop_payload, "start": start_payload, "runtime": start_payload.get("runtime")}, start_rc
 
 
 def _unsafe_fields(value: object, prefix: str = "") -> list[str]:
@@ -477,6 +952,9 @@ def _contract_defined(tool: dict[str, Any]) -> bool:
             "approval_mode",
             "env_labels",
             "argument_template",
+            "runtime_id",
+            "requires_runtime",
+            "runtime_health_path",
         )
     )
 
@@ -494,6 +972,9 @@ def _contract_summary(target: Path, tool: dict[str, Any]) -> dict[str, Any]:
         "timeout": tool.get("timeout"),
         "auth_label": tool.get("auth_label"),
         "cwd": tool.get("cwd"),
+        "runtime_id": tool.get("runtime_id"),
+        "requires_runtime": tool.get("requires_runtime", False),
+        "runtime_health_path": tool.get("runtime_health_path"),
         "approval_mode": tool.get("approval_mode") or "never",
         "permissions": tool.get("permissions", []),
         "effects": tool.get("effects", []),
@@ -527,6 +1008,9 @@ def _contract_fingerprint(target: Path, tool: dict[str, Any]) -> str:
             "timeout": tool.get("timeout"),
             "auth_label": tool.get("auth_label"),
             "cwd": tool.get("cwd"),
+            "runtime_id": tool.get("runtime_id"),
+            "requires_runtime": tool.get("requires_runtime", False),
+            "runtime_health_path": tool.get("runtime_health_path"),
             "approval_mode": tool.get("approval_mode"),
             "permissions": tool.get("permissions", []),
             "effects": tool.get("effects", []),
@@ -1074,6 +1558,9 @@ def _call_plan_payload(
         "command": tool.get("command") if tool is not None else None,
         "cwd": tool.get("cwd") if tool is not None else None,
         "timeout": tool.get("timeout") if tool is not None else None,
+        "runtime_id": tool.get("runtime_id") if tool is not None else None,
+        "requires_runtime": tool.get("requires_runtime", False) if tool is not None else False,
+        "runtime_health_path": tool.get("runtime_health_path") if tool is not None else None,
         "auth_label": "[redacted]" if tool is not None and UNSAFE_FIELD_PATTERN.search(str(tool.get("auth_label") or "")) else (tool.get("auth_label") if tool is not None else None),
         "env_labels": safe_env_labels,
         "arguments": mapped_arguments,
@@ -1161,6 +1648,9 @@ def _call_plan_from_record(call: dict[str, Any]) -> dict[str, Any]:
         "command": call.get("command"),
         "cwd": contract.get("cwd"),
         "timeout": contract.get("timeout"),
+        "runtime_id": contract.get("runtime_id"),
+        "requires_runtime": contract.get("requires_runtime", False),
+        "runtime_health_path": contract.get("runtime_health_path"),
         "auth_label": contract.get("auth_label"),
         "env_labels": contract.get("env_labels", []),
         "arguments": call.get("arguments"),
@@ -1222,6 +1712,9 @@ def _make_call_record(plan_payload: dict[str, Any]) -> dict[str, Any]:
             "env_labels": plan.get("env_labels", []),
             "cwd": plan.get("cwd"),
             "timeout": plan.get("timeout"),
+            "runtime_id": plan.get("runtime_id"),
+            "requires_runtime": plan.get("requires_runtime", False),
+            "runtime_health_path": plan.get("runtime_health_path"),
         },
         "blockers": plan_payload.get("blockers", []),
         "projection_summary": plan_payload.get("projection_summary", {}),
@@ -1330,6 +1823,23 @@ def _call_projection_summary(target: Path, tool_id: str) -> dict[str, Any]:
     }
 
 
+def _runtime_snapshot_for_call(target: Path, call: dict[str, Any], *, run_health: bool = True) -> dict[str, Any] | None:
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    runtime_id = contract.get("runtime_id")
+    if not isinstance(runtime_id, str) or not runtime_id.strip():
+        return None
+    runtime, errors = _find_runtime(target, runtime_id)
+    if runtime is None:
+        return {
+            "id": runtime_id,
+            "state": "missing",
+            "running": False,
+            "health_ok": False,
+            "errors": errors,
+        }
+    return _runtime_status_item(target, runtime, run_health=run_health)
+
+
 def _run_id_for_call(call: dict[str, Any], started_at: str) -> str:
     suffix = _stable_hash({"call_id": call.get("id"), "started_at": started_at})
     return f"run-{suffix}"
@@ -1386,6 +1896,19 @@ def _call_run_blockers(target: Path, call: dict[str, Any]) -> list[str]:
                 blockers.append(f"cwd does not exist: {cwd_path}")
     if not _command_parts(call.get("command")):
         blockers.append("command could not be parsed")
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    if contract.get("requires_runtime"):
+        runtime_snapshot = _runtime_snapshot_for_call(target, call)
+        if runtime_snapshot is None:
+            blockers.append("runtime is required but runtime_id is missing")
+        elif runtime_snapshot.get("state") == "missing":
+            blockers.append(f"required runtime is missing: {runtime_snapshot.get('id')}")
+        elif not runtime_snapshot.get("running"):
+            blockers.append(f"required runtime is not running: {runtime_snapshot.get('id')}")
+        elif runtime_snapshot.get("managed") is False:
+            blockers.append(f"required runtime is not managed by Brigade: {runtime_snapshot.get('id')}")
+        elif runtime_snapshot.get("health_ok") is False:
+            blockers.append(f"required runtime is unhealthy: {runtime_snapshot.get('id')}")
     return blockers
 
 
@@ -1415,6 +1938,7 @@ def _write_run_receipt(
     stdout_path.write_text(stdout_text)
     stderr_path.write_text(stderr_text)
     contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    runtime_snapshot = _runtime_snapshot_for_call(target, call, run_health=False)
     receipt = {
         "id": run_id,
         "call_id": call.get("id"),
@@ -1443,6 +1967,8 @@ def _write_run_receipt(
         },
         "permissions": contract.get("permissions", []),
         "effects": contract.get("effects", []),
+        "runtime_id": contract.get("runtime_id"),
+        "runtime": runtime_snapshot,
         "projection_summary": call.get("projection_summary", {}),
     }
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
@@ -1670,6 +2196,21 @@ def _catalog_payload(target: Path) -> dict[str, Any]:
         summary, tool_issues = _inspect_tool(target, tool, now=now)
         summaries.append(summary)
         issues.extend(tool_issues)
+    wants_runtime = runtimes_config_path(target).is_file() or any(
+        tool.get("runtime_id") or tool.get("requires_runtime") for tool in tools
+    )
+    runtime_health = _runtime_payload(target, run_health=False) if wants_runtime else {
+        "config_path": str(runtimes_config_path(target)),
+        "state_path": str(runtime_state_path(target)),
+        "counts": {},
+        "runtime_count": 0,
+        "issue_count": 0,
+        "top_issue": None,
+        "issues": [],
+        "runtimes": [],
+    }
+    issues.extend(runtime_health["issues"])
+    issues.extend(_tool_runtime_issues(target, tools, runtime_health))
     call_health = _call_health(target)
     issues.extend(call_health["issues"])
     if errors:
@@ -1691,6 +2232,14 @@ def _catalog_payload(target: Path) -> dict[str, Any]:
             "issue_count": call_health["issue_count"],
             "top_issue": call_health["top_issue"],
         },
+        "runtimes": {
+            "config_path": runtime_health["config_path"],
+            "state_path": runtime_health["state_path"],
+            "counts": runtime_health["counts"],
+            "runtime_count": runtime_health["runtime_count"],
+            "issue_count": runtime_health["issue_count"],
+            "top_issue": runtime_health["top_issue"],
+        },
     }
 
 
@@ -1704,6 +2253,7 @@ def health(target: Path) -> dict[str, Any]:
         "top_issue": payload["top_issue"],
         "issues": payload["issues"],
         "call_queue": payload["call_queue"],
+        "runtimes": payload["runtimes"],
     }
 
 
@@ -1769,6 +2319,172 @@ def init(*, target: Path, force: bool = False, update_gitignore: bool = True) ->
         print("gitignore: skipped")
     print("next_command: brigade tools list")
     return 0
+
+
+def runtime_init(*, target: Path, force: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    path = runtimes_config_path(target)
+    if path.exists() and not force:
+        print(f"error: tool runtime config already exists: {path}", file=sys.stderr)
+        return 2
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_format_runtimes_toml())
+    runtime_state_path(target).mkdir(parents=True, exist_ok=True)
+    print(f"runtime_config: {path}")
+    print(f"runtimes: {len(DEFAULT_RUNTIMES)}")
+    print("next_command: brigade tools runtime list")
+    return 0
+
+
+def runtime_list(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _runtime_payload(target, run_health=False)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["valid"] else 1
+    print(f"tools runtime list: {target}")
+    print(f"config_path: {payload['config_path']}")
+    if payload["errors"]:
+        for error in payload["errors"]:
+            print(f"error: {error}")
+        return 1
+    print(f"runtimes: {payload['runtime_count']}")
+    for runtime in payload["runtimes"]:
+        print(f"- {runtime.get('id')} [{runtime.get('state')}] port={runtime.get('port') or ''}")
+    return 0
+
+
+def runtime_show(*, target: Path, runtime_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _runtime_payload(target, runtime_id=runtime_id, run_health=False)
+    runtime = payload["runtimes"][0] if payload["runtimes"] else None
+    result = {**payload, "runtime": runtime}
+    if json_output:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if runtime is not None and payload["valid"] else 1
+    if runtime is None:
+        print(f"error: runtime not found: {runtime_id}", file=sys.stderr)
+        return 1
+    print(f"runtime: {runtime.get('id')}")
+    print(f"name: {runtime.get('name')}")
+    print(f"state: {runtime.get('state')}")
+    print(f"pid: {runtime.get('pid') or ''}")
+    print(f"command: {runtime.get('command')}")
+    print(f"cwd: {runtime.get('cwd')}")
+    print(f"pid_path: {runtime.get('pid_path')}")
+    return 0
+
+
+def runtime_status(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _runtime_payload(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["valid"] else 1
+    print(f"tools runtime status: {target}")
+    print(f"config_path: {payload['config_path']}")
+    if payload["errors"]:
+        for error in payload["errors"]:
+            print(f"error: {error}")
+        return 1
+    for state, count in sorted(payload["counts"].items()):
+        print(f"{state}: {count}")
+    for runtime in payload["runtimes"]:
+        print(f"- {runtime.get('id')} [{runtime.get('state')}] health={runtime.get('health_ok')}")
+    return 0
+
+
+def runtime_start(*, target: Path, runtime_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload, rc = _start_runtime_payload(target, runtime_id)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    print(f"tools runtime start: {runtime_id}")
+    if payload.get("error"):
+        print(f"error: {payload['error']}", file=sys.stderr)
+        for blocker in payload.get("blockers", []):
+            print(f"- {blocker}", file=sys.stderr)
+        return rc
+    print(f"started: {payload.get('started', 0)}")
+    print(f"skipped: {payload.get('skipped', 0)}")
+    print(f"pid: {payload.get('pid') or payload.get('runtime', {}).get('pid') or ''}")
+    return rc
+
+
+def runtime_stop(*, target: Path, runtime_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload, rc = _stop_runtime_payload(target, runtime_id)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    print(f"tools runtime stop: {runtime_id}")
+    if payload.get("error"):
+        print(f"error: {payload['error']}", file=sys.stderr)
+        return rc
+    print(f"stopped: {payload.get('stopped', 0)}")
+    if payload.get("reason"):
+        print(f"reason: {payload['reason']}")
+    return rc
+
+
+def runtime_restart(*, target: Path, runtime_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload, rc = _restart_runtime_payload(target, runtime_id)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    print(f"tools runtime restart: {runtime_id}")
+    if payload.get("error"):
+        print(f"error: {payload['error']}", file=sys.stderr)
+        return rc
+    print(f"state: {payload.get('runtime', {}).get('state')}")
+    print(f"pid: {payload.get('runtime', {}).get('pid') or ''}")
+    return rc
+
+
+def runtime_doctor(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _runtime_payload(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["valid"] else 1
+    print(f"tools runtime doctor: {target}")
+    print(f"config_path: {payload['config_path']}")
+    if payload["errors"]:
+        for error in payload["errors"]:
+            print(f"[warn] runtime_config: {error}")
+    if payload["issues"]:
+        for issue in payload["issues"]:
+            print(f"[{issue.get('status', WARN)}] {issue.get('name')}: {issue.get('detail')}")
+    else:
+        print("[ok] tool_runtimes: no issues")
+    print(f"runtime_issues: {payload['issue_count']}")
+    return 0 if payload["valid"] else 1
 
 
 def list_tools(*, target: Path, json_output: bool = False) -> int:

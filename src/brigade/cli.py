@@ -675,6 +675,30 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tools_call_run.add_argument("--next", action="store_true", help="Run the oldest approved portable tool call.")
     p_tools_call_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_tools_call_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_runtime = tools_sub.add_parser("runtime", help="Manage explicit local portable tool runtimes.")
+    tools_runtime_sub = p_tools_runtime.add_subparsers(dest="tools_runtime_command", metavar="<tools-runtime-command>")
+    tools_runtime_sub.required = True
+    p_tools_runtime_init = tools_runtime_sub.add_parser("init", help="Write a local portable tool runtime config.")
+    p_tools_runtime_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_runtime_init.add_argument("--force", action="store_true", help="Overwrite existing runtime config.")
+    p_tools_runtime_list = tools_runtime_sub.add_parser("list", help="List configured portable tool runtimes.")
+    p_tools_runtime_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_runtime_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_runtime_show = tools_runtime_sub.add_parser("show", help="Show one portable tool runtime.")
+    p_tools_runtime_show.add_argument("runtime_id", help="Runtime id.")
+    p_tools_runtime_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_runtime_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_runtime_status = tools_runtime_sub.add_parser("status", help="Show portable tool runtime process status.")
+    p_tools_runtime_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_runtime_status.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    for runtime_command in ("start", "stop", "restart"):
+        p_runtime_action = tools_runtime_sub.add_parser(runtime_command, help=f"{runtime_command.title()} one portable tool runtime.")
+        p_runtime_action.add_argument("runtime_id", help="Runtime id.")
+        p_runtime_action.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+        p_runtime_action.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_runtime_doctor = tools_runtime_sub.add_parser("doctor", help="Check portable tool runtime health.")
+    p_tools_runtime_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_runtime_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_tools_plan = tools_sub.add_parser("plan", help="Plan portable tool projection writes.")
     p_tools_plan.add_argument("tool_id", nargs="?", help="Optional logical tool id.")
     p_tools_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -1255,6 +1279,25 @@ def main(argv=None) -> int:
                     json_output=args.json,
                 )
             parser.error(f"unknown tools call command: {args.tools_call_command}")
+            return 2
+        if args.tools_command == "runtime":
+            if args.tools_runtime_command == "init":
+                return tools_cmd.runtime_init(target=args.target, force=args.force)
+            if args.tools_runtime_command == "list":
+                return tools_cmd.runtime_list(target=args.target, json_output=args.json)
+            if args.tools_runtime_command == "show":
+                return tools_cmd.runtime_show(target=args.target, runtime_id=args.runtime_id, json_output=args.json)
+            if args.tools_runtime_command == "status":
+                return tools_cmd.runtime_status(target=args.target, json_output=args.json)
+            if args.tools_runtime_command == "start":
+                return tools_cmd.runtime_start(target=args.target, runtime_id=args.runtime_id, json_output=args.json)
+            if args.tools_runtime_command == "stop":
+                return tools_cmd.runtime_stop(target=args.target, runtime_id=args.runtime_id, json_output=args.json)
+            if args.tools_runtime_command == "restart":
+                return tools_cmd.runtime_restart(target=args.target, runtime_id=args.runtime_id, json_output=args.json)
+            if args.tools_runtime_command == "doctor":
+                return tools_cmd.runtime_doctor(target=args.target, json_output=args.json)
+            parser.error(f"unknown tools runtime command: {args.tools_runtime_command}")
             return 2
         if args.tools_command == "plan":
             return tools_cmd.plan(target=args.target, tool_id=args.tool_id, json_output=args.json)

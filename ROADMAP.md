@@ -67,7 +67,7 @@ Goal: make Brigade able to reason about callable tools across agent harnesses wi
 - Prefer schema-first tool descriptions so agents can discover by intent, inspect arguments, and produce typed calls. Status: started with `brigade tools describe`, `brigade tools contracts`, and read-only `brigade tools call plan`.
 - Track resumable executions for tools that pause for auth, approval, or human confirmation. Status: started with local non-executing call approval records in `.brigade/tools/calls.jsonl`.
 - Execute reviewed local tool calls only behind explicit approval gates. Status: started with `brigade tools call run` for approved `script` calls and local receipts under `.brigade/tools/runs/`.
-- Add a local daemon option with status, stop, restart, port tracking, and safe local auto-start for commands that need a runtime.
+- Add a local daemon option with status, stop, restart, port tracking, and safe local auto-start for commands that need a runtime. Status: started with explicit local runtime supervision through `brigade tools runtime`, without auto-start from doctor, brief, or work run.
 - Keep shared auth, secrets, and policy decisions host-local and gitignored, while publishing only safe example configs.
 - Expose catalog health through `brigade doctor` and route broken source/auth/policy states into `brigade work import`. Status: started through `brigade work brief`, `brigade work doctor`, and `tool-catalog` imports.
 

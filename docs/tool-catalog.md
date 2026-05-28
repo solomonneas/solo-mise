@@ -1,6 +1,6 @@
 # Brigade Tool Catalog
 
-`brigade tools` describes local callable tools, slash commands, skills, superpowers, scripts, and MCP configs across agent harnesses. It inspects local files, reports health, and can explicitly write reviewed harness projection files. It does not invoke tools, start MCP servers, auto-sync harness configs, fetch schemas, or store auth.
+`brigade tools` describes local callable tools, slash commands, skills, superpowers, scripts, and MCP configs across agent harnesses. It inspects local files, reports health, can explicitly write reviewed harness projection files, and can explicitly supervise local runtimes for approved script calls. It does not start MCP servers, auto-sync harness configs, fetch schemas, store auth, install schedulers, or auto-start runtimes.
 
 The local config is gitignored:
 
@@ -34,6 +34,14 @@ brigade tools call reject <call-id> --reason "not needed"
 brigade tools call hold <call-id> --reason "needs review"
 brigade tools call run <call-id>
 brigade tools call run --next
+brigade tools runtime init
+brigade tools runtime list
+brigade tools runtime show <runtime-id>
+brigade tools runtime status
+brigade tools runtime start <runtime-id>
+brigade tools runtime stop <runtime-id>
+brigade tools runtime restart <runtime-id>
+brigade tools runtime doctor
 brigade tools plan
 brigade tools plan simplify
 brigade tools apply simplify --dry-run
@@ -44,7 +52,7 @@ brigade tools doctor --json
 brigade tools import-issues
 ```
 
-`list`, `show`, and `search` inspect configured entries. `describe` and `contracts` inspect schema-backed call contracts. `call plan` validates arguments and returns a safe call plan without executing anything. `call queue` stores a plan for local review, and `call approve`, `reject`, and `hold` update review status only. `call run` explicitly executes approved script calls and writes local receipts. `plan` previews projection writes without touching files. `apply` is the only command that writes projections, and it requires either one tool id or `--all`. `doctor` reports catalog health issues. `import-issues` writes those issues into the normal work import inbox as `tool-catalog` task imports with stable source fingerprints.
+`list`, `show`, and `search` inspect configured entries. `describe` and `contracts` inspect schema-backed call contracts. `call plan` validates arguments and returns a safe call plan without executing anything. `call queue` stores a plan for local review, and `call approve`, `reject`, and `hold` update review status only. `call run` explicitly executes approved script calls and writes local receipts. `runtime` commands explicitly manage local runtimes. `plan` previews projection writes without touching files. `apply` is the only command that writes projections, and it requires either one tool id or `--all`. `doctor` reports catalog health issues. `import-issues` writes those issues into the normal work import inbox as `tool-catalog` task imports with stable source fingerprints.
 
 ## Config Shape
 
@@ -72,6 +80,9 @@ approval_mode = "on-request"
 cwd = "."
 env_labels = ["SAFE_ENV"]
 argument_template = { path = "{path}", mode = "--mode={mode}" }
+runtime_id = "local-helper"
+requires_runtime = false
+runtime_health_path = ".brigade/tools/runtime/local-helper.json"
 supported_harnesses = ["claude", "codex", "opencode"]
 projections = { claude = ".claude/commands/simplify.md", codex = ".codex/skills/simplify/SKILL.md" }
 health_path = ".brigade/tools/simplify-health.json"
@@ -100,12 +111,59 @@ Fields:
 - `cwd`: optional local working directory label or relative path.
 - `env_labels`: safe environment labels only, never values.
 - `argument_template`: table of call-plan argument names to template strings such as `{path}`.
+- `runtime_id`: optional id of a local runtime from `.brigade/tools/runtimes.toml`.
+- `requires_runtime`: true when `call run` must refuse execution unless that runtime is running and healthy.
+- `runtime_health_path`: optional local runtime health file label or path.
 - `supported_harnesses`: configured harnesses that should have projections.
 - `projections`: per-harness projection target paths.
 - `health_path`: optional local health summary file used for stale-health checks.
 - `fingerprint`: optional source fingerprint when the source file is generated elsewhere.
 
 Supported harness labels are local conventions. Brigade recognizes Claude Code, Codex, OpenCode, Hermes, OpenClaw, MCP, and scripts through the labels `claude`, `codex`, `opencode`, `hermes`, `openclaw`, `mcp`, and `scripts`.
+
+## Runtime Supervisor
+
+Runtimes are explicit local processes that approved script calls can depend on. They are configured in a gitignored file:
+
+```text
+.brigade/tools/runtimes.toml
+```
+
+Create a starter config with:
+
+```bash
+brigade tools runtime init
+```
+
+Each runtime is a TOML table:
+
+```toml
+[[runtime]]
+id = "local-helper"
+name = "Local Helper"
+enabled = true
+command = "python3 -m http.server 8765"
+cwd = "."
+port = 8765
+health_command = "python3 --version"
+health_path = ".brigade/tools/runtime/local-helper.json"
+pid_path = ".brigade/tools/runtime/local-helper.pid"
+log_path = ".brigade/tools/runtime/local-helper.log"
+timeout = 10
+```
+
+Runtime commands are local and explicit:
+
+- `brigade tools runtime list` and `show <runtime-id>` inspect config and current process state.
+- `brigade tools runtime status` reports running, stopped, and stale runtime states.
+- `brigade tools runtime start <runtime-id>` starts one runtime with `shell=False`, writes PID metadata, and writes stdout/stderr logs under `.brigade/tools/runtime/`.
+- `brigade tools runtime stop <runtime-id>` stops only a process with matching Brigade runtime metadata.
+- `brigade tools runtime restart <runtime-id>` stops then starts the same runtime.
+- `brigade tools runtime doctor` reports stale PID files, port conflicts, missing cwd, high-risk commands, failed health checks, and missing runtime config.
+
+Brigade refuses high-risk runtime command shapes, detects already-running runtimes, detects stale PID files, and warns when configured ports are already in use. `doctor`, `brief`, and `work run` never start runtimes automatically.
+
+When a tool has `requires_runtime = true`, `brigade tools call run` refuses execution unless the configured runtime exists, is running, is managed by Brigade metadata, and passes health checks. Receipts include the runtime id and runtime snapshot used for the run.
 
 ## Projection Planning And Apply
 
@@ -231,6 +289,8 @@ Receipts include call id, tool id, status, timestamps, duration, exit code, time
 - approved tool calls with stale source or contract fingerprints
 - failed tool call executions
 - tool call executions left running too long
+- missing, stopped, stale, unhealthy, or unmanaged required runtimes
+- runtime config, cwd, command, PID, port, and health-check issues
 - MCP config issues in local JSON files with `mcpServers`
 
 MCP discovery is structural only. Brigade summarizes server count and server ids, checks for missing commands and timeout metadata, and flags broad shell-like command shapes. It never starts an MCP server.
@@ -253,4 +313,4 @@ Repeated imports dedupe equivalent pending or promoted issues. Dismissed tool-ca
 
 Keep all catalog state local and gitignored. Do not put tokens, passwords, raw credentials, URLs with embedded secrets, private hostnames, or host-private paths in public templates. Brigade reports unsafe field names without copying their values into command output, work imports, session artifacts, docs, or handoffs.
 
-Projection apply is local and explicit. Call planning and call approval review are local and non-executing. Tool execution is explicit through `brigade tools call run`, limited initially to approved local `script` entries, and recorded with local receipts. Brigade does not start MCP servers, run OpenAPI or GraphQL calls, install schedulers, start a daemon, fetch remote schemas, store auth, send notifications, or mutate remote services.
+Projection apply is local and explicit. Call planning and call approval review are local and non-executing. Tool execution is explicit through `brigade tools call run`, limited initially to approved local `script` entries, and recorded with local receipts. Runtime lifecycle is explicit through `brigade tools runtime`; no command auto-starts runtimes as a side effect. Brigade does not start MCP servers, run OpenAPI or GraphQL calls, install schedulers, fetch remote schemas, store auth, send notifications, or mutate remote services.
