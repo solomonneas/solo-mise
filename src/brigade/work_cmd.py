@@ -142,6 +142,7 @@ BACKUP_DEFAULTS = (
 SCANNER_CONFIG_REL_PATH = ".brigade/scanners.toml"
 SCANNER_OUTPUT_STALE_HOURS = 48
 SCANNER_RUN_STALE_HOURS = 48
+SCANNER_SWEEP_STALE_HOURS = 36
 IMPORT_ARCHIVE_STALE_HOURS = 168
 SCANNER_REQUIRED_IDS = ("chat-memory-sweep", "memory-refresh", "handoff-ingest")
 SCANNER_HIGH_RISK_COMMANDS = {"bash", "sh", "zsh", "fish", "powershell", "pwsh", "ssh", "scp", "rsync"}
@@ -317,6 +318,10 @@ def _scanner_config_path(target: Path) -> Path:
 
 def _scanner_runs_root(target: Path) -> Path:
     return target / ".brigade" / "scanners" / "runs"
+
+
+def _scanner_sweeps_root(target: Path) -> Path:
+    return target / ".brigade" / "scanners" / "sweeps"
 
 
 def _git_snapshot(target: Path) -> dict[str, Any]:
@@ -1873,6 +1878,35 @@ def _scanner_receipts(target: Path) -> list[dict[str, Any]]:
     return valid
 
 
+def _scanner_read_sweep(path: Path) -> dict[str, Any] | None:
+    report = path / "sweep.json" if path.is_dir() else path
+    if not report.is_file():
+        return None
+    try:
+        data = json.loads(report.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    data.setdefault("path", str(report.parent))
+    return data
+
+
+def _scanner_sweeps(target: Path) -> list[dict[str, Any]]:
+    root = _scanner_sweeps_root(target)
+    if not root.is_dir():
+        return []
+    sweeps = [_scanner_read_sweep(path) for path in root.iterdir() if path.is_dir()]
+    valid = [item for item in sweeps if isinstance(item, dict)]
+    valid.sort(key=lambda item: str(item.get("started_at") or item.get("sweep_id") or ""), reverse=True)
+    return valid
+
+
+def _scanner_latest_sweep(target: Path) -> dict[str, Any] | None:
+    sweeps = _scanner_sweeps(target)
+    return sweeps[0] if sweeps else None
+
+
 def _scanner_latest_success(target: Path, scanner_id: str) -> dict[str, Any] | None:
     for receipt in _scanner_receipts(target):
         if receipt.get("scanner_id") == scanner_id and receipt.get("status") == "completed" and receipt.get("exit_code") == 0:
@@ -2393,6 +2427,35 @@ def _scanner_health(target: Path) -> dict[str, Any]:
     }
 
 
+def _scanner_sweep_health(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    checks: list[dict[str, Any]] = []
+    latest = _scanner_latest_sweep(target)
+    due = _scanner_health(target).get("due")
+    due_count = len(due) if isinstance(due, list) else 0
+    if latest is None:
+        checks.append({"status": WARN, "name": "scanner_sweeps", "detail": "none, run `brigade work sweep`"})
+    else:
+        status = str(latest.get("status") or "unknown")
+        if status == "failed":
+            checks.append({"status": WARN, "name": "scanner_sweep_failed", "detail": latest.get("sweep_id")})
+        else:
+            checks.append({"status": OK, "name": "scanner_sweep_latest", "detail": f"{latest.get('sweep_id')} [{status}]"})
+        completed = _parse_iso_datetime(latest.get("completed_at") or latest.get("started_at"))
+        if completed is not None:
+            age_hours = (_now() - completed).total_seconds() / 3600
+            if age_hours > SCANNER_SWEEP_STALE_HOURS:
+                checks.append({"status": WARN, "name": "scanner_sweep_stale", "detail": f"{latest.get('sweep_id')}={age_hours:.1f}h"})
+    return {
+        "target": str(target),
+        "sweeps_root": str(_scanner_sweeps_root(target)),
+        "latest": latest,
+        "checks": checks,
+        "due_count": due_count,
+        "suggested_command": "brigade work sweep" if due_count else None,
+    }
+
+
 def _scanner_health_issue_records(target: Path) -> list[dict[str, Any]]:
     health = _scanner_health(target)
     records: list[dict[str, Any]] = []
@@ -2879,6 +2942,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     scanner_candidate = _scanner_candidate(pending_imports)
     inbox_hygiene = _inbox_hygiene_payload(target)
     scanner_health = _scanner_health(target)
+    sweep_health = _scanner_sweep_health(target)
     memory_health = memory_cmd.health(target)
     security_health = security_cmd.health(target)
     backup_health = _backup_health(target)
@@ -2909,6 +2973,13 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "next_run": scanner_health["next_run"],
             "latest_run": scanner_health.get("latest_run"),
             "due": scanner_health.get("due"),
+        },
+        "scanner_sweeps": {
+            "sweeps_root": sweep_health["sweeps_root"],
+            "latest": sweep_health["latest"],
+            "checks": sweep_health["checks"],
+            "due_count": sweep_health["due_count"],
+            "suggested_command": sweep_health["suggested_command"],
         },
         "memory_care": {
             "config_path": memory_health["config_path"],
@@ -3498,6 +3569,14 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
         due_scanners = scanner_health.get("due") if isinstance(scanner_health.get("due"), list) else []
         if due_scanners:
             print(f"scanner_due: {', '.join(str(item.get('id')) for item in due_scanners[:5] if isinstance(item, dict))}")
+
+    scanner_sweeps = payload.get("scanner_sweeps") if isinstance(payload.get("scanner_sweeps"), dict) else {}
+    if scanner_sweeps:
+        latest_sweep = scanner_sweeps.get("latest") if isinstance(scanner_sweeps.get("latest"), dict) else None
+        if latest_sweep:
+            print(f"scanner_latest_sweep: {latest_sweep.get('sweep_id')} [{latest_sweep.get('status')}]")
+        if scanner_sweeps.get("suggested_command"):
+            print(f"scanner_sweep_command: {scanner_sweeps.get('suggested_command')}")
 
     memory_care = payload.get("memory_care") if isinstance(payload.get("memory_care"), dict) else {}
     if memory_care:
@@ -5444,7 +5523,7 @@ def _select_scanners_for_run(
     return runnable, skipped, []
 
 
-def scanners_run(
+def _scanners_run_payload(
     *,
     target: Path,
     scanner_id: str | None = None,
@@ -5453,34 +5532,25 @@ def scanners_run(
     include_disabled: bool = False,
     force: bool = False,
     ingest_output: bool = False,
-    json_output: bool = False,
-) -> int:
+    require_selector: bool = True,
+) -> tuple[dict[str, Any], int]:
     target = target.expanduser().resolve()
     if not target.is_dir():
-        print(f"error: --target is not a directory: {target}", file=sys.stderr)
-        return 2
-    if sum(1 for item in (scanner_id, all_matching, due) if bool(item)) != 1:
+        return {"target": str(target), "errors": [f"--target is not a directory: {target}"], "runs": [], "skipped": []}, 2
+    selector_count = sum(1 for item in (scanner_id, all_matching, due) if bool(item))
+    if require_selector and selector_count != 1:
         error = "pass exactly one of scanner id, --all, or --due"
-        if json_output:
-            print(json.dumps({"target": str(target), "errors": [error], "runs": [], "skipped": []}, indent=2, sort_keys=True))
-        else:
-            print(f"error: {error}", file=sys.stderr)
-        return 2
+        return {"target": str(target), "errors": [error], "runs": [], "skipped": []}, 2
+    if not require_selector and selector_count > 1:
+        error = "pass only one of scanner id, --all, or --due"
+        return {"target": str(target), "errors": [error], "runs": [], "skipped": []}, 2
     if not _scanner_config_path(target).is_file():
         error = f"scanner config missing: {_scanner_config_path(target)}"
-        if json_output:
-            print(json.dumps({"target": str(target), "errors": [error], "runs": [], "skipped": []}, indent=2, sort_keys=True))
-        else:
-            print(f"error: {error}", file=sys.stderr)
-        return 2
+        return {"target": str(target), "errors": [error], "runs": [], "skipped": []}, 2
     running = _scanner_running_receipts(target)
     if running and not force:
         error = f"scanner run already in progress: {running[0].get('run_id')}"
-        if json_output:
-            print(json.dumps({"target": str(target), "errors": [error], "runs": [], "skipped": []}, indent=2, sort_keys=True))
-        else:
-            print(f"error: {error}", file=sys.stderr)
-        return 2
+        return {"target": str(target), "errors": [error], "runs": [], "skipped": []}, 2
     selected, skipped, errors = _select_scanners_for_run(
         target,
         scanner_id=scanner_id,
@@ -5489,12 +5559,7 @@ def scanners_run(
         include_disabled=include_disabled,
     )
     if errors:
-        if json_output:
-            print(json.dumps({"target": str(target), "errors": errors, "runs": [], "skipped": skipped}, indent=2, sort_keys=True))
-        else:
-            for error in errors:
-                print(f"error: {error}", file=sys.stderr)
-        return 2
+        return {"target": str(target), "errors": errors, "runs": [], "skipped": skipped}, 2
     before_counts = _import_counts(_pending_imports(target))
     runs: list[dict[str, Any]] = []
     contexts: list[tuple[dict[str, Any], dict[str, Any]]] = []
@@ -5549,13 +5614,7 @@ def scanners_run(
                 "ingest_errors": ingest_errors,
                 "runs": runs,
             }
-            if json_output:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print(f"work scanners run: {target}")
-                for error in ingest_errors:
-                    print(f"error: {error}", file=sys.stderr)
-            return 2
+            return payload, 2
         for scanner, run, path, records in ingest_payloads:
             imported, skipped_records, skipped_dismissed = _append_import_records(target, records)
             run["ingest_output"] = {
@@ -5585,16 +5644,45 @@ def scanners_run(
         "ingest_errors": ingest_errors,
         "runs": runs,
     }
+    return payload, 0 if payload["failed"] == 0 else 1
+
+
+def scanners_run(
+    *,
+    target: Path,
+    scanner_id: str | None = None,
+    all_matching: bool = False,
+    due: bool = False,
+    include_disabled: bool = False,
+    force: bool = False,
+    ingest_output: bool = False,
+    json_output: bool = False,
+) -> int:
+    payload, rc = _scanners_run_payload(
+        target=target,
+        scanner_id=scanner_id,
+        all_matching=all_matching,
+        due=due,
+        include_disabled=include_disabled,
+        force=force,
+        ingest_output=ingest_output,
+    )
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0 if payload["failed"] == 0 else 1
-    print(f"work scanners run: {target}")
+        return rc
+    errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+    if errors:
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
+        return rc
+    print(f"work scanners run: {payload.get('target')}")
     print(f"runs_root: {payload['runs_root']}")
     print(f"selected: {payload['selected']}")
     print(f"completed: {payload['completed']}")
     print(f"failed: {payload['failed']}")
     for item in payload["skipped"]:
         print(f"skipped: {item['scanner_id']} {item['reason']}")
+    runs = payload.get("runs") if isinstance(payload.get("runs"), list) else []
     for run in runs:
         print(
             f"- {run.get('run_id')} {run.get('scanner_id')} "
@@ -5611,9 +5699,11 @@ def scanners_run(
         if run.get("provenance_imports_stamped"):
             print(f"  provenance_imports_stamped: {run.get('provenance_imports_stamped')}")
         print(f"  logs: {run.get('stdout_path')} {run.get('stderr_path')}")
+    before_counts = payload.get("imports_before") if isinstance(payload.get("imports_before"), dict) else {}
+    after_counts = payload.get("imports_after") if isinstance(payload.get("imports_after"), dict) else {}
     print(f"pending_imports_before: {before_counts.get('total', 0)}")
     print(f"pending_imports_after: {after_counts.get('total', 0)}")
-    return 0 if payload["failed"] == 0 else 1
+    return rc
 
 
 def scanners_runs(*, target: Path, json_output: bool = False, limit: int = 20) -> int:
@@ -5675,6 +5765,164 @@ def scanners_run_show(*, target: Path, run_id: str, json_output: bool = False) -
         print(f"stdout_summary: {_short(str(receipt.get('stdout_summary')))}")
     if receipt.get("stderr_summary"):
         print(f"stderr_summary: {_short(str(receipt.get('stderr_summary')))}")
+    return 0
+
+
+def _sweep_import_counts(run_payload: dict[str, Any]) -> dict[str, int]:
+    runs = run_payload.get("runs") if isinstance(run_payload.get("runs"), list) else []
+    created = 0
+    skipped = 0
+    dismissed = 0
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        ingest = run.get("ingest_output") if isinstance(run.get("ingest_output"), dict) else {}
+        created += int(ingest.get("created", 0) or 0)
+        skipped += int(ingest.get("skipped", 0) or 0)
+        dismissed += int(ingest.get("dismissed", 0) or 0)
+    before = run_payload.get("imports_before") if isinstance(run_payload.get("imports_before"), dict) else {}
+    after = run_payload.get("imports_after") if isinstance(run_payload.get("imports_after"), dict) else {}
+    delta = int(after.get("total", 0) or 0) - int(before.get("total", 0) or 0)
+    if delta > created:
+        created = delta
+    return {"created": created, "skipped": skipped, "dismissed": dismissed}
+
+
+def _write_sweep_report(target: Path, report: dict[str, Any]) -> None:
+    sweep_id = str(report.get("sweep_id") or "sweep")
+    _write_json(_scanner_sweeps_root(target) / sweep_id / "sweep.json", report)
+
+
+def sweep(
+    *,
+    target: Path,
+    scanner_id: str | None = None,
+    all_matching: bool = False,
+    include_disabled: bool = False,
+    force: bool = False,
+    ingest: bool = True,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    if scanner_id and all_matching:
+        print("error: pass --scanner or --all, not both", file=sys.stderr)
+        return 2
+    started = _now()
+    sweep_id = f"{started.strftime('%Y%m%d-%H%M%S')}-scanner-sweep-{uuid4().hex[:6]}"
+    run_payload, run_rc = _scanners_run_payload(
+        target=target,
+        scanner_id=scanner_id,
+        all_matching=all_matching,
+        due=not scanner_id and not all_matching,
+        include_disabled=include_disabled,
+        force=force,
+        ingest_output=ingest,
+    )
+    completed = _now()
+    runs = run_payload.get("runs") if isinstance(run_payload.get("runs"), list) else []
+    errors = run_payload.get("errors") if isinstance(run_payload.get("errors"), list) else []
+    status_text = "failed" if run_rc != 0 else "completed"
+    inbox_hygiene = _inbox_hygiene_payload(target)
+    report = {
+        "sweep_id": sweep_id,
+        "status": status_text,
+        "target": str(target),
+        "started_at": started.isoformat(),
+        "completed_at": completed.isoformat(),
+        "duration_seconds": (completed - started).total_seconds(),
+        "mode": "all" if all_matching else ("scanner" if scanner_id else "due"),
+        "scanner": scanner_id,
+        "include_disabled": include_disabled,
+        "force": force,
+        "ingest": ingest,
+        "run_result": run_payload,
+        "run_rc": run_rc,
+        "errors": errors,
+        "scanner_run_ids": [run.get("run_id") for run in runs if isinstance(run, dict)],
+        "receipt_paths": [_scanner_run_receipt_path(run) for run in runs if isinstance(run, dict)],
+        "import_counts": _sweep_import_counts(run_payload),
+        "inbox_hygiene": {
+            "issue_count": inbox_hygiene["issue_count"],
+            "top_issue": inbox_hygiene["top_issue"],
+        },
+        "suggested_commands": [
+            "brigade work inbox",
+            "brigade work inbox doctor",
+            "brigade work import plan <import-id>",
+        ],
+    }
+    _write_sweep_report(target, report)
+    if json_output:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return run_rc
+    print(f"work sweep: {target}")
+    print(f"sweep: {sweep_id}")
+    print(f"status: {status_text}")
+    print(f"runs: {len(runs)}")
+    print(f"created: {report['import_counts']['created']}")
+    print(f"skipped: {report['import_counts']['skipped']}")
+    print(f"dismissed: {report['import_counts']['dismissed']}")
+    for error in errors:
+        print(f"error: {error}", file=sys.stderr)
+    print(f"report: {_scanner_sweeps_root(target) / sweep_id / 'sweep.json'}")
+    print("next: brigade work inbox")
+    return run_rc
+
+
+def sweeps(*, target: Path, json_output: bool = False, limit: int = 20) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    reports = _scanner_sweeps(target)[:limit]
+    payload = {"target": str(target), "sweeps_root": str(_scanner_sweeps_root(target)), "sweeps": reports}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"work sweeps: {target}")
+    print(f"sweeps_root: {payload['sweeps_root']}")
+    if not reports:
+        print("sweeps: none")
+        return 0
+    for report in reports:
+        print(f"- {report.get('sweep_id')} [{report.get('status')}] runs={len(report.get('scanner_run_ids') or [])} {report.get('started_at')}")
+    return 0
+
+
+def sweep_show(*, target: Path, sweep_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    matches = [
+        report
+        for report in _scanner_sweeps(target)
+        if str(report.get("sweep_id") or "").startswith(sweep_id)
+    ]
+    if not matches:
+        print(f"error: sweep not found: {sweep_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: sweep id is ambiguous: {sweep_id}", file=sys.stderr)
+        return 2
+    report = matches[0]
+    if json_output:
+        print(json.dumps({"target": str(target), "sweep": report}, indent=2, sort_keys=True))
+        return 0
+    print(f"sweep: {report.get('sweep_id')}")
+    print(f"status: {report.get('status')}")
+    print(f"started_at: {report.get('started_at')}")
+    print(f"completed_at: {report.get('completed_at')}")
+    print(f"runs: {len(report.get('scanner_run_ids') or [])}")
+    counts = report.get("import_counts") if isinstance(report.get("import_counts"), dict) else {}
+    print(f"created: {counts.get('created', 0)}")
+    print(f"skipped: {counts.get('skipped', 0)}")
+    print(f"dismissed: {counts.get('dismissed', 0)}")
+    hygiene = report.get("inbox_hygiene") if isinstance(report.get("inbox_hygiene"), dict) else {}
+    print(f"inbox_hygiene: {hygiene.get('issue_count', 0)} issue(s)")
     return 0
 
 
@@ -6229,6 +6477,10 @@ def doctor(*, target: Path) -> int:
     for check in scanner_health["checks"]:
         if check.get("status") == FAIL:
             failures += 1
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+
+    sweep_health = _scanner_sweep_health(effective_target)
+    for check in sweep_health["checks"]:
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
 
     memory_health = memory_cmd.health(effective_target)

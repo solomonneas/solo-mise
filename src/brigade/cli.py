@@ -194,6 +194,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_brief.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_brief.add_argument("--limit", type=int, default=3, help="Maximum recent sessions to include.")
     p_work_brief.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_sweep = work_sub.add_parser("sweep", help="Run an explicit daily scanner sweep.")
+    p_work_sweep.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_sweep.add_argument("--scanner", default=None, help="Run one scanner id instead of due scanners.")
+    p_work_sweep.add_argument("--all", action="store_true", help="Run all configured scanners.")
+    p_work_sweep.add_argument("--include-disabled", action="store_true", help="Allow disabled scanners to run.")
+    p_work_sweep.add_argument("--force", action="store_true", help="Run even when another scanner receipt is marked running.")
+    p_work_sweep.add_argument("--no-ingest", action="store_true", help="Do not ingest configured scanner import output.")
+    p_work_sweep.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_sweeps = work_sub.add_parser("sweeps", help="List scanner sweep reports.")
+    p_work_sweeps.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_sweeps.add_argument("--limit", type=int, default=20, help="Maximum sweeps to list.")
+    p_work_sweeps.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_sweep_show = work_sub.add_parser("sweep-show", help="Show one scanner sweep report.")
+    p_work_sweep_show.add_argument("sweep_id", help="Sweep id or unique prefix.")
+    p_work_sweep_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_sweep_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_inbox = work_sub.add_parser("inbox", help="Review scanner-ready work imports.")
     p_work_inbox.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_inbox.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -1070,6 +1086,20 @@ def main(argv=None) -> int:
             return work_cmd.resume(target=args.target)
         if args.work_command == "brief":
             return work_cmd.brief(target=args.target, limit=args.limit, json_output=args.json)
+        if args.work_command == "sweep":
+            return work_cmd.sweep(
+                target=args.target,
+                scanner_id=args.scanner,
+                all_matching=args.all,
+                include_disabled=args.include_disabled,
+                force=args.force,
+                ingest=not args.no_ingest,
+                json_output=args.json,
+            )
+        if args.work_command == "sweeps":
+            return work_cmd.sweeps(target=args.target, limit=args.limit, json_output=args.json)
+        if args.work_command == "sweep-show":
+            return work_cmd.sweep_show(target=args.target, sweep_id=args.sweep_id, json_output=args.json)
         if args.work_command == "inbox" and getattr(args, "inbox_command", None):
             if args.inbox_command == "doctor":
                 return work_cmd.inbox_doctor(target=args.target, json_output=args.json)

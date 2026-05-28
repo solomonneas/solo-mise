@@ -1,6 +1,6 @@
 # Brigade Scanner Registry
 
-`brigade work scanners` describes local scanner producers, plans safe run windows, and explicitly runs configured local producers when asked. It does not install cron jobs, start a daemon, mutate remotes, run scanners from `brief` or `doctor`, or promote imports automatically.
+`brigade work scanners` describes local scanner producers, plans safe run windows, and explicitly runs configured local producers when asked. `brigade work sweep` is the daily review action that runs configured scanner producers and writes one local report. These commands do not install cron jobs, start a daemon, mutate remotes, run scanners from `brief` or `doctor`, or promote imports automatically.
 
 The local config is gitignored:
 
@@ -30,6 +30,12 @@ brigade work scanners run --all
 brigade work scanners run --due
 brigade work scanners runs
 brigade work scanners run-show <run-id>
+brigade work sweep
+brigade work sweep --all
+brigade work sweep --scanner security-scan
+brigade work sweep --no-ingest
+brigade work sweeps
+brigade work sweep-show <sweep-id>
 ```
 
 `plan` calculates intended run windows from scanner cadence and timeout, detects overlapping or clustered scanner windows, and prints a suggested staggered schedule. `doctor` checks missing config, disabled required local producers, bad commands, missing or stale output paths, and schedule conflicts. With `--import-issues`, doctor writes scanner health warnings into the existing work import inbox as task imports.
@@ -47,6 +53,20 @@ Scanner run receipts are gitignored under:
 ```
 
 Each receipt includes the run id, scanner id, source, argv, cwd, started and completed timestamps, duration, exit code, timeout state, stdout/stderr summaries, full local log paths, and output path snapshots from before and after execution. Use `brigade work scanners runs` and `brigade work scanners run-show <run-id>` to review them. `doctor` also reports failed or timed-out runs, malformed receipts, missing logs, stale successful runs, and due scanners.
+
+## Daily Sweeps
+
+`brigade work sweep` runs due enabled scanners from `.brigade/scanners.toml` as one explicit foreground operator action. It uses the same scanner execution path as `brigade work scanners run --due`, but defaults to ingesting each successful scanner's configured `import_path` when `import_format = "jsonl"`. Use `--no-ingest` to leave outputs untouched, `--all` to run every configured scanner, or `--scanner <id>` to run one scanner. Disabled scanners still require `--include-disabled`, and overlapping running receipts still require `--force`.
+
+Sweep reports are gitignored under:
+
+```text
+.brigade/scanners/sweeps/
+```
+
+Each report includes the sweep id, started and completed timestamps, scanner run ids, scanner receipt paths, created/skipped/dismissed import counts, an inbox hygiene summary, and suggested next commands. Use `brigade work sweeps` and `brigade work sweep-show <sweep-id>` to review reports. `brigade work brief` shows the latest sweep and suggests `brigade work sweep` when scanner runs are due. `brigade work doctor` warns on missing, stale, or failed sweep reports.
+
+Sweeps may ingest reviewed JSONL output into the work inbox, but they never promote imports, edit memory, mutate GitHub, or run in the background.
 
 Inbox hygiene commands help keep reviewed scanner output from becoming queue clutter:
 

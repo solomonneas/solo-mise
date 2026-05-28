@@ -4365,6 +4365,207 @@ def test_work_inbox_archive_preserves_pending_and_archives_closed(tmp_path, monk
     assert all(item["archived_at"] == "2026-05-30T12:00:00+00:00" for item in archived)
 
 
+def test_work_sweep_runs_due_scanners_ingests_output_and_reports(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    script = tmp_path / "scanner.py"
+    script.write_text(
+        """
+import json
+from pathlib import Path
+
+path = Path.cwd() / ".brigade" / "scanner-imports.jsonl"
+path.parent.mkdir(parents=True, exist_ok=True)
+record = {
+    "kind": "task",
+    "source": "repo-scan",
+    "text": "Review sweep finding",
+    "metadata": {"source_item_key": "finding-1"},
+    "acceptance": ["Sweep finding is reviewed."],
+}
+path.write_text(json.dumps(record) + "\\n")
+print("sweep scanner complete")
+"""
+    )
+    config = tmp_path / ".brigade" / "scanners.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        f"""
+[[scanner]]
+id = "repo-scan"
+source = "repo-scan"
+command = "{sys.executable} {script}"
+cadence = "daily@02:00"
+enabled = true
+timeout = 30
+output_path = ".brigade/scanner-imports.jsonl"
+import_path = ".brigade/scanner-imports.jsonl"
+import_format = "jsonl"
+conflict_window = "02:00-02:10"
+"""
+    )
+
+    assert work_cmd.sweep(target=tmp_path, json_output=True) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "completed"
+    assert report["mode"] == "due"
+    assert report["scanner_run_ids"]
+    assert report["receipt_paths"][0].endswith("/receipt.json")
+    assert report["import_counts"] == {"created": 1, "dismissed": 0, "skipped": 0}
+    assert report["suggested_commands"][0] == "brigade work inbox"
+    report_path = tmp_path / ".brigade" / "scanners" / "sweeps" / report["sweep_id"] / "sweep.json"
+    assert report_path.is_file()
+
+    assert work_cmd.import_list(target=tmp_path, json_output=True) == 0
+    imports = json.loads(capsys.readouterr().out)["imports"]
+    assert len(imports) == 1
+    assert imports[0]["metadata"]["scanner_run_id"] == report["scanner_run_ids"][0]
+    assert imports[0]["metadata"]["scanner_receipt_path"] == report["receipt_paths"][0]
+
+    assert work_cmd.sweeps(target=tmp_path, json_output=True) == 0
+    sweeps_payload = json.loads(capsys.readouterr().out)
+    assert sweeps_payload["sweeps"][0]["sweep_id"] == report["sweep_id"]
+
+    assert work_cmd.sweep_show(target=tmp_path, sweep_id=report["sweep_id"]) == 0
+    out = capsys.readouterr().out
+    assert f"sweep: {report['sweep_id']}" in out
+    assert "status: completed" in out
+    assert "created: 1" in out
+
+
+def test_work_sweep_modes_disabled_no_ingest_and_failed_scanners(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    script = tmp_path / "scanner.py"
+    script.write_text(
+        """
+import json
+import sys
+from pathlib import Path
+
+if sys.argv[1] == "fail":
+    print("failure", file=sys.stderr)
+    raise SystemExit(4)
+path = Path.cwd() / ".brigade" / f"{sys.argv[1]}.jsonl"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps({"kind": "task", "source": sys.argv[1], "text": f"Review {sys.argv[1]}"}) + "\\n")
+"""
+    )
+    config = tmp_path / ".brigade" / "scanners.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        f"""
+[[scanner]]
+id = "enabled-scan"
+source = "enabled-scan"
+command = "{sys.executable} {script} enabled-scan"
+cadence = "daily@02:00"
+enabled = true
+timeout = 30
+output_path = ".brigade/enabled-scan.jsonl"
+import_path = ".brigade/enabled-scan.jsonl"
+import_format = "jsonl"
+conflict_window = "02:00-02:10"
+
+[[scanner]]
+id = "disabled-scan"
+source = "disabled-scan"
+command = "{sys.executable} {script} disabled-scan"
+cadence = "daily@03:00"
+enabled = false
+timeout = 30
+output_path = ".brigade/disabled-scan.jsonl"
+import_path = ".brigade/disabled-scan.jsonl"
+import_format = "jsonl"
+conflict_window = "03:00-03:10"
+
+[[scanner]]
+id = "fail-scan"
+source = "fail-scan"
+command = "{sys.executable} {script} fail"
+cadence = "daily@04:00"
+enabled = true
+timeout = 30
+output_path = ".brigade/fail.jsonl"
+import_path = ".brigade/fail.jsonl"
+import_format = "jsonl"
+conflict_window = "04:00-04:10"
+"""
+    )
+
+    assert work_cmd.sweep(target=tmp_path, scanner_id="enabled-scan", ingest=False, json_output=True) == 0
+    no_ingest = json.loads(capsys.readouterr().out)
+    assert no_ingest["ingest"] is False
+    assert no_ingest["import_counts"]["created"] == 0
+    assert work_cmd.import_list(target=tmp_path, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["imports"] == []
+
+    assert work_cmd.sweep(target=tmp_path, scanner_id="disabled-scan", json_output=True) == 2
+    disabled = json.loads(capsys.readouterr().out)
+    assert disabled["status"] == "failed"
+    assert disabled["errors"] == ["scanner disabled: disabled-scan"]
+
+    assert work_cmd.sweep(target=tmp_path, scanner_id="disabled-scan", include_disabled=True, json_output=True) == 0
+    included = json.loads(capsys.readouterr().out)
+    assert included["status"] == "completed"
+    assert included["import_counts"]["created"] == 1
+
+    assert work_cmd.sweep(target=tmp_path, all_matching=True, include_disabled=True, json_output=True) == 1
+    all_report = json.loads(capsys.readouterr().out)
+    assert all_report["status"] == "failed"
+    assert all_report["run_result"]["failed"] == 1
+    assert any(run["scanner_id"] == "fail-scan" and run["status"] == "failed" for run in all_report["run_result"]["runs"])
+
+
+def test_work_brief_and_doctor_include_scanner_sweep_health(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    config = tmp_path / ".brigade" / "scanners.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        """
+[[scanner]]
+id = "due-scan"
+source = "due-scan"
+command = "python3 scanner.py"
+cadence = "daily@02:00"
+enabled = true
+timeout = 30
+output_path = ".brigade/due.jsonl"
+import_path = ".brigade/due.jsonl"
+import_format = "jsonl"
+conflict_window = "02:00-02:10"
+"""
+    )
+    sweep_dir = tmp_path / ".brigade" / "scanners" / "sweeps" / "old-failed"
+    sweep_dir.mkdir(parents=True)
+    _write_json(
+        sweep_dir / "sweep.json",
+        {
+            "sweep_id": "old-failed",
+            "status": "failed",
+            "started_at": "2026-05-25T12:00:00+00:00",
+            "completed_at": "2026-05-25T12:00:00+00:00",
+            "scanner_run_ids": [],
+            "import_counts": {"created": 0, "skipped": 0, "dismissed": 0},
+        },
+    )
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "scanner_latest_sweep: old-failed [failed]" in out
+    assert "scanner_sweep_command: brigade work sweep" in out
+
+    assert work_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] scanner_sweep_failed: old-failed" in out
+    assert "[warn] scanner_sweep_stale: old-failed=120.0h" in out
+
+
 def test_work_scanners_doctor_warns_for_missing_stale_bad_and_imports_issues(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(
@@ -6226,6 +6427,75 @@ def test_work_scanners_cli(tmp_path, monkeypatch):
         ),
         ("runs", {"target": tmp_path, "json_output": True, "limit": 5}),
         ("run-show", {"target": tmp_path, "run_id": "run-1", "json_output": True}),
+    ]
+
+
+def test_work_sweep_cli(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_sweep(**kwargs):
+        seen.append(("sweep", kwargs))
+        return 0
+
+    def fake_sweeps(**kwargs):
+        seen.append(("sweeps", kwargs))
+        return 0
+
+    def fake_sweep_show(**kwargs):
+        seen.append(("sweep-show", kwargs))
+        return 0
+
+    monkeypatch.setattr(work_cmd, "sweep", fake_sweep)
+    monkeypatch.setattr(work_cmd, "sweeps", fake_sweeps)
+    monkeypatch.setattr(work_cmd, "sweep_show", fake_sweep_show)
+
+    assert (
+        cli.main(
+            [
+                "work",
+                "sweep",
+                "--target",
+                str(tmp_path),
+                "--scanner",
+                "repo-scan",
+                "--include-disabled",
+                "--force",
+                "--no-ingest",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert cli.main(["work", "sweep", "--target", str(tmp_path), "--all"]) == 0
+    assert cli.main(["work", "sweeps", "--target", str(tmp_path), "--limit", "5", "--json"]) == 0
+    assert cli.main(["work", "sweep-show", "sweep-1", "--target", str(tmp_path), "--json"]) == 0
+    assert seen == [
+        (
+            "sweep",
+            {
+                "target": tmp_path,
+                "scanner_id": "repo-scan",
+                "all_matching": False,
+                "include_disabled": True,
+                "force": True,
+                "ingest": False,
+                "json_output": True,
+            },
+        ),
+        (
+            "sweep",
+            {
+                "target": tmp_path,
+                "scanner_id": None,
+                "all_matching": True,
+                "include_disabled": False,
+                "force": False,
+                "ingest": True,
+                "json_output": False,
+            },
+        ),
+        ("sweeps", {"target": tmp_path, "limit": 5, "json_output": True}),
+        ("sweep-show", {"target": tmp_path, "sweep_id": "sweep-1", "json_output": True}),
     ]
 
 
