@@ -2438,6 +2438,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "issue_count": tool_health["issue_count"],
             "top_issue": tool_health["top_issue"],
             "call_queue": tool_health.get("call_queue"),
+            "run_history": tool_health.get("run_history"),
         },
         "handoff_issues": {
             "count": len(new_handoff_issues),
@@ -3008,6 +3009,16 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
                     "tool_call_top_issue: "
                     f"{call_top.get('call_id')} {call_top.get('issue_type')} "
                     f"{_short(str(call_top.get('detail', '')))}"
+                )
+        run_history = tool_catalog.get("run_history") if isinstance(tool_catalog.get("run_history"), dict) else {}
+        if run_history:
+            print(f"tool_runs: {run_history.get('run_count', 0)}")
+            run_top = run_history.get("top_issue") if isinstance(run_history.get("top_issue"), dict) else None
+            if run_top:
+                print(
+                    "tool_run_top_issue: "
+                    f"{run_top.get('run_id')} {run_top.get('issue_type')} "
+                    f"{_short(str(run_top.get('detail', '')))}"
                 )
 
     handoff_issues = payload.get("handoff_issues")

@@ -675,6 +675,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tools_call_run.add_argument("--next", action="store_true", help="Run the oldest approved portable tool call.")
     p_tools_call_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_tools_call_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_run = tools_sub.add_parser("run", help="Inspect portable tool execution history and replay plans.")
+    tools_run_sub = p_tools_run.add_subparsers(dest="tools_run_command", metavar="<tools-run-command>")
+    tools_run_sub.required = True
+    p_tools_run_list = tools_run_sub.add_parser("list", help="List local portable tool execution receipts.")
+    p_tools_run_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_run_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_run_show = tools_run_sub.add_parser("show", help="Show one local portable tool execution receipt.")
+    p_tools_run_show.add_argument("run_id", help="Run id or unique prefix.")
+    p_tools_run_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_run_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_run_latest = tools_run_sub.add_parser("latest", help="Show the latest local portable tool execution receipt.")
+    p_tools_run_latest.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_tools_run_latest.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_run_replay = tools_run_sub.add_parser("replay", help="Queue a reviewed replay candidate from one run receipt.")
+    p_tools_run_replay.add_argument("run_id", help="Run id or unique prefix.")
+    p_tools_run_replay.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_run_replay.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_tools_runtime = tools_sub.add_parser("runtime", help="Manage explicit local portable tool runtimes.")
     tools_runtime_sub = p_tools_runtime.add_subparsers(dest="tools_runtime_command", metavar="<tools-runtime-command>")
     tools_runtime_sub.required = True
@@ -1291,6 +1308,17 @@ def main(argv=None) -> int:
                     json_output=args.json,
                 )
             parser.error(f"unknown tools call command: {args.tools_call_command}")
+            return 2
+        if args.tools_command == "run":
+            if args.tools_run_command == "list":
+                return tools_cmd.run_list(target=args.target, json_output=args.json)
+            if args.tools_run_command == "show":
+                return tools_cmd.run_show(target=args.target, run_id=args.run_id, json_output=args.json)
+            if args.tools_run_command == "latest":
+                return tools_cmd.run_latest(target=args.target, json_output=args.json)
+            if args.tools_run_command == "replay":
+                return tools_cmd.run_replay(target=args.target, run_id=args.run_id, json_output=args.json)
+            parser.error(f"unknown tools run command: {args.tools_run_command}")
             return 2
         if args.tools_command == "runtime":
             if args.tools_runtime_command == "init":

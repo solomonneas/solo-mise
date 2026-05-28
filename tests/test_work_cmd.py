@@ -2633,6 +2633,156 @@ def test_tools_call_run_next_failure_timeout_health_and_imports(tmp_path, monkey
     assert {"call_failed", "call_running_stale"} <= issue_types
 
 
+def test_tools_run_history_list_show_latest_and_json(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_script_tool_config(tmp_path, script='import sys\nprint("ran=" + sys.argv[1])\n')
+    call = _queue_and_approve_runner(tmp_path, capsys)
+
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    run_payload = json.loads(capsys.readouterr().out)
+    run_id = run_payload["receipt"]["id"]
+
+    assert tools_cmd.run_list(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tools run list:" in out
+    assert f"- {run_id} [completed] runner exit_code=0" in out
+
+    assert tools_cmd.run_list(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_count"] == 1
+    assert payload["runs"][0]["id"] == run_id
+    assert payload["runs"][0]["stdout_summary"] == "ran=README.md"
+
+    assert tools_cmd.run_show(target=tmp_path, run_id=run_id[:12]) == 0
+    out = capsys.readouterr().out
+    assert f"run: {run_id}" in out
+    assert "status: completed" in out
+    assert "stdout_log_path:" in out
+
+    assert tools_cmd.run_show(target=tmp_path, run_id=run_id, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run"]["id"] == run_id
+    assert payload["run"]["call_id"] == call["id"]
+
+    assert tools_cmd.run_latest(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run"]["id"] == run_id
+
+
+def test_tools_run_history_malformed_receipt_and_missing_log_warnings(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+    call = _queue_and_approve_runner(tmp_path, capsys)
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    Path(payload["receipt"]["stdout_log_path"]).unlink()
+    runs_dir = tmp_path / ".brigade" / "tools" / "runs"
+    (runs_dir / "bad.json").write_text("{not json")
+
+    assert tools_cmd.run_list(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_count"] == 1
+
+    assert tools_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] tool_run_receipt_invalid:" in out
+    assert "[warn] tool_run_missing_log:" in out
+
+
+def test_tools_run_replay_creates_pending_call_without_execution(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    marker = tmp_path / "marker.txt"
+    _write_script_tool_config(
+        tmp_path,
+        script='from pathlib import Path\nPath("marker.txt").write_text(Path("marker.txt").read_text() + "x" if Path("marker.txt").exists() else "x")\n',
+    )
+    call = _queue_and_approve_runner(tmp_path, capsys)
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    run_id = json.loads(capsys.readouterr().out)["receipt"]["id"]
+    assert marker.read_text() == "x"
+
+    assert tools_cmd.run_replay(target=tmp_path, run_id=run_id, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] == 1
+    assert payload["executed"] == 0
+    assert payload["call"]["status"] == "pending"
+    assert payload["call"]["replay_of_run_id"] == run_id
+    assert marker.read_text() == "x"
+
+    calls = tools_cmd._read_calls(tmp_path)
+    replay_calls = [item for item in calls if item.get("replay_of_run_id") == run_id]
+    assert len(replay_calls) == 1
+    assert replay_calls[0]["id"] != call["id"]
+
+
+def test_tools_run_replay_blocks_stale_policy_state(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+    _write_policy_config(tmp_path)
+    call = _queue_and_approve_runner(tmp_path, capsys)
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    run_id = json.loads(capsys.readouterr().out)["receipt"]["id"]
+
+    _write_policy_config(tmp_path, denied_effects=["local-read"])
+    assert tools_cmd.run_replay(target=tmp_path, run_id=run_id, json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] == 0
+    assert "effect is denied by policy: local-read" in "\n".join(payload["blockers"])
+
+
+def test_tools_run_replay_does_not_recover_secret_env_values(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    secret_value = "super-secret-value"
+    monkeypatch.setenv("BRIGADE_TEST_SECRET", secret_value)
+    _write_script_tool_config(
+        tmp_path,
+        script='import os\nprint("secret=" + os.environ.get("SAFE_LABEL", ""))\n',
+    )
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.write_text(config.read_text() + 'env_labels = ["SAFE_LABEL"]\n')
+    _write_policy_config(tmp_path, env_bindings={"SAFE_LABEL": "BRIGADE_TEST_SECRET"})
+    call = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"README.md","api_token":"argument-secret"}')
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    run_id = payload["receipt"]["id"]
+    assert secret_value not in json.dumps(payload)
+    assert payload["receipt"]["args"]["api_token"] == "[redacted]"
+
+    assert tools_cmd.run_replay(target=tmp_path, run_id=run_id, json_output=True) == 0
+    replay_payload = json.loads(capsys.readouterr().out)
+    rendered = json.dumps(replay_payload)
+    assert secret_value not in rendered
+    assert replay_payload["call"]["args"]["api_token"] == "[redacted]"
+    assert "argument-secret" not in rendered
+    assert secret_value not in (tmp_path / ".brigade" / "tools" / "calls.jsonl").read_text()
+    assert secret_value not in Path(payload["receipt"]["receipt_path"]).read_text()
+
+
+def test_tools_run_history_integrates_with_brief_and_imports(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    _write_script_tool_config(tmp_path, script='import sys\nsys.exit(6)\n')
+    failed = _queue_and_approve_runner(tmp_path, capsys)
+
+    assert tools_cmd.call_run(target=tmp_path, call_id=failed["id"], json_output=True) == 1
+    run_id = json.loads(capsys.readouterr().out)["receipt"]["id"]
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tool_run_top_issue:" in out
+    assert run_id in out
+
+    assert tools_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    issue_types = {item["metadata"]["tool_issue_type"] for item in payload["imports"]}
+    assert "run_failed" in issue_types
+    imported = [item for item in payload["imports"] if item["metadata"]["tool_issue_type"] == "run_failed"][0]
+    assert imported["metadata"]["tool_run_id"] == run_id
+
+
 def test_tools_runtime_init_list_show_status_and_json(tmp_path, capsys):
     _init_git_repo(tmp_path)
     assert tools_cmd.runtime_init(target=tmp_path) == 0
@@ -5030,6 +5180,22 @@ def test_tools_cli(tmp_path, monkeypatch):
         seen.append(("call-run", kwargs))
         return 0
 
+    def fake_run_list(**kwargs):
+        seen.append(("run-list", kwargs))
+        return 0
+
+    def fake_run_show(**kwargs):
+        seen.append(("run-show", kwargs))
+        return 0
+
+    def fake_run_latest(**kwargs):
+        seen.append(("run-latest", kwargs))
+        return 0
+
+    def fake_run_replay(**kwargs):
+        seen.append(("run-replay", kwargs))
+        return 0
+
     def fake_runtime_init(**kwargs):
         seen.append(("runtime-init", kwargs))
         return 0
@@ -5104,6 +5270,10 @@ def test_tools_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(tools_cmd, "call_reject", fake_call_reject)
     monkeypatch.setattr(tools_cmd, "call_hold", fake_call_hold)
     monkeypatch.setattr(tools_cmd, "call_run", fake_call_run)
+    monkeypatch.setattr(tools_cmd, "run_list", fake_run_list)
+    monkeypatch.setattr(tools_cmd, "run_show", fake_run_show)
+    monkeypatch.setattr(tools_cmd, "run_latest", fake_run_latest)
+    monkeypatch.setattr(tools_cmd, "run_replay", fake_run_replay)
     monkeypatch.setattr(tools_cmd, "runtime_init", fake_runtime_init)
     monkeypatch.setattr(tools_cmd, "runtime_list", fake_runtime_list)
     monkeypatch.setattr(tools_cmd, "runtime_show", fake_runtime_show)
@@ -5135,6 +5305,10 @@ def test_tools_cli(tmp_path, monkeypatch):
     assert cli.main(["tools", "call", "hold", "call-123", "--target", str(tmp_path), "--reason", "wait", "--json"]) == 0
     assert cli.main(["tools", "call", "run", "call-123", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "call", "run", "--next", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "run", "list", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "run", "show", "run-123", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "run", "latest", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "run", "replay", "run-123", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "runtime", "init", "--target", str(tmp_path), "--force"]) == 0
     assert cli.main(["tools", "runtime", "list", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "runtime", "show", "helper", "--target", str(tmp_path), "--json"]) == 0
@@ -5186,6 +5360,10 @@ def test_tools_cli(tmp_path, monkeypatch):
         ("call-hold", {"target": tmp_path, "call_id": "call-123", "reason": "wait", "json_output": True}),
         ("call-run", {"target": tmp_path, "call_id": "call-123", "next_call": False, "json_output": True}),
         ("call-run", {"target": tmp_path, "call_id": None, "next_call": True, "json_output": True}),
+        ("run-list", {"target": tmp_path, "json_output": True}),
+        ("run-show", {"target": tmp_path, "run_id": "run-123", "json_output": True}),
+        ("run-latest", {"target": tmp_path, "json_output": True}),
+        ("run-replay", {"target": tmp_path, "run_id": "run-123", "json_output": True}),
         ("runtime-init", {"target": tmp_path, "force": True}),
         ("runtime-list", {"target": tmp_path, "json_output": True}),
         ("runtime-show", {"target": tmp_path, "runtime_id": "helper", "json_output": True}),
