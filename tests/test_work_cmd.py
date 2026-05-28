@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 
 from brigade import cli
@@ -2369,6 +2370,197 @@ supported_harnesses = []
     assert {"call_stale_pending", "call_stale_approved"} <= issue_types
 
 
+def _write_script_tool_config(tmp_path, *, script: str, timeout: float = 5.0) -> None:
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir(exist_ok=True)
+    (tools_dir / "runner.py").write_text(script)
+    (tools_dir / "input.schema.json").write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "additionalProperties": True,
+            }
+        )
+    )
+    config = tmp_path / ".brigade" / "tools.toml"
+    config.parent.mkdir(exist_ok=True)
+    config.write_text(
+        f"""
+[[tool]]
+id = "runner"
+name = "Runner"
+family = "script"
+enabled = true
+description = "Run local script."
+command = "{sys.executable} tools/runner.py"
+input_schema_path = "tools/input.schema.json"
+timeout = {timeout}
+permissions = ["read-files"]
+effects = ["local-read"]
+approval_mode = "on-request"
+argument_template = {{ path = "{{path}}" }}
+supported_harnesses = []
+"""
+    )
+
+
+def _queue_and_approve_runner(tmp_path, capsys, args='{"path":"README.md"}'):
+    assert tools_cmd.call_queue(target=tmp_path, tool_id="runner", args=args, json_output=True) == 0
+    call = json.loads(capsys.readouterr().out)["call"]
+    assert tools_cmd.call_approve(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    return json.loads(capsys.readouterr().out)["call"]
+
+
+def test_tools_call_run_approved_script_writes_receipt_and_redacts_output(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_script_tool_config(
+        tmp_path,
+        script='import sys\nprint("path=" + sys.argv[1])\nprint("api_token=secret-value")\n',
+    )
+    call = _queue_and_approve_runner(tmp_path, capsys)
+
+    assert tools_cmd.call_run(target=tmp_path, call_id=call["id"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["call"]["status"] == "completed"
+    assert payload["call"]["exit_code"] == 0
+    receipt = payload["receipt"]
+    assert receipt["call_id"] == call["id"]
+    assert receipt["status"] == "completed"
+    assert receipt["exit_code"] == 0
+    assert receipt["permissions"] == ["read-files"]
+    assert receipt["effects"] == ["local-read"]
+    assert receipt["stdout_summary"].startswith("path=README.md")
+    assert "secret-value" not in json.dumps(payload)
+    assert "api_token=[redacted]" in receipt["stdout_summary"]
+    assert (tmp_path / ".brigade" / "tools" / "runs").is_dir()
+    assert os.path.isfile(receipt["receipt_path"])
+    assert os.path.isfile(receipt["stdout_log_path"])
+    assert os.path.isfile(receipt["stderr_log_path"])
+
+    assert tools_cmd.call_show(target=tmp_path, call_id=call["id"]) == 0
+    out = capsys.readouterr().out
+    assert "status: completed" in out
+
+
+def test_tools_call_run_refuses_non_runnable_statuses_and_stale_records(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+
+    assert tools_cmd.call_queue(target=tmp_path, tool_id="runner", args='{"path":"pending"}', json_output=True) == 0
+    pending = json.loads(capsys.readouterr().out)["call"]
+    assert tools_cmd.call_run(target=tmp_path, call_id=pending["id"], json_output=True) == 1
+    assert "must be approved" in " ".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    rejected = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"rejected"}')
+    assert tools_cmd.call_reject(target=tmp_path, call_id=rejected["id"], reason="no", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.call_run(target=tmp_path, call_id=rejected["id"], json_output=True) == 1
+    assert "must be approved" in " ".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    held = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"held"}')
+    assert tools_cmd.call_hold(target=tmp_path, call_id=held["id"], reason="wait", json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.call_run(target=tmp_path, call_id=held["id"], json_output=True) == 1
+    assert "must be approved" in " ".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    blocked_config = tmp_path / ".brigade" / "tools.toml"
+    blocked_config.write_text(
+        f"""
+[[tool]]
+id = "blocked"
+name = "Blocked"
+family = "script"
+enabled = true
+description = "Blocked."
+command = "{sys.executable} tools/runner.py"
+supported_harnesses = []
+"""
+    )
+    assert tools_cmd.call_queue(target=tmp_path, tool_id="blocked", args="{}", include_blocked=True, json_output=True) == 0
+    blocked = json.loads(capsys.readouterr().out)["call"]
+    calls = tools_cmd._read_calls(tmp_path)
+    for item in calls:
+        if item["id"] == blocked["id"]:
+            item["status"] = "approved"
+            item["reviewed_at"] = "2026-05-27T12:00:00+00:00"
+            item["approval_fingerprint"] = tools_cmd._approval_fingerprint(item)
+    tools_cmd._write_calls(tmp_path, calls)
+    assert tools_cmd.call_run(target=tmp_path, call_id=blocked["id"], json_output=True) == 1
+    assert "blocked calls cannot be run" in " ".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+    stale = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"stale"}')
+    (tmp_path / "tools" / "input.schema.json").write_text(
+        json.dumps({"type": "object", "properties": {"path": {"type": "string"}, "mode": {"type": "string"}}})
+    )
+    assert tools_cmd.call_run(target=tmp_path, call_id=stale["id"], json_output=True) == 1
+    assert "contract fingerprint is stale" in " ".join(json.loads(capsys.readouterr().out)["blockers"])
+
+    _write_script_tool_config(tmp_path, script='print("ok")\n')
+    completed = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"completed"}')
+    assert tools_cmd.call_run(target=tmp_path, call_id=completed["id"], json_output=True) == 0
+    capsys.readouterr()
+    assert tools_cmd.call_run(target=tmp_path, call_id=completed["id"], json_output=True) == 1
+    assert "completed calls cannot be run again" in " ".join(json.loads(capsys.readouterr().out)["blockers"])
+
+
+def test_tools_call_run_next_failure_timeout_health_and_imports(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
+    _write_script_tool_config(
+        tmp_path,
+        script='import sys\nprint("api_token=secret-value")\nsys.exit(7)\n',
+    )
+    failed = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"failed"}')
+
+    assert tools_cmd.call_run(target=tmp_path, next_call=True, json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["call"]["id"] == failed["id"]
+    assert payload["call"]["status"] == "failed"
+    assert payload["receipt"]["exit_code"] == 7
+    assert "secret-value" not in json.dumps(payload)
+
+    _write_script_tool_config(
+        tmp_path,
+        script='import time\ntime.sleep(3)\n',
+        timeout=0.1,
+    )
+    timed = _queue_and_approve_runner(tmp_path, capsys, args='{"path":"timed"}')
+    assert tools_cmd.call_run(target=tmp_path, call_id=timed["id"], json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["call"]["status"] == "failed"
+    assert payload["receipt"]["timed_out"] is True
+
+    calls = tools_cmd._read_calls(tmp_path)
+    running = dict(calls[-1])
+    running["id"] = "call-running-stale"
+    running["status"] = "running"
+    running["started_at"] = "2026-05-25T12:00:00+00:00"
+    running["completed_at"] = None
+    calls.append(running)
+    tools_cmd._write_calls(tmp_path, calls)
+    monkeypatch.setattr(tools_cmd, "_now", lambda: datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc))
+
+    assert tools_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] tool_call_failed:" in out
+    assert "[warn] tool_call_running_stale:" in out
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "tool_call_top_issue:" in out
+    assert "call_failed" in out
+
+    assert tools_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    issue_types = {item["metadata"]["tool_issue_type"] for item in payload["imports"]}
+    assert {"call_failed", "call_running_stale"} <= issue_types
+
+
 def test_work_backup_init_status_doctor_and_json(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(dogfood_cmd, "_check_git_ignored", lambda repo, path: "yes")
@@ -4449,6 +4641,10 @@ def test_tools_cli(tmp_path, monkeypatch):
         seen.append(("call-hold", kwargs))
         return 0
 
+    def fake_call_run(**kwargs):
+        seen.append(("call-run", kwargs))
+        return 0
+
     def fake_plan(**kwargs):
         seen.append(("plan", kwargs))
         return 0
@@ -4478,6 +4674,7 @@ def test_tools_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(tools_cmd, "call_approve", fake_call_approve)
     monkeypatch.setattr(tools_cmd, "call_reject", fake_call_reject)
     monkeypatch.setattr(tools_cmd, "call_hold", fake_call_hold)
+    monkeypatch.setattr(tools_cmd, "call_run", fake_call_run)
     monkeypatch.setattr(tools_cmd, "plan", fake_plan)
     monkeypatch.setattr(tools_cmd, "apply", fake_apply)
     monkeypatch.setattr(tools_cmd, "doctor", fake_doctor)
@@ -4496,6 +4693,8 @@ def test_tools_cli(tmp_path, monkeypatch):
     assert cli.main(["tools", "call", "approve", "call-123", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "call", "reject", "call-123", "--target", str(tmp_path), "--reason", "no", "--json"]) == 0
     assert cli.main(["tools", "call", "hold", "call-123", "--target", str(tmp_path), "--reason", "wait", "--json"]) == 0
+    assert cli.main(["tools", "call", "run", "call-123", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["tools", "call", "run", "--next", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "plan", "simplify", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["tools", "apply", "simplify", "--target", str(tmp_path), "--dry-run", "--force", "--json"]) == 0
     assert cli.main(["tools", "apply", "--all", "--target", str(tmp_path), "--json"]) == 0
@@ -4534,6 +4733,8 @@ def test_tools_cli(tmp_path, monkeypatch):
         ("call-approve", {"target": tmp_path, "call_id": "call-123", "json_output": True}),
         ("call-reject", {"target": tmp_path, "call_id": "call-123", "reason": "no", "json_output": True}),
         ("call-hold", {"target": tmp_path, "call_id": "call-123", "reason": "wait", "json_output": True}),
+        ("call-run", {"target": tmp_path, "call_id": "call-123", "next_call": False, "json_output": True}),
+        ("call-run", {"target": tmp_path, "call_id": None, "next_call": True, "json_output": True}),
         ("plan", {"target": tmp_path, "tool_id": "simplify", "json_output": True}),
         (
             "apply",

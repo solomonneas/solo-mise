@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,8 +28,10 @@ WARN = "warn"
 FAIL = "fail"
 CONFIG_REL_PATH = ".brigade/tools.toml"
 CALLS_REL_PATH = ".brigade/tools/calls.jsonl"
+RUNS_REL_PATH = ".brigade/tools/runs"
 HEALTH_STALE_HOURS = 48
 CALL_STALE_HOURS = 72
+CALL_RUNNING_STALE_HOURS = 2
 PROJECTION_MARKER = "brigade-tool-projection:"
 FAMILIES = ("skill", "slash-command", "superpower", "mcp", "openapi", "graphql", "script", "custom")
 KNOWN_HARNESSES = ("claude", "codex", "opencode", "hermes", "openclaw", "mcp", "scripts")
@@ -76,6 +81,10 @@ def config_path(target: Path) -> Path:
 
 def calls_path(target: Path) -> Path:
     return target / CALLS_REL_PATH
+
+
+def runs_path(target: Path) -> Path:
+    return target / RUNS_REL_PATH
 
 
 def _now() -> datetime:
@@ -324,6 +333,21 @@ def _redact_payload(value: object) -> object:
     if isinstance(value, list):
         return [_redact_payload(item) for item in value]
     return value
+
+
+def _redact_text(value: object, limit: int = 500) -> str:
+    text = "" if value is None else str(value)
+    text = re.sub(
+        r"(?i)\b([A-Za-z0-9_-]*(?:password|secret|token|credential|api[_-]?key)[A-Za-z0-9_-]*)\b\s*[:=]\s*[^\s\"']+",
+        lambda match: f"{match.group(1)}=[redacted]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(\"(?:password|secret|token|credential|api[_-]?key)\"\s*:\s*\")[^\"]+(\")",
+        r"\1[redacted]\2",
+        text,
+    )
+    return _short(text, limit)
 
 
 def _schema_path(target: Path, tool: dict[str, Any], field: str) -> Path | None:
@@ -1129,6 +1153,51 @@ def _call_fingerprint(plan_payload: dict[str, Any]) -> str:
     )
 
 
+def _call_plan_from_record(call: dict[str, Any]) -> dict[str, Any]:
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    return {
+        "tool_id": call.get("tool_id"),
+        "family": call.get("family"),
+        "command": call.get("command"),
+        "cwd": contract.get("cwd"),
+        "timeout": contract.get("timeout"),
+        "auth_label": contract.get("auth_label"),
+        "env_labels": contract.get("env_labels", []),
+        "arguments": call.get("arguments"),
+        "args": call.get("args"),
+        "permissions": contract.get("permissions", []),
+        "effects": contract.get("effects", []),
+        "approval_required": contract.get("approval_required"),
+        "approval_mode": contract.get("approval_mode"),
+    }
+
+
+def _stored_call_fingerprint(call: dict[str, Any]) -> str:
+    return _stable_hash(
+        {
+            "tool_id": call.get("tool_id"),
+            "plan": _call_plan_from_record(call),
+            "contract_fingerprint": call.get("contract_fingerprint"),
+            "source_fingerprint": call.get("source_fingerprint"),
+        }
+    )
+
+
+def _approval_fingerprint(call: dict[str, Any]) -> str:
+    return _stable_hash(
+        {
+            "id": call.get("id"),
+            "tool_id": call.get("tool_id"),
+            "status": call.get("status"),
+            "reviewed_at": call.get("reviewed_at"),
+            "review_reason": call.get("review_reason"),
+            "call_fingerprint": call.get("call_fingerprint"),
+            "contract_fingerprint": call.get("contract_fingerprint"),
+            "source_fingerprint": call.get("source_fingerprint"),
+        }
+    )
+
+
 def _make_call_record(plan_payload: dict[str, Any]) -> dict[str, Any]:
     fingerprint = _call_fingerprint(plan_payload)
     now = _now().isoformat()
@@ -1159,6 +1228,12 @@ def _make_call_record(plan_payload: dict[str, Any]) -> dict[str, Any]:
         "contract_fingerprint": plan_payload.get("contract_fingerprint"),
         "source_fingerprint": plan_payload.get("source_fingerprint"),
         "call_fingerprint": fingerprint,
+        "approval_fingerprint": None,
+        "started_at": None,
+        "completed_at": None,
+        "run_id": None,
+        "receipt_path": None,
+        "exit_code": None,
     }
 
 
@@ -1238,6 +1313,257 @@ def _call_current_fingerprints(target: Path, call: dict[str, Any]) -> tuple[str 
     return _contract_fingerprint(target, tool), _source_fingerprint(target, tool)
 
 
+def _call_projection_summary(target: Path, tool_id: str) -> dict[str, Any]:
+    payload = _projection_plan_payload(target, tool_id=tool_id)
+    return {
+        "counts": payload.get("counts", {}),
+        "projections": [
+            {
+                "harness": item.get("harness"),
+                "status": item.get("status"),
+                "action": item.get("action"),
+                "projection_path": item.get("projection_path"),
+            }
+            for item in payload.get("projections", [])
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _run_id_for_call(call: dict[str, Any], started_at: str) -> str:
+    suffix = _stable_hash({"call_id": call.get("id"), "started_at": started_at})
+    return f"run-{suffix}"
+
+
+def _call_run_blockers(target: Path, call: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    status = str(call.get("status") or "")
+    if status != "approved":
+        if status == "completed":
+            blockers.append("completed calls cannot be run again")
+        elif status == "failed":
+            blockers.append("failed calls are not approved for another run")
+        elif status == "running":
+            blockers.append("call is already running")
+        else:
+            blockers.append(f"call must be approved before run: {status or 'unknown'}")
+    if call.get("blockers"):
+        blockers.append("blocked calls cannot be run")
+    if call.get("family") != "script":
+        blockers.append("only script family calls can be run")
+    if not isinstance(call.get("command"), str) or not str(call.get("command")).strip():
+        blockers.append("command is required")
+    if _high_risk_command(call.get("command")):
+        blockers.append("command shape is high risk")
+    approval_fingerprint = call.get("approval_fingerprint")
+    if not approval_fingerprint:
+        blockers.append("approval fingerprint is missing")
+    elif approval_fingerprint != _approval_fingerprint(call):
+        blockers.append("approval fingerprint is stale")
+    if call.get("call_fingerprint") != _stored_call_fingerprint(call):
+        blockers.append("stored args or call metadata fingerprint is stale")
+    current_contract, current_source = _call_current_fingerprints(target, call)
+    if current_contract != call.get("contract_fingerprint"):
+        blockers.append("contract fingerprint is stale")
+    if current_source != call.get("source_fingerprint"):
+        blockers.append("source fingerprint is stale")
+    tool_id = str(call.get("tool_id") or "")
+    if not tool_id:
+        blockers.append("tool_id is missing")
+    else:
+        tool, errors = _find_tool(target, tool_id)
+        if tool is None:
+            blockers.extend(errors or [f"tool not found: {tool_id}"])
+        else:
+            if tool.get("family") != "script":
+                blockers.append("configured tool is not script family")
+            current_projection = _call_projection_summary(target, tool_id)
+            if current_projection != call.get("projection_summary", {}):
+                blockers.append("projection summary is stale")
+            cwd_value = call.get("contract", {}).get("cwd") if isinstance(call.get("contract"), dict) else None
+            cwd_path = _as_path(target, cwd_value) if cwd_value else target
+            if cwd_path is None or not cwd_path.is_dir():
+                blockers.append(f"cwd does not exist: {cwd_path}")
+    if not _command_parts(call.get("command")):
+        blockers.append("command could not be parsed")
+    return blockers
+
+
+def _write_run_receipt(
+    target: Path,
+    *,
+    call: dict[str, Any],
+    run_id: str,
+    started_at: str,
+    completed_at: str,
+    duration_seconds: float,
+    status: str,
+    exit_code: int | None,
+    timed_out: bool,
+    stdout: object,
+    stderr: object,
+    argv: list[str],
+    cwd: Path,
+) -> dict[str, Any]:
+    run_dir = runs_path(target)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stdout_text = "" if stdout is None else str(stdout)
+    stderr_text = "" if stderr is None else str(stderr)
+    stdout_path = run_dir / f"{run_id}.stdout.log"
+    stderr_path = run_dir / f"{run_id}.stderr.log"
+    receipt_path = run_dir / f"{run_id}.json"
+    stdout_path.write_text(stdout_text)
+    stderr_path.write_text(stderr_text)
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    receipt = {
+        "id": run_id,
+        "call_id": call.get("id"),
+        "tool_id": call.get("tool_id"),
+        "status": status,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "duration_seconds": round(duration_seconds, 3),
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "command_label": call.get("command"),
+        "argv": [_redact_text(part, 160) for part in argv],
+        "cwd": str(cwd),
+        "stdout_summary": _redact_text(stdout_text),
+        "stderr_summary": _redact_text(stderr_text),
+        "stdout_log_path": str(stdout_path),
+        "stderr_log_path": str(stderr_path),
+        "receipt_path": str(receipt_path),
+        "contract_fingerprint": call.get("contract_fingerprint"),
+        "source_fingerprint": call.get("source_fingerprint"),
+        "call_fingerprint": call.get("call_fingerprint"),
+        "approval_fingerprint": call.get("approval_fingerprint"),
+        "approval": {
+            "reviewed_at": call.get("reviewed_at"),
+            "review_reason": call.get("review_reason"),
+        },
+        "permissions": contract.get("permissions", []),
+        "effects": contract.get("effects", []),
+        "projection_summary": call.get("projection_summary", {}),
+    }
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return receipt
+
+
+def _next_approved_call(calls: list[dict[str, Any]]) -> dict[str, Any] | None:
+    approved = [call for call in calls if call.get("status") == "approved"]
+    approved.sort(key=lambda call: str(call.get("created_at") or ""))
+    return approved[0] if approved else None
+
+
+def _run_call_payload(target: Path, *, call_id: str | None = None, next_call: bool = False) -> tuple[dict[str, Any], int]:
+    target = target.expanduser().resolve()
+    calls = _read_calls(target)
+    call: dict[str, Any] | None
+    error: str | None = None
+    if next_call:
+        call = _next_approved_call(calls)
+        if call is None:
+            error = "no approved calls available"
+    elif call_id:
+        call, calls, error = _resolve_call(target, call_id)
+    else:
+        call = None
+        error = "pass a call id or --next"
+    if call is None:
+        return {"target": str(target), "calls_path": str(calls_path(target)), "error": error}, 1
+    blockers = _call_run_blockers(target, call)
+    if blockers:
+        return {
+            "target": str(target),
+            "calls_path": str(calls_path(target)),
+            "call": call,
+            "blockers": blockers,
+            "error": "call is not runnable",
+        }, 1
+    contract = call.get("contract") if isinstance(call.get("contract"), dict) else {}
+    cwd_value = contract.get("cwd")
+    cwd = _as_path(target, cwd_value) if cwd_value else target
+    assert cwd is not None
+    argv = _command_parts(call.get("command"))
+    for key in sorted((call.get("arguments") if isinstance(call.get("arguments"), dict) else {}).keys()):
+        value = call["arguments"][key]
+        if value is None:
+            continue
+        argv.extend(shlex.split(str(value)))
+    started_at = _now().isoformat()
+    run_id = _run_id_for_call(call, started_at)
+    receipt_path = runs_path(target) / f"{run_id}.json"
+    call["status"] = "running"
+    call["started_at"] = started_at
+    call["completed_at"] = None
+    call["run_id"] = run_id
+    call["receipt_path"] = str(receipt_path)
+    call["exit_code"] = None
+    _write_calls(target, calls)
+
+    timeout = contract.get("timeout")
+    timeout_value = float(timeout) if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) else None
+    start_monotonic = time.monotonic()
+    stdout: object = ""
+    stderr: object = ""
+    exit_code: int | None = None
+    timed_out = False
+    status = "completed"
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            timeout=timeout_value,
+            check=False,
+        )
+        stdout = completed.stdout
+        stderr = completed.stderr
+        exit_code = completed.returncode
+        if completed.returncode != 0:
+            status = "failed"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        timed_out = True
+        status = "failed"
+    except OSError as exc:
+        stderr = str(exc)
+        status = "failed"
+    duration_seconds = time.monotonic() - start_monotonic
+    completed_at = _now().isoformat()
+    receipt = _write_run_receipt(
+        target,
+        call=call,
+        run_id=run_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_seconds=duration_seconds,
+        status=status,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        stdout=stdout,
+        stderr=stderr,
+        argv=argv,
+        cwd=cwd,
+    )
+    call["status"] = status
+    call["completed_at"] = completed_at
+    call["exit_code"] = exit_code
+    call["timed_out"] = timed_out
+    call["receipt_path"] = receipt["receipt_path"]
+    _write_calls(target, calls)
+    return {
+        "target": str(target),
+        "calls_path": str(calls_path(target)),
+        "runs_path": str(runs_path(target)),
+        "call": call,
+        "receipt": receipt,
+    }, 0 if status == "completed" else 1
+
+
 def _call_health(target: Path) -> dict[str, Any]:
     calls = _read_calls(target)
     now = _now()
@@ -1284,6 +1610,32 @@ def _call_health(target: Path) -> dict[str, Any]:
                         "detail": f"{call.get('id')} approved with stale contract or source fingerprint",
                     }
                 )
+        if status == "running":
+            started = _parse_iso_datetime(call.get("started_at"))
+            if started is not None:
+                age_hours = (now - started).total_seconds() / 3600
+                if age_hours > CALL_RUNNING_STALE_HOURS:
+                    issues.append(
+                        {
+                            "status": WARN,
+                            "name": "tool_call_running_stale",
+                            "issue_type": "call_running_stale",
+                            "tool_id": call.get("tool_id"),
+                            "call_id": call.get("id"),
+                            "detail": f"{call.get('id')} running for {age_hours:.1f}h",
+                        }
+                    )
+        if status == "failed":
+            issues.append(
+                {
+                    "status": WARN,
+                    "name": "tool_call_failed",
+                    "issue_type": "call_failed",
+                    "tool_id": call.get("tool_id"),
+                    "call_id": call.get("id"),
+                    "detail": f"{call.get('id')} failed with exit_code={call.get('exit_code')}",
+                }
+            )
         if status in {"held", "rejected"}:
             issues.append(
                 {
@@ -1715,6 +2067,7 @@ def _call_review(
     call["status"] = status
     call["reviewed_at"] = _now().isoformat()
     call["review_reason"] = reason
+    call["approval_fingerprint"] = _approval_fingerprint(call) if status == "approved" else None
     _write_calls(target, calls)
     payload = {"target": str(target), "calls_path": str(calls_path(target)), "call": call}
     if json_output:
@@ -1737,6 +2090,34 @@ def call_reject(*, target: Path, call_id: str, reason: str, json_output: bool = 
 
 def call_hold(*, target: Path, call_id: str, reason: str, json_output: bool = False) -> int:
     return _call_review(target=target, call_id=call_id, status="held", reason=reason, json_output=json_output)
+
+
+def call_run(*, target: Path, call_id: str | None = None, next_call: bool = False, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    if bool(call_id) == bool(next_call):
+        print("error: pass exactly one call id or --next", file=sys.stderr)
+        return 2
+    payload, rc = _run_call_payload(target, call_id=call_id, next_call=next_call)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return rc
+    if payload.get("error"):
+        print(f"error: {payload['error']}", file=sys.stderr)
+        for blocker in payload.get("blockers", []):
+            print(f"- {blocker}", file=sys.stderr)
+        return rc
+    call = payload["call"]
+    receipt = payload["receipt"]
+    print(f"tools call run: {call.get('id')}")
+    print(f"status: {call.get('status')}")
+    print(f"exit_code: {call.get('exit_code')}")
+    print(f"receipt_path: {receipt.get('receipt_path')}")
+    print(f"stdout_summary: {receipt.get('stdout_summary')}")
+    print(f"stderr_summary: {receipt.get('stderr_summary')}")
+    return rc
 
 
 def plan(*, target: Path, tool_id: str | None = None, json_output: bool = False) -> int:

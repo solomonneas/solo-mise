@@ -32,6 +32,8 @@ brigade tools call show <call-id>
 brigade tools call approve <call-id>
 brigade tools call reject <call-id> --reason "not needed"
 brigade tools call hold <call-id> --reason "needs review"
+brigade tools call run <call-id>
+brigade tools call run --next
 brigade tools plan
 brigade tools plan simplify
 brigade tools apply simplify --dry-run
@@ -42,7 +44,7 @@ brigade tools doctor --json
 brigade tools import-issues
 ```
 
-`list`, `show`, and `search` inspect configured entries. `describe` and `contracts` inspect schema-backed call contracts. `call plan` validates arguments and returns a safe call plan without executing anything. `call queue` stores a plan for local review, and `call approve`, `reject`, and `hold` update review status only. `plan` previews projection writes without touching files. `apply` is the only command that writes projections, and it requires either one tool id or `--all`. `doctor` reports catalog health issues. `import-issues` writes those issues into the normal work import inbox as `tool-catalog` task imports with stable source fingerprints.
+`list`, `show`, and `search` inspect configured entries. `describe` and `contracts` inspect schema-backed call contracts. `call plan` validates arguments and returns a safe call plan without executing anything. `call queue` stores a plan for local review, and `call approve`, `reject`, and `hold` update review status only. `call run` explicitly executes approved script calls and writes local receipts. `plan` previews projection writes without touching files. `apply` is the only command that writes projections, and it requires either one tool id or `--all`. `doctor` reports catalog health issues. `import-issues` writes those issues into the normal work import inbox as `tool-catalog` task imports with stable source fingerprints.
 
 ## Config Shape
 
@@ -185,6 +187,29 @@ Equivalent valid plans dedupe while pending or approved. Rejected calls can be r
 
 `brigade tools doctor` warns on stale pending approvals, approved calls whose contract or source fingerprint has gone stale, blocked queued calls, and held or rejected calls. `brigade work brief` shows pending approval count and the highest-priority call approval issue. `brigade tools import-issues` routes call approval health problems into `tool-catalog` imports.
 
+## Call Execution Receipts
+
+`brigade tools call run <call-id>` executes exactly one approved call. `brigade tools call run --next` runs the oldest approved call. Execution is intentionally narrow:
+
+- only `script` family calls run
+- the call must be `approved`
+- blockers must be empty
+- approval, args, contract, source, and projection fingerprints must still match
+- completed calls cannot be run again
+- commands run with `shell=False`
+
+For script calls, Brigade parses the configured `command`, appends rendered `argument_template` values in stable key order, uses the configured `cwd` when present, and applies the configured timeout. It does not resolve auth, fetch secrets, start MCP servers, run OpenAPI or GraphQL calls, or execute unapproved queue entries.
+
+Each run writes a receipt and raw local logs under:
+
+```text
+.brigade/tools/runs/
+```
+
+Receipts include call id, tool id, status, timestamps, duration, exit code, timeout status, command label, cwd, redacted stdout/stderr summaries, stdout/stderr log paths, contract/source/call/approval fingerprints, approval metadata, permissions, effects, and projection summary. Raw stdout and stderr logs stay local and gitignored.
+
+`brigade tools doctor` warns on failed executions and calls left running too long. `brigade work brief` surfaces the highest-priority execution issue, and `brigade tools import-issues` routes execution health problems into `tool-catalog` imports.
+
 ## Health Checks
 
 `brigade tools doctor` reports:
@@ -204,6 +229,8 @@ Equivalent valid plans dedupe while pending or approved. Rejected calls can be r
 - unsafe auth or env field names in the local config
 - stale or blocked tool call approvals
 - approved tool calls with stale source or contract fingerprints
+- failed tool call executions
+- tool call executions left running too long
 - MCP config issues in local JSON files with `mcpServers`
 
 MCP discovery is structural only. Brigade summarizes server count and server ids, checks for missing commands and timeout metadata, and flags broad shell-like command shapes. It never starts an MCP server.
@@ -226,4 +253,4 @@ Repeated imports dedupe equivalent pending or promoted issues. Dismissed tool-ca
 
 Keep all catalog state local and gitignored. Do not put tokens, passwords, raw credentials, URLs with embedded secrets, private hostnames, or host-private paths in public templates. Brigade reports unsafe field names without copying their values into command output, work imports, session artifacts, docs, or handoffs.
 
-Projection apply is local and explicit. Call planning and call approval review are local and non-executing. Brigade does not invoke projected tools, install schedulers, start a daemon, fetch remote schemas, store auth, send notifications, or mutate remote services.
+Projection apply is local and explicit. Call planning and call approval review are local and non-executing. Tool execution is explicit through `brigade tools call run`, limited initially to approved local `script` entries, and recorded with local receipts. Brigade does not start MCP servers, run OpenAPI or GraphQL calls, install schedulers, start a daemon, fetch remote schemas, store auth, send notifications, or mutate remote services.

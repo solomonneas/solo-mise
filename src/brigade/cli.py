@@ -670,6 +670,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tools_call_hold.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_tools_call_hold.add_argument("--reason", required=True, help="Review reason.")
     p_tools_call_hold.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_tools_call_run = tools_call_sub.add_parser("run", help="Run one approved portable tool call and write a local receipt.")
+    p_tools_call_run.add_argument("call_id", nargs="?", help="Call id or unique prefix.")
+    p_tools_call_run.add_argument("--next", action="store_true", help="Run the oldest approved portable tool call.")
+    p_tools_call_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_tools_call_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_tools_plan = tools_sub.add_parser("plan", help="Plan portable tool projection writes.")
     p_tools_plan.add_argument("tool_id", nargs="?", help="Optional logical tool id.")
     p_tools_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -1242,6 +1247,13 @@ def main(argv=None) -> int:
                 return tools_cmd.call_reject(target=args.target, call_id=args.call_id, reason=args.reason, json_output=args.json)
             if args.tools_call_command == "hold":
                 return tools_cmd.call_hold(target=args.target, call_id=args.call_id, reason=args.reason, json_output=args.json)
+            if args.tools_call_command == "run":
+                return tools_cmd.call_run(
+                    target=args.target,
+                    call_id=args.call_id,
+                    next_call=args.next,
+                    json_output=args.json,
+                )
             parser.error(f"unknown tools call command: {args.tools_call_command}")
             return 2
         if args.tools_command == "plan":
