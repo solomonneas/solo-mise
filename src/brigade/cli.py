@@ -132,6 +132,29 @@ def _build_parser() -> argparse.ArgumentParser:
     p_release_show.add_argument("run_id", help="Run id, unique prefix, or latest.")
     p_release_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_release_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_candidate = release_sub.add_parser("candidate", help="Build and inspect local release candidate bundles.")
+    release_candidate_sub = p_release_candidate.add_subparsers(dest="release_candidate_command", metavar="<candidate-command>")
+    release_candidate_sub.required = True
+    p_release_candidate_plan = release_candidate_sub.add_parser("plan", help="Plan a release candidate bundle without writing it.")
+    p_release_candidate_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_candidate_plan.add_argument("--base-ref", default="origin/main", help="Base ref for changed files and release notes.")
+    p_release_candidate_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_candidate_build = release_candidate_sub.add_parser("build", help="Build a local release candidate bundle.")
+    p_release_candidate_build.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_release_candidate_build.add_argument("--base-ref", default="origin/main", help="Base ref for changed files and release notes.")
+    p_release_candidate_build.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_candidate_list = release_candidate_sub.add_parser("list", help="List local release candidate bundles.")
+    p_release_candidate_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_candidate_list.add_argument("--limit", type=int, default=20, help="Maximum candidates to list.")
+    p_release_candidate_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_candidate_show = release_candidate_sub.add_parser("show", help="Show one local release candidate bundle.")
+    p_release_candidate_show.add_argument("candidate_id", help="Candidate id, unique prefix, or latest.")
+    p_release_candidate_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_candidate_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_candidate_archive = release_candidate_sub.add_parser("archive", help="Archive one local release candidate bundle.")
+    p_release_candidate_archive.add_argument("candidate_id", help="Candidate id, unique prefix, or latest.")
+    p_release_candidate_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_release_candidate_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     # handoff
     p_handoff = sub.add_parser("handoff", help="Inspect memory handoff inbox health.")
@@ -1185,6 +1208,19 @@ def main(argv=None) -> int:
             return release_cmd.runs(target=args.target, limit=args.limit, json_output=args.json)
         if args.release_command == "show":
             return release_cmd.show(target=args.target, run_id=args.run_id, json_output=args.json)
+        if args.release_command == "candidate":
+            if args.release_candidate_command == "plan":
+                return release_cmd.candidate_plan(target=args.target, base_ref=args.base_ref, json_output=args.json)
+            if args.release_candidate_command == "build":
+                return release_cmd.candidate_build(target=args.target, base_ref=args.base_ref, json_output=args.json)
+            if args.release_candidate_command == "list":
+                return release_cmd.candidate_list(target=args.target, limit=args.limit, json_output=args.json)
+            if args.release_candidate_command == "show":
+                return release_cmd.candidate_show(target=args.target, candidate_id=args.candidate_id, json_output=args.json)
+            if args.release_candidate_command == "archive":
+                return release_cmd.candidate_archive(target=args.target, candidate_id=args.candidate_id, json_output=args.json)
+            parser.error(f"unknown release candidate command: {args.release_candidate_command}")
+            return 2
         parser.error(f"unknown release command: {args.release_command}")
         return 2
     if cmd == "handoff":

@@ -44,6 +44,7 @@ Goal: make Brigade a safe target for local automations that discover useful work
 - Close out imported review findings against downstream work. Status: implemented with `brigade work review findings`, `finding-show`, `closeout`, source-fingerprint re-review detection, task review evidence, and daily-loop warnings for unclosed review runs.
 - Close out completed work against local verification evidence. Status: implemented with `brigade work verify plan/run/runs/show` and `brigade work closeout`, collecting task acceptance, test command receipts, scanner sweep state, code review closeout state, handoff draft status, and session evidence without CI or remote mutation.
 - Check local release readiness before publish operations. Status: implemented with `brigade release plan`, `doctor`, `run`, `runs`, and `show`, collecting work closeout, verification, review, scanner, security, handoff, content-guard, docs, changelog, roadmap, and git-state evidence without pushing, tagging, or mutating remotes.
+- Build local release candidate packets before manual publish steps. Status: implemented with `brigade release candidate plan/build/list/show/archive`, local candidate bundles, evidence JSON, release notes drafts, manual-only publish plans, candidate health warnings, and no remote mutation.
 
 ## Later Phase: Chat Surface Scanners
 

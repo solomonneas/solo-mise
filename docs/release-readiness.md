@@ -10,6 +10,11 @@ brigade release doctor
 brigade release run
 brigade release runs
 brigade release show <run-id>
+brigade release candidate plan
+brigade release candidate build
+brigade release candidate list
+brigade release candidate show <candidate-id>
+brigade release candidate archive <candidate-id>
 ```
 
 `plan` gathers local evidence and reports readiness without running publish checks or writing a receipt.
@@ -23,6 +28,8 @@ brigade release show <run-id>
 ```
 
 `runs` and `show` inspect those receipts.
+
+`release candidate` commands turn readiness receipts into local candidate bundles under `.brigade/release/candidates/`. They do not push, tag, create releases, or mutate remotes. See [`release-candidates.md`](release-candidates.md).
 
 ## Evidence
 
@@ -43,7 +50,7 @@ Release readiness includes:
 
 Blockers include missing or blocked work closeout, missing or failed verification, unclosed review runs, unresolved code-review findings, unresolved scanner sweep issues, open security issues, stale or invalid handoff draft state, content-guard failures, and dirty tracked files.
 
-Warnings include missing content-guard and docs/changelog/roadmap touch expectations. Warnings do not make the receipt blocked by themselves.
+Warnings include missing content-guard, docs/changelog/roadmap touch expectations, stale release candidate bundles, missing candidate receipt references, changed git HEAD since candidate build, and candidates built from blocked readiness. Warnings do not make the receipt blocked by themselves.
 
 ## Boundary
 

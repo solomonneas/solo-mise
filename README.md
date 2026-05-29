@@ -160,6 +160,11 @@ brigade release doctor
 brigade release run
 brigade release runs
 brigade release show <run-id>
+brigade release candidate plan
+brigade release candidate build
+brigade release candidate list
+brigade release candidate show <candidate-id>
+brigade release candidate archive <candidate-id>
 brigade handoff doctor
 brigade handoff lint
 brigade handoff list
@@ -542,10 +547,14 @@ Release readiness commands:
 - `brigade release doctor` runs local publish checks such as content-guard when available and reports blockers.
 - `brigade release run` writes a release-readiness receipt under `.brigade/release/runs/`.
 - `brigade release runs` and `brigade release show <run-id>` inspect local release receipts.
+- `brigade release candidate plan` previews a local release candidate bundle.
+- `brigade release candidate build` writes a local bundle under `.brigade/release/candidates/`.
+- `brigade release candidate list`, `show`, and `archive` inspect or archive local candidate bundles.
 
 Release readiness is a local publish gate. It reviews latest work closeout, verification, code review closeout, scanner sweep state, security health, handoff draft health, content-guard results, git state, and docs/changelog/roadmap touch warnings. It never pushes, tags, creates releases, comments remotely, or mutates remotes.
 
 See [`docs/release-readiness.md`](docs/release-readiness.md) for the receipt contract and local-only boundary.
+See [`docs/release-candidates.md`](docs/release-candidates.md) for the candidate bundle files and manual-only publish plan.
 
 ### Memory And Bootstrap Health
 

@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -240,21 +241,175 @@ def test_release_cli(tmp_path, monkeypatch):
         seen.append(("show", kwargs))
         return 0
 
+    def fake_candidate_plan(**kwargs):
+        seen.append(("candidate_plan", kwargs))
+        return 0
+
+    def fake_candidate_build(**kwargs):
+        seen.append(("candidate_build", kwargs))
+        return 0
+
+    def fake_candidate_list(**kwargs):
+        seen.append(("candidate_list", kwargs))
+        return 0
+
+    def fake_candidate_show(**kwargs):
+        seen.append(("candidate_show", kwargs))
+        return 0
+
+    def fake_candidate_archive(**kwargs):
+        seen.append(("candidate_archive", kwargs))
+        return 0
+
     monkeypatch.setattr(release_cmd, "plan", fake_plan)
     monkeypatch.setattr(release_cmd, "doctor", fake_doctor)
     monkeypatch.setattr(release_cmd, "run", fake_run)
     monkeypatch.setattr(release_cmd, "runs", fake_runs)
     monkeypatch.setattr(release_cmd, "show", fake_show)
+    monkeypatch.setattr(release_cmd, "candidate_plan", fake_candidate_plan)
+    monkeypatch.setattr(release_cmd, "candidate_build", fake_candidate_build)
+    monkeypatch.setattr(release_cmd, "candidate_list", fake_candidate_list)
+    monkeypatch.setattr(release_cmd, "candidate_show", fake_candidate_show)
+    monkeypatch.setattr(release_cmd, "candidate_archive", fake_candidate_archive)
 
     assert cli.main(["release", "plan", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
     assert cli.main(["release", "doctor", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
     assert cli.main(["release", "run", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
     assert cli.main(["release", "runs", "--target", str(tmp_path), "--limit", "3", "--json"]) == 0
     assert cli.main(["release", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["release", "candidate", "plan", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
+    assert cli.main(["release", "candidate", "build", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
+    assert cli.main(["release", "candidate", "list", "--target", str(tmp_path), "--limit", "4", "--json"]) == 0
+    assert cli.main(["release", "candidate", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["release", "candidate", "archive", "latest", "--target", str(tmp_path), "--json"]) == 0
     assert seen == [
         ("plan", {"target": tmp_path, "base_ref": "main", "json_output": True}),
         ("doctor", {"target": tmp_path, "base_ref": "main", "json_output": True}),
         ("run", {"target": tmp_path, "base_ref": "main", "json_output": True}),
         ("runs", {"target": tmp_path, "limit": 3, "json_output": True}),
         ("show", {"target": tmp_path, "run_id": "latest", "json_output": True}),
+        ("candidate_plan", {"target": tmp_path, "base_ref": "main", "json_output": True}),
+        ("candidate_build", {"target": tmp_path, "base_ref": "main", "json_output": True}),
+        ("candidate_list", {"target": tmp_path, "limit": 4, "json_output": True}),
+        ("candidate_show", {"target": tmp_path, "candidate_id": "latest", "json_output": True}),
+        ("candidate_archive", {"target": tmp_path, "candidate_id": "latest", "json_output": True}),
     ]
+
+
+def test_release_candidate_plan_build_list_show_archive(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch)
+
+    assert release_cmd.run(target=tmp_path, base_ref=None, json_output=True) == 0
+    release_receipt = json.loads(capsys.readouterr().out)
+
+    assert release_cmd.candidate_plan(target=tmp_path, base_ref=None, json_output=True) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["candidate_id"] == "planned"
+    assert plan["release_readiness"]["run_id"] == release_receipt["run_id"]
+    assert "EVIDENCE.json" in plan["bundle_files"]
+
+    assert release_cmd.candidate_build(target=tmp_path, base_ref=None, json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    candidate_dir = Path(candidate["path"])
+    assert candidate["ready"] is True
+    assert candidate["release_readiness_receipt"]["run_id"] == release_receipt["run_id"]
+    assert (candidate_dir / "EVIDENCE.json").is_file()
+    assert (candidate_dir / "RELEASE_CANDIDATE.md").is_file()
+    assert (candidate_dir / "RELEASE_NOTES_DRAFT.md").is_file()
+    assert (candidate_dir / "PUBLISH_PLAN.md").is_file()
+    evidence = json.loads((candidate_dir / "EVIDENCE.json").read_text())
+    assert evidence["work_closeout"]["closeout_id"] == "closeout-one"
+    assert evidence["verification"]["run_id"] == "verify-one"
+
+    assert release_cmd.candidate_list(target=tmp_path, json_output=True) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["candidates"][0]["candidate_id"] == candidate["candidate_id"]
+
+    assert release_cmd.candidate_show(target=tmp_path, candidate_id="latest") == 0
+    out = capsys.readouterr().out
+    assert f"release candidate: {candidate['candidate_id']}" in out
+
+    assert release_cmd.candidate_archive(target=tmp_path, candidate_id=candidate["candidate_id"], json_output=True) == 0
+    archive = json.loads(capsys.readouterr().out)
+    assert Path(archive["archive_path"], "EVIDENCE.json").is_file()
+    assert not candidate_dir.exists()
+
+
+def test_release_candidate_notes_and_publish_plan(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [Unreleased]\n- Add release candidate bundles.\n\n## [0.1.0]\n- Initial.\n"
+    )
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "release-candidates.md").write_text("docs\n")
+    subprocess.run(["git", "add", "CHANGELOG.md", "docs/release-candidates.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "add release candidate docs"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
+
+    assert release_cmd.run(target=tmp_path, base_ref="HEAD~1", json_output=True) == 0
+    capsys.readouterr()
+    assert release_cmd.candidate_build(target=tmp_path, base_ref="HEAD~1", json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    candidate_dir = Path(candidate["path"])
+    notes = (candidate_dir / "RELEASE_NOTES_DRAFT.md").read_text()
+    plan = (candidate_dir / "PUBLISH_PLAN.md").read_text()
+
+    assert "Add release candidate bundles." in notes
+    assert "add release candidate docs" in notes
+    assert "`docs/release-candidates.md`" in notes
+    assert "Manual-only remote step" in plan
+    assert "git tag <version>" in plan
+    assert "git push origin" in plan
+    assert "gh release create <version>" in plan
+
+
+def test_release_candidate_health_warnings(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch, tip_status="fail")
+
+    assert release_cmd.run(target=tmp_path, base_ref=None, json_output=True) == 1
+    capsys.readouterr()
+    assert release_cmd.candidate_build(target=tmp_path, base_ref=None, json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    evidence_path = Path(candidate["path"], "EVIDENCE.json")
+    evidence = json.loads(evidence_path.read_text())
+    evidence["created_at"] = "2026-05-01T00:00:00+00:00"
+    _write_json(evidence_path, evidence)
+    shutil.rmtree(candidate["verification"]["path"])
+
+    (tmp_path / "after-candidate.txt").write_text("changed head\n")
+    subprocess.run(["git", "add", "after-candidate.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "change head"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
+    _patch_content_guard(monkeypatch)
+
+    assert release_cmd.doctor(target=tmp_path, base_ref=None, json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    warning_text = "\n".join(payload["warnings"])
+    assert "release_candidate_stale" in warning_text
+    assert "release_candidate_missing_verification" in warning_text
+    assert "release_candidate_head_changed" in warning_text
+    assert "release_candidate_blocked" in warning_text
+
+
+def test_release_candidate_preserves_content_guard_summaries(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch, tip_status="fail", introduced_status="ok")
+
+    assert release_cmd.run(target=tmp_path, base_ref="HEAD", json_output=True) == 1
+    capsys.readouterr()
+    assert release_cmd.candidate_build(target=tmp_path, base_ref="HEAD", json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    evidence = json.loads(Path(candidate["path"], "EVIDENCE.json").read_text())
+    checks = evidence["content_guard"]
+    assert checks["content_guard_tip"]["status"] == "fail"
+    assert checks["content_guard_introduced"]["status"] == "ok"
