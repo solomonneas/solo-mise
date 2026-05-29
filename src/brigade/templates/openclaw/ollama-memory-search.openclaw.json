@@ -4,7 +4,8 @@
     "",
     "Wires a local Ollama embedding model into OpenClaw's memory search.",
     "Assumes Ollama is running on http://localhost:11434 with an embedding model pulled.",
-    "Replace <embedding-model> with the actual model name (e.g. nomic-embed-text)."
+    "Replace <embedding-model> with the actual model name (e.g. nomic-embed-text).",
+    "content-guard: allow localhost-port file"
   ],
   "memory": {
     "search": {
