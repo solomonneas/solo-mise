@@ -243,6 +243,30 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_sweep_review.add_argument("sweep_id", help="Sweep id, unique prefix, or latest.")
     p_work_sweep_review.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_sweep_review.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_verify = work_sub.add_parser("verify", help="Plan and run local work verification.")
+    verify_sub = p_work_verify.add_subparsers(dest="verify_command", metavar="<verify-command>")
+    verify_sub.required = True
+    p_work_verify_plan = verify_sub.add_parser("plan", help="Plan local verification without running commands.")
+    p_work_verify_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_verify_plan.add_argument("--command", dest="verify_commands", action="append", default=None, help="Verification command. May be repeated.")
+    p_work_verify_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_verify_run = verify_sub.add_parser("run", help="Run local verification commands and write a receipt.")
+    p_work_verify_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_verify_run.add_argument("--command", dest="verify_commands", action="append", default=None, help="Verification command. May be repeated.")
+    p_work_verify_run.add_argument("--timeout", type=int, default=900, help="Timeout per command in seconds.")
+    p_work_verify_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_verify_runs = verify_sub.add_parser("runs", help="List local work verification receipts.")
+    p_work_verify_runs.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_verify_runs.add_argument("--limit", type=int, default=20, help="Maximum runs to list.")
+    p_work_verify_runs.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_verify_show = verify_sub.add_parser("show", help="Show one local work verification receipt.")
+    p_work_verify_show.add_argument("run_id", help="Run id, unique prefix, or latest.")
+    p_work_verify_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_verify_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_closeout = work_sub.add_parser("closeout", help="Write a local work closeout receipt.")
+    p_work_closeout.add_argument("session_id", help="Work session id, unique prefix, or latest.")
+    p_work_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_inbox = work_sub.add_parser("inbox", help="Review scanner-ready work imports.")
     p_work_inbox.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_inbox.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -1280,6 +1304,24 @@ def main(argv=None) -> int:
             return work_cmd.sweep_show(target=args.target, sweep_id=args.sweep_id, json_output=args.json)
         if args.work_command == "sweep-review":
             return work_cmd.sweep_review(target=args.target, sweep_id=args.sweep_id, json_output=args.json)
+        if args.work_command == "verify":
+            if args.verify_command == "plan":
+                return work_cmd.verify_plan(target=args.target, commands=args.verify_commands, json_output=args.json)
+            if args.verify_command == "run":
+                return work_cmd.verify_run(
+                    target=args.target,
+                    commands=args.verify_commands,
+                    timeout=args.timeout,
+                    json_output=args.json,
+                )
+            if args.verify_command == "runs":
+                return work_cmd.verify_runs(target=args.target, limit=args.limit, json_output=args.json)
+            if args.verify_command == "show":
+                return work_cmd.verify_show(target=args.target, run_id=args.run_id, json_output=args.json)
+            parser.error(f"unknown verify command: {args.verify_command}")
+            return 2
+        if args.work_command == "closeout":
+            return work_cmd.closeout(target=args.target, session_id=args.session_id, json_output=args.json)
         if args.work_command == "inbox" and getattr(args, "inbox_command", None):
             if args.inbox_command == "doctor":
                 return work_cmd.inbox_doctor(target=args.target, json_output=args.json)

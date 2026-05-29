@@ -199,6 +199,11 @@ brigade work review import-findings <run-id>
 brigade work review findings
 brigade work review finding-show <finding-id-or-import-id>
 brigade work review closeout latest
+brigade work verify plan
+brigade work verify run
+brigade work verify runs
+brigade work verify show <run-id>
+brigade work closeout latest
 brigade work sweep
 brigade work sweep --all
 brigade work sweeps
@@ -514,6 +519,15 @@ Manual session commands:
 - `brigade work note "checkpoint"` appends a timestamped note to the active session.
 - `brigade work end --note "what happened"` closes the active session and writes `end.md`.
 - `brigade work end --handoff` also writes a Memory Handoff.
+
+Work verification and closeout commands:
+
+- `brigade work verify plan` previews the local verification commands and current evidence snapshot without running anything.
+- `brigade work verify run` executes explicit local verification commands without a shell and writes receipts under `.brigade/work/verify-runs/`.
+- `brigade work verify runs` and `brigade work verify show <run-id>` inspect local verification receipts, command exit codes, summaries, and log paths.
+- `brigade work closeout <session-id-or-latest>` writes a local closeout receipt under `.brigade/work/closeouts/` that collects task acceptance, latest verification, scanner sweep status, code review closeout state, handoff draft status, and session evidence.
+
+Verification and closeout are local gates. Brigade does not mutate CI, GitHub, reviewers, scanner promotions, handoff ingestion, daemons, or schedulers. Verification commands run only when explicitly requested.
 
 ### Memory And Bootstrap Health
 
