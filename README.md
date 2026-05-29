@@ -529,6 +529,8 @@ Work verification and closeout commands:
 
 Verification and closeout are local gates. Brigade does not mutate CI, GitHub, reviewers, scanner promotions, handoff ingestion, daemons, or schedulers. Verification commands run only when explicitly requested.
 
+See [`docs/work-closeout.md`](docs/work-closeout.md) for the verification command rules, closeout record contents, and ready-state checklist.
+
 ### Memory And Bootstrap Health
 
 Memory and bootstrap readiness are part of the same operating-system health story.
@@ -808,6 +810,31 @@ That keeps agents informed without creating multiple canonical memories.
 Token-heavy terminal work gets the same treatment.
 Make the wrapper explicit, make the escape hatch obvious, and tell every harness what is happening.
 The TokenJuice starter card documents Claude Code's PreToolUse wrapper path, Codex's hook setup, and the savings model.
+
+## Maintenance and utility commands
+
+A few commands sit outside the daily loop:
+
+- `brigade reconfigure --target <path>` adjusts an existing install to a new Selection. Pass `--depth`, `--harnesses`, `--owner`, or repeatable `--include`, and add `--prune` to remove files for harnesses you no longer select.
+- `brigade scrub --target <path>` runs the local content-guard scanner against a target, defaulting to the `public-repo` policy. Use `--policy <name-or-path>` to pick another policy and `--dry-run` to preview.
+- `brigade handoff-template` prints the handoff `TEMPLATE.md`; `--target` prefers a target's installed template when present.
+- `brigade openclaw-fragments --out <dir>` writes OpenClaw config fragments for manual review.
+- `brigade hermes-fragments --out <dir>` writes Hermes adapter fragments (experimental).
+
+## Reference docs
+
+Each subsystem has a companion doc under [`docs/`](docs/) with the full local contract, file layout, and safety boundary:
+
+- [`docs/import-schema.md`](docs/import-schema.md) - the scanner JSONL import contract external producers target
+- [`docs/scanner-registry.md`](docs/scanner-registry.md) - the local scanner registry, run receipts, and daily sweep
+- [`docs/code-review.md`](docs/code-review.md) - explicit code review producers and finding closeout
+- [`docs/work-closeout.md`](docs/work-closeout.md) - work verification receipts and session closeout records
+- [`docs/handoff-promotion.md`](docs/handoff-promotion.md) - promoting reviewed durable imports into Memory Handoff drafts
+- [`docs/chat-surfaces.md`](docs/chat-surfaces.md) - local chat export surfaces and the chat memory sweep
+- [`docs/tool-catalog.md`](docs/tool-catalog.md) - the portable tool catalog, call review, runtimes, and policy
+- [`docs/backup-health.md`](docs/backup-health.md) - read-only backup health summaries and issue routing
+- [`docs/memory-care.md`](docs/memory-care.md) - memory card decay scanning and refresh imports
+- [`docs/security.md`](docs/security.md) - the agent workspace security scanner and evidence bundles
 
 ## Related
 
