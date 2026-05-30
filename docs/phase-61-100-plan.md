@@ -254,6 +254,8 @@ Goal: add local templates and checks for waiver expiry, renewal reason quality, 
 
 Acceptance: tests cover waiver policy warnings, imports, ready gate visibility, and no hidden blockers.
 
+Status: implemented with `brigade repos release waivers templates`, optional waiver owner labels, reason quality checks, invalid-scope and repo-drift warnings, work-inbox routing, ready-gate waiver metadata, docs, and focused tests.
+
 ### Phase 96: CI Platform Deprecation Watcher
 Goal: detect local GitHub Actions platform deprecation warnings and route them into release readiness without mutating workflows.
 

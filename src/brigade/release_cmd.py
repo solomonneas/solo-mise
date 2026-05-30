@@ -861,6 +861,7 @@ def _schema_manifest_schemas() -> list[dict[str, Any]]:
             "optional_fields": [
                 _field("repo_id", "string", "Optional safe repo id."),
                 _field("expires_at", "string", "Optional expiry timestamp."),
+                _field("owner_label", "string", "Optional safe review owner label."),
                 _field("source_fingerprint", "string", "Source fingerprint at waiver time."),
             ],
         },

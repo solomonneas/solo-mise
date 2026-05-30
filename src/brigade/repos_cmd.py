@@ -31,6 +31,8 @@ RELEASE_EVIDENCE_STATUSES = {"completed", "skipped", "blocked", "deferred"}
 REQUIRED_RELEASE_EVIDENCE_STEPS = ("verification", "release-doctor", "candidate-compare", "tag", "push", "release")
 RELEASE_WAIVER_SCOPES = {"blocked-repo", "unresolved-action", "missing-evidence", "blocked-evidence"}
 RELEASE_WAIVER_STALE_HOURS = 168
+RELEASE_WAIVER_REASON_MIN_LENGTH = 16
+RELEASE_WAIVER_GENERIC_REASONS = {"ok", "reviewed", "waived", "temporary", "later", "n/a", "na", "accepted"}
 RELEASE_BUNDLE_FILES = (
     "FLEET_RELEASE_EVIDENCE.json",
     "FLEET_RELEASE_TRAIN.md",
@@ -3259,6 +3261,7 @@ def release_waiver_record(
     reason: str,
     repo_id: str | None = None,
     expires_at: str | None = None,
+    owner_label: str | None = None,
     json_output: bool = False,
 ) -> int:
     target = target.expanduser().resolve()
@@ -3292,10 +3295,11 @@ def release_waiver_record(
         "scope": scope,
         "status": "active",
         "reason": _safe_text(reason),
+        "owner_label": _safe_text(owner_label or ""),
         "expires_at": expires_at,
         "created_at": now,
         "updated_at": now,
-        "source_fingerprint": _fingerprint_payload({"train_id": train_id_value, "repo_id": repo_id or "all", "scope": scope, "reason": reason, "expires_at": expires_at}),
+        "source_fingerprint": _fingerprint_payload({"train_id": train_id_value, "repo_id": repo_id or "all", "scope": scope, "reason": reason, "expires_at": expires_at, "owner_label": owner_label or ""}),
     }
     replaced = False
     for index, existing in enumerate(waivers):
@@ -3375,7 +3379,7 @@ def release_waiver_revoke(*, target: Path, waiver_id: str, reason: str, json_out
     return 0
 
 
-def release_waiver_renew(*, target: Path, waiver_id: str, reason: str, expires_at: str | None = None, json_output: bool = False) -> int:
+def release_waiver_renew(*, target: Path, waiver_id: str, reason: str, expires_at: str | None = None, owner_label: str | None = None, json_output: bool = False) -> int:
     target = target.expanduser().resolve()
     if not reason:
         print("error: --reason is required", file=sys.stderr)
@@ -3392,11 +3396,13 @@ def release_waiver_renew(*, target: Path, waiver_id: str, reason: str, expires_a
     waiver["status"] = "active"
     waiver["reason"] = _safe_text(reason)
     waiver["expires_at"] = expires_at
+    if owner_label is not None:
+        waiver["owner_label"] = _safe_text(owner_label)
     waiver["renewed_at"] = now
     waiver["updated_at"] = now
     if isinstance(train, dict):
         waiver["train_fingerprint"] = train.get("train_fingerprint")
-    waiver["source_fingerprint"] = _fingerprint_payload({"train_id": waiver.get("train_id"), "repo_id": waiver.get("repo_id") or "all", "scope": waiver.get("scope"), "reason": reason, "expires_at": expires_at})
+    waiver["source_fingerprint"] = _fingerprint_payload({"train_id": waiver.get("train_id"), "repo_id": waiver.get("repo_id") or "all", "scope": waiver.get("scope"), "reason": reason, "expires_at": expires_at, "owner_label": waiver.get("owner_label") or ""})
     _write_release_waivers(target, waivers)
     if json_output:
         print(json.dumps({"target_label": "repo-fleet", "waiver": waiver}, indent=2, sort_keys=True))
@@ -3421,7 +3427,22 @@ def _release_waiver_health_payload(target: Path, train_id: str | None = None) ->
         status = str(waiver.get("status") or "")
         if status != "active":
             continue
+        scope = str(waiver.get("scope") or "")
         train, _ = _resolve_release_train(target, str(waiver.get("train_id") or ""))
+        repos = train.get("repos") if isinstance(train, dict) and isinstance(train.get("repos"), list) else []
+        repo_ids = {str(repo.get("repo_id") or "") for repo in repos if isinstance(repo, dict)}
+        if scope not in RELEASE_WAIVER_SCOPES:
+            issues.append({"status": WARN, "name": "release_waiver_invalid_scope", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} has an invalid waiver scope", "suggested_next_command": f"brigade repos release waivers revoke {waiver_id} --reason \"invalid scope\""})
+        repo_id = str(waiver.get("repo_id") or "")
+        if repo_id and repo_ids and repo_id not in repo_ids:
+            issues.append({"status": WARN, "name": "release_waiver_repo_missing", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "repo_id": repo_id, "detail": f"{waiver_id} references a repo outside the train", "suggested_next_command": f"brigade repos release waivers revoke {waiver_id} --reason \"repo no longer in train\""})
+        reason = str(waiver.get("reason") or "").strip()
+        if len(reason) < RELEASE_WAIVER_REASON_MIN_LENGTH:
+            issues.append({"status": WARN, "name": "release_waiver_reason_too_short", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} reason is too short for review", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"reviewed with current train context\""})
+        if reason.lower() in RELEASE_WAIVER_GENERIC_REASONS:
+            issues.append({"status": WARN, "name": "release_waiver_reason_generic", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} reason is too generic", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"reviewed with current train context\""})
+        if not str(waiver.get("owner_label") or "").strip():
+            issues.append({"status": WARN, "name": "release_waiver_missing_owner", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} has no review owner label", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"reviewed with current train context\" --owner-label <label>"})
         if _release_waiver_expired(waiver):
             issues.append({"status": WARN, "name": "release_waiver_expired", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} is expired", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"reviewed again\""})
             continue
@@ -3433,6 +3454,42 @@ def _release_waiver_health_payload(target: Path, train_id: str | None = None) ->
         if isinstance(train, dict) and waiver.get("train_fingerprint") and train.get("train_fingerprint") and waiver.get("train_fingerprint") != train.get("train_fingerprint"):
             issues.append({"status": WARN, "name": "release_waiver_train_changed", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} references an older train fingerprint", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"train reviewed again\""})
     return {"target_label": "repo-fleet", "waivers_path_label": ".brigade/repos/releases/waivers.jsonl", "train_id": selected_train_id, "waiver_count": len(waivers), "issues": issues, "issue_count": len(issues), "top_issue": issues[0] if issues else None}
+
+
+def _release_waiver_templates_payload() -> dict[str, Any]:
+    templates = []
+    for scope in sorted(RELEASE_WAIVER_SCOPES):
+        templates.append(
+            {
+                "scope": scope,
+                "requires_owner_label": True,
+                "requires_expiry": True,
+                "recommended_expiry_hours": RELEASE_WAIVER_STALE_HOURS,
+                "reason_hint": "Describe the reviewed risk, current train context, and why manual publish may proceed.",
+                "suggested_command": f"brigade repos release waivers record latest --scope {scope} --reason \"reviewed risk and mitigation\" --expires-at <timestamp> --owner-label <label>",
+            }
+        )
+    return {
+        "target_label": "repo-fleet",
+        "template_count": len(templates),
+        "templates": templates,
+        "policy": {
+            "reason_min_length": RELEASE_WAIVER_REASON_MIN_LENGTH,
+            "generic_reasons": sorted(RELEASE_WAIVER_GENERIC_REASONS),
+            "stale_review_hours": RELEASE_WAIVER_STALE_HOURS,
+        },
+    }
+
+
+def release_waiver_templates(*, json_output: bool = False) -> int:
+    payload = _release_waiver_templates_payload()
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print("repo fleet release waiver templates")
+    for template in payload["templates"]:
+        print(f"- {template['scope']}: owner and expiry required")
+    return 0
 
 
 def release_waiver_doctor(*, target: Path, train_id: str | None = None, json_output: bool = False) -> int:
@@ -3460,10 +3517,10 @@ def _release_waiver_import_records(health: dict[str, Any]) -> list[dict[str, Any
                 "kind": "task",
                 "source": "repo-fleet-release-waiver",
                 "type": "docs",
-                "priority": "high" if issue.get("name") in {"release_waiver_expired", "release_waiver_train_changed"} else "normal",
+                "priority": "high" if issue.get("name") in {"release_waiver_expired", "release_waiver_train_changed", "release_waiver_invalid_scope", "release_waiver_repo_missing"} else "normal",
                 "template": "docs",
                 "acceptance": [
-                    "The release waiver is renewed with current review context or revoked.",
+                    "The release waiver is renewed with current review context, owner label, and expiry or revoked.",
                     "The fleet release ready gate and audit output reflect the current waiver state.",
                     "No verification, publish, tag, push, or release command is executed by Brigade.",
                 ],
@@ -3890,6 +3947,7 @@ def _waivers_for_repo(waivers: list[dict[str, Any]], repo_id: str) -> list[dict[
             "status": waiver.get("status"),
             "repo_id": waiver.get("repo_id"),
             "expires_at": waiver.get("expires_at"),
+            "owner_label": waiver.get("owner_label"),
             "reason": waiver.get("reason"),
         }
         for waiver in waivers
@@ -4387,7 +4445,17 @@ def release_ready(*, target: Path, train_id: str = "latest", json_output: bool =
         if count <= 0:
             continue
         if scope in waived_scopes:
-            waived.append({"scope": scope, "count": count, "reason": next((item.get("reason") for item in active_waivers if item.get("scope") == scope), None)})
+            waiver = next((item for item in active_waivers if item.get("scope") == scope), {})
+            waived.append(
+                {
+                    "scope": scope,
+                    "count": count,
+                    "reason": waiver.get("reason"),
+                    "owner_label": waiver.get("owner_label"),
+                    "expires_at": waiver.get("expires_at"),
+                    "waiver_id": waiver.get("waiver_id"),
+                }
+            )
         else:
             blockers.append(message)
     ready = not blockers
@@ -4400,6 +4468,12 @@ def release_ready(*, target: Path, train_id: str = "latest", json_output: bool =
         "waiver_count": len(active_waivers),
         "waiver_issues": waiver_health.get("issues"),
         "waiver_issue_count": waiver_health.get("issue_count"),
+        "waiver_policy": {
+            "reason_min_length": RELEASE_WAIVER_REASON_MIN_LENGTH,
+            "requires_owner_label": True,
+            "requires_expiry": True,
+            "template_command": "brigade repos release waivers templates",
+        },
         "summary": {key: summary.get(key) for key in ("repo_count", "counts", "unresolved_action_count", "missing_evidence_count", "blocked_count")},
     }
     if json_output:
