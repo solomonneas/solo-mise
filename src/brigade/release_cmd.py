@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,10 @@ OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 RELEASE_CANDIDATE_STALE_HOURS = 168
+RELEASE_PRIVATE_VALUE_RE = re.compile(
+    r"(?i)\b([A-Za-z0-9_]*(?:api[_-]?key|secret|token|password|passwd|pwd)[A-Za-z0-9_]*)\b\s*[:=]\s*['\"]?([A-Za-z0-9_./+=:-]{8,})"
+)
+RELEASE_PRIVATE_PATH_RE = re.compile(r"(?<!`)/(?:home|Users|private|mnt|Volumes)/[^\s`)]+")
 
 
 def _now() -> datetime:
@@ -578,6 +583,11 @@ def _candidate_docs_touch(changed_files: list[str]) -> dict[str, bool]:
     return {name: name in changed_files for name in ("README.md", "CHANGELOG.md", "ROADMAP.md")}
 
 
+def _release_safe_text(text: str) -> str:
+    redacted = RELEASE_PRIVATE_VALUE_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+    return RELEASE_PRIVATE_PATH_RE.sub("[redacted-path]", redacted)
+
+
 def _commit_subjects(target: Path, base_ref: str | None) -> list[str]:
     args = ["log", "--format=%s"]
     if base_ref:
@@ -587,7 +597,7 @@ def _commit_subjects(target: Path, base_ref: str | None) -> list[str]:
     result = _git(target, *args)
     if result.returncode != 0:
         return []
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return [_release_safe_text(line.strip()) for line in result.stdout.splitlines() if line.strip()]
 
 
 def _changelog_unreleased(path: Path) -> list[str]:
@@ -604,7 +614,7 @@ def _changelog_unreleased(path: Path) -> list[str]:
         if capture and line.startswith("## "):
             break
         if capture and line.strip().startswith("- "):
-            items.append(line.strip()[2:])
+            items.append(_release_safe_text(line.strip()[2:]))
         if len(items) >= 20:
             break
     return items

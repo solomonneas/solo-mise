@@ -44,6 +44,8 @@ Goal: add shared privacy fixtures proving raw private evidence never leaks from 
 
 Acceptance: tests cover chat, backup, security, repo-fleet, context, learning, and release paths with redaction assertions.
 
+Status: implemented with `tests/test_privacy_regression.py`, safe context metadata summaries, learning safe-summary fallback, and release note input redaction.
+
 ### Phase 66: Chat Export Provider Alias Completion
 Goal: complete local export-family aliases for configured chat surfaces while keeping live APIs out of scope.
 

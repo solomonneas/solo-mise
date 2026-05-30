@@ -371,6 +371,7 @@ Acceptance:
 
 - Tests cover each provider fixture through validate, ingest, import, inbox, sweep review, and handoff or task promotion.
 - Tests prove raw private chat text is rejected or redacted from imports, session artifacts, handoffs, docs, and release evidence.
+- Implemented shared privacy regression fixtures across chat, backup, security, repo-fleet, context, learning, and release candidate paths.
 
 Phase 36 status:
 
@@ -470,6 +471,7 @@ Phase 36 status:
 
 - Implemented command surface: `brigade context plan/build/list/show/archive`.
 - Context packs are written under `.brigade/context/packs/` and include task acceptance, doc and guidance summaries, selected tool references, recent work/security/review summaries, and an explicit private-evidence exclusion list.
+- Context pack doc and guidance summaries use presence and line-count metadata instead of copying raw file contents.
 - Deferred: writing context packs into harness destinations. Reason: sync planning remains read-only until a future explicit context apply command exists.
 
 ### 9. Side Project Consolidation And Org-Move Planning

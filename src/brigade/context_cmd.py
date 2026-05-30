@@ -53,7 +53,11 @@ def _doc_summary(target: Path) -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []
     for name in ("README.md", "ROADMAP.md", "CHANGELOG.md"):
         path = target / name
-        docs.append({"path": name, "exists": path.is_file(), "summary": _short(path.read_text() if path.is_file() else "", 120)})
+        if path.is_file():
+            line_count = len(path.read_text().splitlines())
+            docs.append({"path": name, "exists": True, "summary": f"present ({line_count} lines)"})
+        else:
+            docs.append({"path": name, "exists": False, "summary": "missing"})
     return docs
 
 
@@ -62,7 +66,7 @@ def _guidance_summary(target: Path) -> dict[str, Any]:
     for name in ("AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"):
         path = target / name
         if path.is_file():
-            sources.append({"path": name, "exists": True, "summary": _short(path.read_text(), 120)})
+            sources.append({"path": name, "exists": True, "summary": "present, content excluded"})
     return {
         "has_agents": (target / "AGENTS.md").is_file(),
         "has_claude": (target / "CLAUDE.md").is_file() or (target / ".claude" / "CLAUDE.md").is_file(),

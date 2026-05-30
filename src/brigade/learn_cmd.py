@@ -50,6 +50,17 @@ def _candidate(candidate_id: str, subsystem: str, status: str, summary: str, com
     }
 
 
+def _import_learning_summary(item: dict[str, Any]) -> str:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    for key in ("safe_summary", "safe_detail", "evidence_summary"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    source = str(item.get("source") or "producer")
+    kind = str(item.get("kind") or "import")
+    return f"{source} {kind} import requires review"
+
+
 def candidates(target: Path) -> list[dict[str, Any]]:
     target = target.expanduser().resolve()
     results: list[dict[str, Any]] = []
@@ -64,7 +75,7 @@ def candidates(target: Path) -> list[dict[str, Any]]:
                     import_id,
                     source,
                     "pending",
-                    str(item.get("text") or ""),
+                    _import_learning_summary(item),
                     f"brigade work import plan {import_id}",
                     severity=item.get("priority") if isinstance(item.get("priority"), str) else None,
                     metadata={"import_id": import_id, "source": source},

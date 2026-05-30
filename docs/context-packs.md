@@ -17,8 +17,8 @@ Packs are written under `.brigade/context/packs/` and stay gitignored. A pack co
 Pack contents include:
 
 - selected task id and acceptance criteria when available
-- README, ROADMAP, and CHANGELOG summaries
-- guidance-file presence and short safe summaries
+- README, ROADMAP, and CHANGELOG presence plus line-count summaries
+- guidance-file presence summaries without copying guidance contents
 - recent work closeout
 - recent review finding summaries
 - recent security summary
