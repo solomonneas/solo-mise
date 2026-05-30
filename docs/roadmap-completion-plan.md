@@ -657,6 +657,7 @@ Implementation scope:
 - Track reviewed dates, freshness dates, confidence metadata, and evidence metadata without editing memory cards. Status: started with memory-care metadata coverage summaries, reviewable imports for missing reviewed and freshness dates, and planning-only safe metadata repair output.
 
 - Add handoff closeout views that explain why a draft is still pending, ingested, skipped, failed, reviewed, or archived.
+- Harden handoff ingestor warning parsing for skipped, failed, malformed, unreachable-source, and no-reply states. Status: implemented in issue parsing and normalized reconcile receipts.
 - Add memory-care closeout for refresh candidates that are task-promoted, handoff-promoted, dismissed, or intentionally deferred.
 - Add optional safe auto-fix planning only, no memory mutation, for low-risk metadata repair. Status: started with `brigade memory care plan-fixes`, import metadata, and daily brief visibility.
 

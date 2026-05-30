@@ -177,6 +177,8 @@ Goal: improve local parsing of ingestor warning logs including no-reply, skipped
 
 Acceptance: tests cover normalized receipts, draft reconciliation, repair imports, and daily brief quieting.
 
+Status: implemented with hardened issue parsing, normalized reconcile warning events, skipped/failed/malformed/unreachable/no-reply receipt fields, docs, and focused tests.
+
 ### Phase 85: Handoff Source Coverage Repair Flow
 Goal: turn uncovered handoff inboxes and source config drift into reviewed work imports and closeouts.
 

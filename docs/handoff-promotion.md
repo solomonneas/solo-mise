@@ -76,6 +76,8 @@ Canonical memory ingestion stays outside Brigade, but Brigade can read local rec
 
 `brigade handoff runs` lists those receipts. `brigade handoff run-show <run-id>` shows the full normalized receipt and outcome summary. `brigade handoff list` and `brigade handoff show` include the latest known ingestion status for each draft when a receipt references it.
 
-`brigade handoff reconcile` reads the configured `ingestor.last_run_log`, parses recognizable processed, promoted, routed, skipped, failed, warning, and no-reply lines, then writes a normalized receipt locally. Reconcile may update `.brigade/handoffs/archive.jsonl` with known ingestion outcome fields while preserving manual archive reasons.
+`brigade handoff reconcile` reads the configured `ingestor.last_run_log`, parses recognizable processed, promoted, routed, skipped, failed, malformed, unreachable-source, warning, and no-reply lines, then writes a normalized receipt locally. Reconcile may update `.brigade/handoffs/archive.jsonl` with known ingestion outcome fields while preserving manual archive reasons.
+
+Normalized receipts preserve warning events, malformed handoff paths, unreachable source labels, and no-reply state so operators can see when a clean-looking scheduler run still hid skipped, failed, or unreachable work.
 
 This is observability only. Brigade does not run the ingestor, edit canonical memory, promote cards, route documents, or summarize draft content.

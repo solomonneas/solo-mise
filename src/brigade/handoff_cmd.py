@@ -690,6 +690,22 @@ def _normalize_ingest_receipt(target: Path, payload: dict[str, Any], *, source_p
             for item in _normalize_receipt_list(payload.get("failed_handoff_paths"))
             if (path := _receipt_path_value(item))
         ],
+        "malformed_handoff_paths": [
+            str(path)
+            for item in _normalize_receipt_list(payload.get("malformed_handoff_paths"))
+            if (path := _receipt_path_value(item))
+        ],
+        "unreachable_sources": [
+            str(item)
+            for item in _normalize_receipt_list(payload.get("unreachable_sources"))
+            if isinstance(item, str) and item.strip()
+        ],
+        "no_reply": bool(payload.get("no_reply")),
+        "warning_events": [
+            item
+            for item in _normalize_receipt_list(payload.get("warning_events"))
+            if isinstance(item, dict)
+        ],
         "warning_count": int(payload.get("warning_count") or 0),
         "safe_summary": str(payload.get("safe_summary") or ""),
         "log_path": str(payload.get("log_path") or ""),
@@ -800,6 +816,10 @@ def _receipt_summary(receipt: dict[str, Any]) -> dict[str, Any]:
         "source_root": receipt.get("source_root"),
         "inbox_paths": receipt.get("inbox_paths") or [],
         "warning_count": receipt.get("warning_count") or 0,
+        "warning_events": receipt.get("warning_events") or [],
+        "malformed": len(receipt.get("malformed_handoff_paths") or []),
+        "unreachable_sources": len(receipt.get("unreachable_sources") or []),
+        "no_reply": bool(receipt.get("no_reply")),
         "safe_summary": receipt.get("safe_summary") or "",
         "log_path": receipt.get("log_path") or "",
         "outcome_counts": counts,
@@ -1405,6 +1425,9 @@ def run_show(*, target: Path, run_id: str, json_output: bool = False) -> int:
     print(f"processed: {len(receipt.get('processed_handoff_paths') or [])}")
     print(f"skipped: {len(receipt.get('skipped_handoff_paths') or [])}")
     print(f"failed: {len(receipt.get('failed_handoff_paths') or [])}")
+    print(f"malformed: {len(receipt.get('malformed_handoff_paths') or [])}")
+    print(f"unreachable_sources: {len(receipt.get('unreachable_sources') or [])}")
+    print(f"no_reply: {'yes' if receipt.get('no_reply') else 'no'}")
     for outcome in receipt.get("outcomes") or []:
         if isinstance(outcome, dict):
             print(f"- {outcome.get('status')} {outcome.get('path')}")
@@ -1941,17 +1964,23 @@ def _parse_ingestor_log_issues(log_path: Path) -> list[HandoffIssue]:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("SKIP "):
+        lower = stripped.casefold()
+        if lower.startswith(("skip ", "skipped ")):
             issues.append(_issue_from_log_line("skip", "task", stripped, line_number, log_path))
-        elif stripped.startswith("PROMOTE-SKIP "):
+        elif lower.startswith("promote-skip "):
             issues.append(_issue_from_log_line("promote-skip", "task", stripped, line_number, log_path))
-        elif stripped.startswith("ROUTE-SKIP "):
+        elif lower.startswith("route-skip "):
             issues.append(_issue_from_log_line("route-skip", "task", stripped, line_number, log_path))
-        elif stripped.startswith("Warnings:"):
+        elif lower.startswith(("fail ", "failed ", "error ")):
+            issues.append(_issue_from_log_line("failed", "incident", stripped, line_number, log_path))
+        elif _looks_malformed(stripped):
+            issues.append(_issue_from_log_line("malformed", "task", stripped, line_number, log_path))
+        elif lower.startswith(("warnings:", "warning:")):
             has_warning_summary = True
             issues.append(_issue_from_log_line("warning-summary", "incident", stripped, line_number, log_path))
-        if "NO_REPLY" in stripped or "NO_UPDATES" in stripped:
+        if _looks_no_reply(stripped):
             has_no_reply_or_update = True
+            issues.append(_issue_from_log_line("no-reply", "incident", stripped, line_number, log_path))
         if _looks_unreachable(stripped):
             issues.append(_issue_from_log_line("source-unreachable", "incident", stripped, line_number, log_path))
     if has_warning_summary and has_no_reply_or_update:
@@ -1981,19 +2010,24 @@ def _parse_ingestor_log_receipt(target: Path, config: SourceConfig, log_path: Pa
     routed: list[dict[str, str | None]] = []
     skipped: list[str] = []
     failed: list[str] = []
+    malformed: list[str] = []
+    unreachable: list[str] = []
+    warning_events: list[dict[str, Any]] = []
     warning_count = 0
     no_reply = False
-    for line in text.splitlines():
+    for line_number, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
             continue
         lower = stripped.casefold()
-        if stripped.startswith("Warnings:"):
-            match = re.search(r"Warnings:\s*(\d+)", stripped)
+        if lower.startswith(("warnings:", "warning:")):
+            match = re.search(r"Warnings?:\s*(\d+)", stripped, flags=re.IGNORECASE)
             warning_count += int(match.group(1)) if match else 1
+            warning_events.append(_warning_event("warning-summary", stripped, line_number))
             continue
-        if "NO_REPLY" in stripped or "NO_UPDATES" in stripped:
+        if _looks_no_reply(stripped):
             no_reply = True
+            warning_events.append(_warning_event("no-reply", stripped, line_number))
         if lower.startswith(("promoted ", "promote ")):
             path_value, target_value = _split_outcome_line(stripped.split(" ", 1)[1])
             if path_value:
@@ -2018,18 +2052,32 @@ def _parse_ingestor_log_receipt(target: Path, config: SourceConfig, log_path: Pa
             path_value, _ = _split_outcome_line(stripped.split(" ", 1)[1])
             if path_value:
                 skipped.append(path_value)
+            warning_events.append(_warning_event("skip", stripped, line_number))
             continue
         if lower.startswith(("fail ", "failed ", "error ")):
             path_value, _ = _split_outcome_line(stripped.split(" ", 1)[1])
             if path_value:
                 failed.append(path_value)
+            warning_events.append(_warning_event("failed", stripped, line_number))
             continue
+        if _looks_malformed(stripped):
+            path_value, _ = _split_outcome_line(stripped.split(" ", 1)[1] if " " in stripped else stripped)
+            if path_value:
+                malformed.append(path_value)
+            warning_events.append(_warning_event("malformed", stripped, line_number))
+            continue
+        if _looks_unreachable(stripped):
+            unreachable.append(_safe_log_subject(stripped))
+            warning_events.append(_warning_event("source-unreachable", stripped, line_number))
     if no_reply and warning_count == 0:
         warning_count = 1
+    if warning_events and warning_count < len([event for event in warning_events if event.get("category") != "warning-summary"]):
+        warning_count = len([event for event in warning_events if event.get("category") != "warning-summary"])
     inbox_paths = [str(watched.root / watched.inbox) for watched in config.watched]
     safe_summary = (
         f"processed={len(processed)}, skipped={len(skipped)}, "
-        f"failed={len(failed)}, warnings={warning_count}"
+        f"failed={len(failed)}, malformed={len(malformed)}, "
+        f"unreachable={len(unreachable)}, warnings={warning_count}"
     )
     receipt = {
         "run_id": run_id,
@@ -2042,6 +2090,10 @@ def _parse_ingestor_log_receipt(target: Path, config: SourceConfig, log_path: Pa
         "routed_document_targets": routed,
         "skipped_handoff_paths": skipped,
         "failed_handoff_paths": failed,
+        "malformed_handoff_paths": malformed,
+        "unreachable_sources": unreachable,
+        "no_reply": no_reply,
+        "warning_events": warning_events,
         "warning_count": warning_count,
         "safe_summary": safe_summary,
         "log_path": str(log_path),
@@ -2099,6 +2151,12 @@ def _text_for_issue(category: str, subject: str, detail: str) -> str:
         return f"Fix handoff routing fields for {item}: {detail or 'route skipped'}"
     if category == "warning-summary":
         return f"Review handoff ingestor warning summary: {subject}"
+    if category == "failed":
+        return f"Investigate failed handoff ingest for {item}: {detail or 'failed'}"
+    if category == "malformed":
+        return f"Repair malformed handoff log item {item}: {detail or 'malformed'}"
+    if category == "no-reply":
+        return "Review handoff ingestor no-reply output"
     if category == "source-unreachable":
         return f"Investigate unreachable handoff source: {subject}"
     return f"Review handoff ingest issue: {subject}"
@@ -2117,6 +2175,12 @@ def _repair_for_issue(category: str, line: str) -> str:
         return "Align Recommended memory action, Target document, and Suggested document content so document routing can succeed."
     if category == "warning-summary":
         return "Inspect the latest ingestor log and clear the concrete warning lines before treating the run as clean."
+    if category == "failed":
+        return "Inspect the failed handoff, fix the underlying ingest error, then rerun the handoff ingestor."
+    if category == "malformed":
+        return "Rewrite the malformed handoff or adjust the ingestor parser so the handoff is either processed or explicitly skipped with a reason."
+    if category == "no-reply":
+        return "Adjust the scheduler or wrapper so no-reply output cannot hide warning, failed, skipped, malformed, or unreachable-source states."
     if category == "source-unreachable":
         return "Check network, SSH, mount, or source-path availability, then rerun the handoff ingestor."
     return "Review the latest handoff ingestor log and fix the underlying source or scheduler issue."
@@ -2124,7 +2188,29 @@ def _repair_for_issue(category: str, line: str) -> str:
 
 def _looks_unreachable(line: str) -> bool:
     lowered = line.casefold()
-    return any(token in lowered for token in ("unreachable", "timed out", "timeout", "no route"))
+    return any(token in lowered for token in ("unreachable", "unavailable", "cannot reach", "could not reach", "timed out", "timeout", "no route"))
+
+
+def _looks_no_reply(line: str) -> bool:
+    upper = line.upper()
+    return "NO_REPLY" in upper or "NO_UPDATES" in upper
+
+
+def _looks_malformed(line: str) -> bool:
+    lowered = line.casefold()
+    return lowered.startswith(("malformed ", "invalid ", "parse-error ", "parse error ")) or "malformed handoff" in lowered or "invalid handoff" in lowered
+
+
+def _warning_event(category: str, line: str, line_number: int) -> dict[str, Any]:
+    return {
+        "category": category,
+        "line_number": line_number,
+        "summary": line[:220],
+    }
+
+
+def _safe_log_subject(line: str) -> str:
+    return line[:220]
 
 
 def _load_sources(target: Path, sources_path: Path) -> SourceConfig:

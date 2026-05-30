@@ -624,6 +624,89 @@ def test_handoff_issues_groups_ingestor_log_warnings(tmp_path, capsys):
     assert "Use Recommended memory action no-card" in out
 
 
+def test_handoff_issues_parse_hardened_ingestor_warning_states(tmp_path, capsys):
+    log = tmp_path / "latest.log"
+    log.write_text(
+        "\n".join(
+            [
+                "skipped bad.md: malformed handoff sections",
+                "FAILED failed.md: write failed",
+                "MALFORMED malformed.md: missing required section",
+                "source unreachable safe-source-label",
+                "no_updates",
+                "",
+            ]
+        )
+    )
+    config = tmp_path / ".brigade" / "handoff-sources.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "sources": [{"root": ".", "inboxes": [".claude/memory-handoffs"]}],
+                "ingestor": {"last_run_log": "latest.log"},
+            }
+        )
+    )
+
+    assert handoff_cmd.issues(target=tmp_path, json_output=True) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_category"]["skip"] == 1
+    assert payload["by_category"]["failed"] == 1
+    assert payload["by_category"]["malformed"] == 1
+    assert payload["by_category"]["source-unreachable"] == 1
+    assert payload["by_category"]["no-reply"] == 1
+    repairs = {issue["category"]: issue["repair"] for issue in payload["issues"]}
+    assert "failed handoff" in repairs["failed"]
+    assert "malformed handoff" in repairs["malformed"]
+    assert "no-reply output cannot hide" in repairs["no-reply"]
+
+    assert handoff_cmd.import_issues(target=tmp_path, dry_run=True, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    imported_categories = {item["metadata"]["handoff_issue_category"] for item in payload["imports"]}
+    assert {"skip", "failed", "malformed", "source-unreachable", "no-reply"} <= imported_categories
+
+
+def test_handoff_reconcile_records_hardened_warning_events(tmp_path, capsys):
+    log = tmp_path / "latest.log"
+    log.write_text(
+        "\n".join(
+            [
+                "SKIPPED skipped.md: malformed handoff sections",
+                "FAILED failed.md: write failed",
+                "MALFORMED malformed.md: missing required section",
+                "cannot reach safe-source-label",
+                "NO_REPLY",
+                "",
+            ]
+        )
+    )
+    config = tmp_path / ".brigade" / "handoff-sources.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "sources": [{"root": ".", "inboxes": [".claude/memory-handoffs"]}],
+                "ingestor": {"last_run_log": "latest.log"},
+            }
+        )
+    )
+
+    assert handoff_cmd.reconcile(target=tmp_path, json_output=True) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    run = payload["run"]
+    assert run["skipped_handoff_paths"] == ["skipped.md"]
+    assert run["failed_handoff_paths"] == ["failed.md"]
+    assert run["malformed_handoff_paths"] == ["malformed.md"]
+    assert run["unreachable_sources"] == ["cannot reach safe-source-label"]
+    assert run["no_reply"] is True
+    categories = {event["category"] for event in run["warning_events"]}
+    assert {"skip", "failed", "malformed", "source-unreachable", "no-reply"} <= categories
+    assert run["warning_count"] >= 5
+
+
 def test_handoff_issues_json_reports_repair_guidance(tmp_path, capsys):
     log = tmp_path / "latest.log"
     log.write_text("PROMOTE-SKIP note.md: target card does not exist for update\n")
