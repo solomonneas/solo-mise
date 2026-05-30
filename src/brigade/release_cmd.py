@@ -383,7 +383,13 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         "backup": {
             "valid": backup_health.get("valid"),
             "issue_count": backup_health.get("issue_count"),
+            "raw_issue_count": backup_health.get("raw_issue_count"),
+            "quieted_issue_count": backup_health.get("quieted_issue_count"),
+            "restore_rehearsal_issue_count": backup_health.get("restore_rehearsal_issue_count"),
+            "changed_fingerprint_count": backup_health.get("changed_fingerprint_count"),
+            "operator_summary": backup_health.get("operator_summary"),
             "top_issue": backup_health.get("top_issue"),
+            "restore_rehearsal_issues": backup_health.get("restore_rehearsal_issues"),
             "latest_closeout": backup_health.get("latest_closeout"),
         },
         "tool_catalog": {

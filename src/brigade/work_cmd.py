@@ -2080,20 +2080,47 @@ def _backup_health(target: Path) -> dict[str, Any]:
             checks.extend(_backup_destination_checks(target, destination, now))
     closeout = _backup_latest_closeout(target)
     closed_fingerprints = set(closeout.get("source_fingerprints", [])) if isinstance(closeout, dict) else set()
-    issues = [
-        check
-        for check in checks
-        if check.get("status") != OK and _backup_issue_fingerprint(check) not in closed_fingerprints
+    raw_issues = [check for check in checks if check.get("status") != OK]
+    quieted_issues = [
+        issue for issue in raw_issues if _backup_issue_fingerprint(issue) in closed_fingerprints
     ]
+    issues = [
+        issue for issue in raw_issues if _backup_issue_fingerprint(issue) not in closed_fingerprints
+    ]
+    changed_fingerprints = [
+        _backup_issue_fingerprint(issue)
+        for issue in issues
+        if closed_fingerprints
+    ]
+    restore_rehearsal_issues = [
+        issue
+        for issue in raw_issues
+        if str(issue.get("issue_type") or issue.get("name") or "").startswith("restore_rehearsal")
+    ]
+    operator_summary = (
+        f"{len(issues)} active backup issue(s), "
+        f"{len(quieted_issues)} reviewed/deferred issue(s), "
+        f"{len(restore_rehearsal_issues)} restore rehearsal issue(s)"
+    )
     return {
         "target": str(target),
         "config_path": str(_backup_config_path(target)),
         "valid": not errors,
         "destinations": destinations,
         "checks": checks,
+        "active_checks": [check for check in checks if check.get("status") == OK] + issues,
+        "raw_issues": raw_issues,
+        "raw_issue_count": len(raw_issues),
         "issues": issues,
         "issue_count": len(issues),
         "top_issue": issues[0] if issues else None,
+        "quieted_issues": quieted_issues,
+        "quieted_issue_count": len(quieted_issues),
+        "changed_fingerprints": changed_fingerprints,
+        "changed_fingerprint_count": len(changed_fingerprints),
+        "restore_rehearsal_issues": restore_rehearsal_issues,
+        "restore_rehearsal_issue_count": len(restore_rehearsal_issues),
+        "operator_summary": operator_summary,
         "latest_closeout": closeout,
     }
 
@@ -5002,6 +5029,11 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
         "backup_health": {
             "config_path": backup_health["config_path"],
             "issue_count": backup_health["issue_count"],
+            "raw_issue_count": backup_health.get("raw_issue_count"),
+            "quieted_issue_count": backup_health.get("quieted_issue_count"),
+            "restore_rehearsal_issue_count": backup_health.get("restore_rehearsal_issue_count"),
+            "changed_fingerprint_count": backup_health.get("changed_fingerprint_count"),
+            "operator_summary": backup_health.get("operator_summary"),
             "top_issue": backup_health["top_issue"],
             "valid": backup_health["valid"],
         },
@@ -5690,6 +5722,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
         print(f"backup_config: {backup_health.get('config_path')}")
         issue_count = backup_health.get("issue_count")
         print(f"backup_health: {_count_status(issue_count)}")
+        if backup_health.get("operator_summary"):
+            print(f"backup_summary: {backup_health.get('operator_summary')}")
         top_backup = backup_health.get("top_issue") if isinstance(backup_health.get("top_issue"), dict) else None
         if top_backup:
             print(
@@ -7851,6 +7885,7 @@ def backup_status(*, target: Path, json_output: bool = False) -> int:
         return 1
     destinations = health.get("destinations") if isinstance(health.get("destinations"), list) else []
     print(f"destinations: {len(destinations)}")
+    print(f"operator_summary: {health.get('operator_summary')}")
     for destination in destinations:
         if not isinstance(destination, dict):
             continue
@@ -7865,6 +7900,9 @@ def backup_status(*, target: Path, json_output: bool = False) -> int:
         print(f"top_issue: {top_issue.get('destination')}/{top_issue.get('issue_type')} {top_issue.get('detail')}")
     else:
         print("top_issue: none")
+    print(f"raw_issues: {health.get('raw_issue_count')}")
+    print(f"quieted_issues: {health.get('quieted_issue_count')}")
+    print(f"restore_rehearsal_issues: {health.get('restore_rehearsal_issue_count')}")
     return 0
 
 
@@ -7879,7 +7917,7 @@ def backup_doctor(*, target: Path, json_output: bool = False) -> int:
         return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
     print(f"work backup doctor: {target}")
     print(f"config_path: {health['config_path']}")
-    for check in health["checks"]:
+    for check in health.get("active_checks", health["checks"]):
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
     print(f"backup_issues: {health['issue_count']}")
     return 0 if not any(check.get("status") == FAIL for check in health["checks"]) else 1
@@ -7943,15 +7981,17 @@ def backup_closeout(*, target: Path, reason: str | None = None, defer: bool = Fa
         print(f"error: --target is not a directory: {target}", file=sys.stderr)
         return 2
     raw_health = _backup_health(target)
-    fingerprints = [_backup_issue_fingerprint(issue) for issue in raw_health["issues"] if isinstance(issue, dict)]
+    source_issues = raw_health.get("raw_issues") if isinstance(raw_health.get("raw_issues"), list) else raw_health["issues"]
+    fingerprints = [_backup_issue_fingerprint(issue) for issue in source_issues if isinstance(issue, dict)]
     closeout_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-backup-closeout"
     payload = {
         "closeout_id": closeout_id,
         "created_at": _now().isoformat(),
         "status": "deferred" if defer else "reviewed",
         "reason": reason or "",
-        "issue_count": len(raw_health["issues"]),
+        "issue_count": len(source_issues),
         "source_fingerprints": fingerprints,
+        "restore_rehearsal_issue_count": raw_health.get("restore_rehearsal_issue_count", 0),
         "safe_summary": f"{len(fingerprints)} backup issue(s) {'deferred' if defer else 'reviewed'}",
     }
     _write_json(_backup_closeouts_root(target) / closeout_id / "closeout.json", payload)
@@ -10125,7 +10165,7 @@ def doctor(*, target: Path) -> int:
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
 
     backup_health = _backup_health(effective_target)
-    for check in backup_health["checks"]:
+    for check in backup_health.get("active_checks", backup_health["checks"]):
         if check.get("status") == FAIL:
             failures += 1
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))

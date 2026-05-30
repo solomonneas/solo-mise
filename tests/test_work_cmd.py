@@ -9,6 +9,7 @@ from pathlib import Path
 from brigade import cli
 from brigade import chat_cmd
 from brigade import dogfood_cmd
+from brigade import release_cmd
 from brigade import repos_cmd
 from brigade import roadmap_cmd
 from brigade import security_cmd
@@ -3863,6 +3864,145 @@ enabled = true
     assert work_cmd.backup_import_issues(target=tmp_path, json_output=True) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["created"] == 1
+
+
+def test_work_backup_closeout_quiets_reviewed_risk_and_resurfaces_changed_fingerprints(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    config = tmp_path / ".brigade" / "backups.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """
+[[destination]]
+id = "nas"
+kind = "nas"
+command_label = "safe summary"
+summary_path = ".brigade/backups/nas-summary.json"
+snapshot_stale_hours = 24
+check_stale_hours = 48
+prune_stale_hours = 48
+restore_rehearsal_stale_days = 30
+enabled = true
+"""
+    )
+    summary = tmp_path / ".brigade" / "backups" / "nas-summary.json"
+    summary.parent.mkdir(parents=True)
+    _write_json(
+        summary,
+        {
+            "destination_label": "NAS backup",
+            "latest_snapshot_at": "2026-05-25T12:00:00+00:00",
+            "latest_check_at": "2026-05-30T10:00:00+00:00",
+            "latest_check_result": "ok",
+            "latest_prune_at": "2026-05-30T10:00:00+00:00",
+            "latest_prune_result": "ok",
+            "latest_restore_rehearsal_at": "2026-05-01T12:00:00+00:00",
+            "latest_restore_rehearsal_result": "ok",
+            "summary": "Backup snapshot needs review.",
+            "evidence_path": ".brigade/backups/nas-evidence.json",
+        },
+    )
+
+    assert work_cmd.backup_status(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["issue_count"] == 1
+    assert payload["raw_issue_count"] == 1
+
+    assert work_cmd.backup_closeout(target=tmp_path, reason="known maintenance", json_output=True) == 0
+    closeout = json.loads(capsys.readouterr().out)
+    assert closeout["issue_count"] == 1
+    assert closeout["source_fingerprints"]
+
+    assert work_cmd.backup_status(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["issue_count"] == 0
+    assert payload["raw_issue_count"] == 1
+    assert payload["quieted_issue_count"] == 1
+    assert payload["changed_fingerprint_count"] == 0
+    assert payload["operator_summary"] == "0 active backup issue(s), 1 reviewed/deferred issue(s), 0 restore rehearsal issue(s)"
+
+    assert work_cmd.backup_doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "backup_issues: 0" in out
+    assert "backup_snapshot_stale" not in out
+
+    current = json.loads(summary.read_text())
+    current["latest_snapshot_at"] = "2026-05-24T12:00:00+00:00"
+    _write_json(summary, current)
+
+    assert work_cmd.backup_status(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["issue_count"] == 1
+    assert payload["raw_issue_count"] == 1
+    assert payload["quieted_issue_count"] == 0
+    assert payload["changed_fingerprint_count"] == 1
+    assert payload["top_issue"]["issue_type"] == "snapshot_stale"
+
+
+def test_release_evidence_includes_restore_rehearsal_backup_summary(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        work_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        release_cmd,
+        "_now",
+        lambda: datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    config = tmp_path / ".brigade" / "backups.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """
+[[destination]]
+id = "cloud"
+kind = "cloud"
+command_label = "safe summary"
+summary_path = ".brigade/backups/cloud-summary.json"
+snapshot_stale_hours = 24
+check_stale_hours = 48
+prune_stale_hours = 48
+restore_rehearsal_stale_days = 30
+enabled = true
+"""
+    )
+    summary = tmp_path / ".brigade" / "backups" / "cloud-summary.json"
+    summary.parent.mkdir(parents=True)
+    _write_json(
+        summary,
+        {
+            "destination_label": "Cloud backup",
+            "latest_snapshot_at": "2026-05-30T08:00:00+00:00",
+            "latest_check_at": "2026-05-30T10:00:00+00:00",
+            "latest_check_result": "ok",
+            "latest_prune_at": "2026-05-30T10:00:00+00:00",
+            "latest_prune_result": "ok",
+            "latest_restore_rehearsal_at": "2026-04-01T12:00:00+00:00",
+            "latest_restore_rehearsal_result": "ok",
+            "summary": "Restore rehearsal needs review.",
+            "evidence_path": ".brigade/backups/cloud-evidence.json",
+            "hostname": "backup-host.private",
+        },
+    )
+
+    assert work_cmd.backup_closeout(target=tmp_path, reason="reviewed", json_output=True) == 0
+    capsys.readouterr()
+
+    assert release_cmd.plan(target=tmp_path, base_ref=None, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    backup = payload["evidence"]["backup"]
+    assert backup["issue_count"] == 0
+    assert backup["raw_issue_count"] == 2
+    assert backup["quieted_issue_count"] == 2
+    assert backup["restore_rehearsal_issue_count"] == 1
+    assert "restore rehearsal issue(s)" in backup["operator_summary"]
+    rendered = json.dumps(backup, sort_keys=True)
+    assert "backup-host.private" not in rendered
 
 
 def test_work_brief_and_doctor_include_backup_health(tmp_path, monkeypatch, capsys):

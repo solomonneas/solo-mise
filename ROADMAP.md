@@ -72,7 +72,7 @@ Goal: make backup health part of the same daily operator loop as chat, memory, a
 - Surface latest NAS snapshot age, latest cloud snapshot age, prune result, `restic check` result, and restore rehearsal date. Status: started with read-only local backup summary contracts and `brigade work backup`.
 - Send compact private backup summaries to the operator chat/status surface, including Discord or ClickClack when configured.
 - Route stale snapshot, failed check, failed prune, missing mount, and restore-rehearsal overdue signals into `brigade work import` as incidents. Status: started with `backup-health` imports and source fingerprints.
-- Close out reviewed backup risk without hiding changed issues. Status: started with `brigade work backup closeout` and local closeout receipts keyed by issue fingerprints.
+- Close out reviewed backup risk without hiding changed issues. Status: strengthened with `brigade work backup closeout`, raw versus active issue counts, quieted reviewed counts, changed fingerprint surfacing, and restore rehearsal evidence in release readiness.
 - Keep real hostnames, remote names, mount paths, webhook URLs, channel ids, and backup passwords out of public templates. Status: started with unsafe summary field warnings and public docs.
 
 ## Later Phase: Shared Tool Catalog And Runtime

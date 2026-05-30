@@ -58,6 +58,8 @@ Goal: make backup closeouts quiet reviewed risks while surfacing changed fingerp
 
 Acceptance: tests cover closeout quieting, changed-risk resurfacing, restore rehearsal release evidence, and no private destination leakage.
 
+Status: implemented with raw versus active backup issue counts, quieted reviewed or deferred issue counts, changed fingerprint surfacing, restore rehearsal evidence in release readiness, and safe operator summaries in backup status and the daily brief.
+
 ### Phase 68: Tool Projection Parity Closeout
 Goal: add explicit parity closeout receipts for portable tool projections across configured harnesses.
 

@@ -23,9 +23,11 @@ brigade work backup doctor
 brigade work backup doctor --json
 brigade work backup import-issues
 brigade work backup import-issues --json
+brigade work backup closeout
+brigade work backup closeout --json
 ```
 
-`status` summarizes configured destinations. `doctor` checks local backup summary files for stale snapshots, failed or stale checks, failed or stale prunes, missing summaries, overdue or failed restore rehearsals, and unsafe private fields. `import-issues` writes those risks into the local work inbox with source `backup-health`.
+`status` summarizes configured destinations. It reports active issue count, raw issue count, quieted reviewed or deferred issue count, restore rehearsal issue count, and a compact safe operator summary. `doctor` checks local backup summary files for stale snapshots, failed or stale checks, failed or stale prunes, missing summaries, overdue or failed restore rehearsals, and unsafe private fields. `import-issues` writes active risks into the local work inbox with source `backup-health`. `closeout` writes a local review receipt keyed by backup issue fingerprints, so unchanged reviewed risks stop making the daily brief noisy while changed fingerprints resurface.
 
 ## Config Shape
 
@@ -76,6 +78,18 @@ Minimal safe summary:
 ```
 
 Accepted successful results include `ok`, `success`, `passed`, and `pass`.
+
+## Closeout And Release Evidence
+
+Backup closeout receipts live under:
+
+```text
+.brigade/backups/closeouts/
+```
+
+The receipt stores only safe counts, the closeout reason, status, source fingerprints, and restore rehearsal issue count. It does not copy destination hostnames, remotes, mount paths, repository paths, webhooks, passwords, or raw evidence values.
+
+Release readiness and release candidate evidence include backup health counts, latest closeout metadata, changed fingerprint count, restore rehearsal issue count, and the safe operator summary. Reviewed backup risks can be quieted in the daily loop, but raw counts and restore rehearsal evidence remain visible for release review.
 
 ## Privacy Boundary
 

@@ -400,6 +400,7 @@ Phase 36 status:
 
 - Implemented command surface: `brigade work backup closeout`.
 - Implemented local closeout receipts under `.brigade/backups/closeouts/` using issue fingerprints and safe summaries only.
+- Strengthened backup health with raw, active, quieted, changed-fingerprint, and restore rehearsal issue counts plus safe operator summaries in backup status, daily brief, release readiness, and release candidate evidence.
 - Deferred: outbound operator status messages. Reason: notifications are out of scope and would require product-specific surfaces.
 
 ### 7. Shared Tool Catalog Completion
