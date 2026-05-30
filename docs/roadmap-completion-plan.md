@@ -132,8 +132,11 @@ Implementation scope:
 
 - Add gitignored `.brigade/repos.toml`.
 - Add `brigade repos init/list/show/scan/doctor/import-issues`.
+- Add `brigade repos report plan/build/list/show/archive/closeout`.
+- Add `brigade repos actions plan/build/list/show/start/done/defer/archive`.
 - Discover repos under configured roots such as `~/repos`.
 - Record safe repo metadata only: repo path label, branch, dirty counts, presence of `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`, README, CHANGELOG, test hints, handoff inboxes, publish-guard hooks, Brigade config, latest release readiness receipt, latest release candidate, and latest work closeout.
+- Record safe per-repo Brigade state for local rollups: latest operator report, action queue health, pending task and import counts, review finding counts, handoff draft counts, security issue counts, scanner sweep status, release readiness, release candidates, work closeouts, and dirty tracked counts.
 - Detect missing or stale operator setup:
   - missing repo-local guidance
   - fallback `CLAUDE.md` present without equivalent `AGENTS.md`
@@ -152,12 +155,22 @@ Acceptance:
 - Tests cover repo fixtures with AGENTS, CLAUDE fallback, roadmap, publish-guard, handoff inboxes, and dirty state.
 - Tests prove private file contents are not copied into imports or docs.
 - Tests cover repo-fleet imports, dedupe, and dismissed-until-changed behavior.
+- Tests cover fleet report plan/build/list/show/archive and fleet action plan/build/list/show/start/done/defer/archive text and JSON.
+- Tests prove private repo names, owner names, org names, local paths, and raw evidence are not copied into public docs, fixtures, imports, handoffs, release evidence, or committed diffs.
 
 Phase 35 status:
 
 - Implemented command surface: `brigade repos init/list/show/scan/doctor/import-issues`.
 - Implemented safe metadata only: repo id, label, path label, branch, dirty counts, guidance-file presence, docs presence, test hints, handoff inbox presence, publish-guard hook presence, Brigade config presence, and local receipt references.
 - Deferred: recursive root discovery beyond configured entries. Reason: explicit config avoids accidentally exposing private repo names or paths in this phase.
+
+Phase 40 status:
+
+- Implemented command surface: `brigade repos report plan/build/list/show/archive/closeout`.
+- Implemented command surface: `brigade repos actions plan/build/list/show/start/done/defer/archive`.
+- Fleet reports write local `FLEET_REPORT.md` and `FLEET_EVIDENCE.json` bundles under `.brigade/repos/reports/` with safe repo ids, labels, counts, statuses, receipt labels, warnings, blockers, and suggested next commands.
+- Fleet actions write local queues under `.brigade/repos/actions/`, require a reviewed or deferred fleet report unless explicitly overridden, dedupe by repo id plus report/source fingerprint, and update action metadata only.
+- Center status, center reviews, work brief, work doctor, and release doctor surface fleet report and fleet action health.
 
 ### 3. Inspiration Pattern Registry
 

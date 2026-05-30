@@ -204,6 +204,65 @@ def _build_parser() -> argparse.ArgumentParser:
     p_repos_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_repos_import.add_argument("--dry-run", action="store_true", help="Show counts without writing imports.")
     p_repos_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_report = repos_sub.add_parser("report", help="Plan, build, and inspect local repo fleet reports.")
+    repos_report_sub = p_repos_report.add_subparsers(dest="repos_report_command", metavar="<repos-report-command>")
+    repos_report_sub.required = True
+    for name in ("plan", "build"):
+        p_repos_report_cmd = repos_report_sub.add_parser(name, help=f"{name.title()} a repo fleet report.")
+        p_repos_report_cmd.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        p_repos_report_cmd.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_report_list = repos_report_sub.add_parser("list", help="List local repo fleet reports.")
+    p_repos_report_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_report_list.add_argument("--limit", type=int, default=20, help="Maximum reports to list.")
+    p_repos_report_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_report_show = repos_report_sub.add_parser("show", help="Show one local repo fleet report.")
+    p_repos_report_show.add_argument("report_id", help="Report id, unique prefix, or latest.")
+    p_repos_report_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_report_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_report_archive = repos_report_sub.add_parser("archive", help="Archive one local repo fleet report.")
+    p_repos_report_archive.add_argument("report_id", help="Report id, unique prefix, or latest.")
+    p_repos_report_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_report_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_report_closeout = repos_report_sub.add_parser("closeout", help="Mark one local repo fleet report reviewed.")
+    p_repos_report_closeout.add_argument("report_id", nargs="?", default="latest", help="Report id, unique prefix, or latest.")
+    p_repos_report_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_report_closeout.add_argument("--status", choices=["reviewed", "deferred", "superseded", "archived"], default="reviewed")
+    p_repos_report_closeout.add_argument("--reason", default=None, help="Review reason.")
+    p_repos_report_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions = repos_sub.add_parser("actions", help="Plan and manage local repo fleet actions.")
+    repos_actions_sub = p_repos_actions.add_subparsers(dest="repos_actions_command", metavar="<repos-actions-command>")
+    repos_actions_sub.required = True
+    p_repos_actions_plan = repos_actions_sub.add_parser("plan", help="Plan fleet actions from a report.")
+    p_repos_actions_plan.add_argument("report_id", nargs="?", default="latest", help="Report id, unique prefix, or latest.")
+    p_repos_actions_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_actions_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_build = repos_actions_sub.add_parser("build", help="Build fleet actions from a report.")
+    p_repos_actions_build.add_argument("report_id", nargs="?", default="latest", help="Report id, unique prefix, or latest.")
+    p_repos_actions_build.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_actions_build.add_argument("--allow-unreviewed", action="store_true", help="Build from an unclosed report.")
+    p_repos_actions_build.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_list = repos_actions_sub.add_parser("list", help="List local repo fleet actions.")
+    p_repos_actions_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_actions_list.add_argument("--limit", type=int, default=50, help="Maximum actions to list.")
+    p_repos_actions_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_show = repos_actions_sub.add_parser("show", help="Show one local repo fleet action.")
+    p_repos_actions_show.add_argument("action_id", help="Fleet action id or unique prefix.")
+    p_repos_actions_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_actions_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    for name in ("start", "done"):
+        p_repos_actions_state = repos_actions_sub.add_parser(name, help=f"Mark one fleet action {name}.")
+        p_repos_actions_state.add_argument("action_id", help="Fleet action id or unique prefix.")
+        p_repos_actions_state.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+        p_repos_actions_state.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_defer = repos_actions_sub.add_parser("defer", help="Defer one local repo fleet action.")
+    p_repos_actions_defer.add_argument("action_id", help="Fleet action id or unique prefix.")
+    p_repos_actions_defer.add_argument("--reason", required=True, help="Deferral reason.")
+    p_repos_actions_defer.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_actions_defer.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_archive = repos_actions_sub.add_parser("archive", help="Archive completed local repo fleet actions.")
+    p_repos_actions_archive.add_argument("--completed", action="store_true", required=True, help="Archive completed actions.")
+    p_repos_actions_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_actions_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     # handoff
     p_handoff = sub.add_parser("handoff", help="Inspect memory handoff inbox health.")
@@ -1508,6 +1567,40 @@ def main(argv=None) -> int:
             return repos_cmd.doctor(target=args.target, json_output=args.json)
         if args.repos_command == "import-issues":
             return repos_cmd.import_issues(target=args.target, dry_run=args.dry_run, json_output=args.json)
+        if args.repos_command == "report":
+            if args.repos_report_command == "plan":
+                return repos_cmd.report_plan(target=args.target, json_output=args.json)
+            if args.repos_report_command == "build":
+                return repos_cmd.report_build(target=args.target, json_output=args.json)
+            if args.repos_report_command == "list":
+                return repos_cmd.report_list(target=args.target, limit=args.limit, json_output=args.json)
+            if args.repos_report_command == "show":
+                return repos_cmd.report_show(target=args.target, report_id=args.report_id, json_output=args.json)
+            if args.repos_report_command == "archive":
+                return repos_cmd.report_archive(target=args.target, report_id=args.report_id, json_output=args.json)
+            if args.repos_report_command == "closeout":
+                return repos_cmd.report_closeout(target=args.target, report_id=args.report_id, status=args.status, reason=args.reason, json_output=args.json)
+            parser.error(f"unknown repos report command: {args.repos_report_command}")
+            return 2
+        if args.repos_command == "actions":
+            if args.repos_actions_command == "plan":
+                return repos_cmd.actions_plan(target=args.target, report_id=args.report_id, json_output=args.json)
+            if args.repos_actions_command == "build":
+                return repos_cmd.actions_build(target=args.target, report_id=args.report_id, allow_unreviewed=args.allow_unreviewed, json_output=args.json)
+            if args.repos_actions_command == "list":
+                return repos_cmd.actions_list(target=args.target, limit=args.limit, json_output=args.json)
+            if args.repos_actions_command == "show":
+                return repos_cmd.actions_show(target=args.target, action_id=args.action_id, json_output=args.json)
+            if args.repos_actions_command == "start":
+                return repos_cmd.actions_start(target=args.target, action_id=args.action_id, json_output=args.json)
+            if args.repos_actions_command == "done":
+                return repos_cmd.actions_done(target=args.target, action_id=args.action_id, json_output=args.json)
+            if args.repos_actions_command == "defer":
+                return repos_cmd.actions_defer(target=args.target, action_id=args.action_id, reason=args.reason, json_output=args.json)
+            if args.repos_actions_command == "archive":
+                return repos_cmd.actions_archive_completed(target=args.target, json_output=args.json)
+            parser.error(f"unknown repos actions command: {args.repos_actions_command}")
+            return 2
         parser.error(f"unknown repos command: {args.repos_command}")
         return 2
     if cmd == "handoff":

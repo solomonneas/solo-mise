@@ -105,4 +105,12 @@ Each action stores:
 
 `start`, `done`, and `defer` only update local action metadata. `archive --completed` archives completed actions and leaves pending, active, and deferred actions in the queue. Center status, center reviews, work brief, work doctor, and release doctor surface open action queue health.
 
+## Repo Fleet Rollups
+
+`brigade repos report plan/build/list/show/archive/closeout` builds a local fleet rollup from configured `.brigade/repos.toml` entries. Fleet reports live under `.brigade/repos/reports/` and use safe repo ids, labels, counts, statuses, fingerprints, and receipt labels only. They do not copy exact private repo names, owner names, org names, local paths, raw logs, raw scanner output, or raw evidence into public artifacts.
+
+`brigade repos actions plan/build/list/show/start/done/defer/archive` turns a reviewed or deferred fleet report into a local fleet action queue under `.brigade/repos/actions/`. Fleet actions are metadata records only. They point to the safe repo label, source subsystem, source local id, safe summary, and suggested command, but do not execute the command.
+
+Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet report and fleet action queue health.
+
 The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, and `center actions build/start/done/defer/archive` write local gitignored center files.

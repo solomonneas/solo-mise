@@ -419,6 +419,8 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
             "repo_count": repo_health.get("repo_count"),
             "issue_count": repo_health.get("issue_count"),
             "top_issue": repo_health.get("top_issue"),
+            "report": repo_health.get("report"),
+            "actions": repo_health.get("actions"),
         },
         "roadmap": {
             "issue_count": roadmap_health.get("issue_count"),
@@ -484,6 +486,11 @@ def _assess(evidence: dict[str, Any], checks: list[dict[str, Any]], docs_warning
     if int(operator_actions.get("open_count") or 0) > 0:
         top_action = operator_actions.get("top_action") if isinstance(operator_actions.get("top_action"), dict) else {}
         warnings.append(f"operator action queue has open action(s): {top_action.get('action_id') or operator_actions.get('open_count')}")
+    repo_fleet = evidence.get("repo_fleet") if isinstance(evidence.get("repo_fleet"), dict) else {}
+    repo_actions = repo_fleet.get("actions") if isinstance(repo_fleet.get("actions"), dict) else {}
+    if int(repo_actions.get("open_count") or 0) > 0:
+        top_action = repo_actions.get("top_action") if isinstance(repo_actions.get("top_action"), dict) else {}
+        warnings.append(f"repo fleet action queue has open action(s): {top_action.get('fleet_action_id') or repo_actions.get('open_count')}")
     for check in checks:
         if check.get("status") == FAIL:
             blockers.append(f"{check.get('name')}: {check.get('detail')}")

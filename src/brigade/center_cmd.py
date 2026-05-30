@@ -403,6 +403,13 @@ def _reviews(target: Path) -> list[dict[str, Any]]:
     for issue in project_health.get("checks", []):
         if issue.get("status") != "ok":
             items.append(_item("project-consolidation", str(issue.get("project_id") or issue.get("name")), str(issue.get("status")), str(issue.get("detail")), "brigade projects audit"))
+    repo_health = repos_cmd.health(target)
+    repo_report = repo_health.get("report") if isinstance(repo_health.get("report"), dict) else {}
+    repo_actions = repo_health.get("actions") if isinstance(repo_health.get("actions"), dict) else {}
+    for bucket, command in ((repo_report, "brigade repos report build"), (repo_actions, "brigade repos actions list")):
+        top = bucket.get("top_issue") if isinstance(bucket.get("top_issue"), dict) else None
+        if top:
+            items.append(_item("repo-fleet", str(top.get("name") or "repo-fleet"), str(top.get("status") or "warn"), str(top.get("detail") or "repo fleet issue"), str(top.get("suggested_next_command") or command)))
     context_health = context_cmd.health(target)
     for issue in context_health.get("issues", []):
         items.append(_item("context", str(issue.get("name")), str(issue.get("status")), str(issue.get("detail")), "brigade context plan"))
