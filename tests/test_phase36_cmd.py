@@ -295,6 +295,68 @@ decision = "leave-alone"
     assert "created" in json.loads(capsys.readouterr().out)
 
 
+def test_project_closeout_quiets_changes_and_import_routing(tmp_path, capsys):
+    brigade_dir = tmp_path / ".brigade"
+    brigade_dir.mkdir()
+    config = brigade_dir / "projects.toml"
+    config.write_text(
+        """
+[[project]]
+id = "project-alpha"
+label = "Project Alpha"
+category = "public side project"
+decision = "move-candidate"
+docs_ready = true
+license_ready = false
+security_ready = true
+release_ready = true
+ownership_ready = true
+"""
+    )
+    assert projects_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["created"] == 1
+    assert projects_cmd.closeout(target=tmp_path, status="reviewed", reason="tracked outside Brigade", json_output=True) == 0
+    reviewed = json.loads(capsys.readouterr().out)
+    assert reviewed["quieting_status"] is True
+    assert reviewed["remote_mutation"] is False
+    assert projects_cmd.closeouts(target=tmp_path, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["closeout_count"] == 1
+    assert projects_cmd.closeout_show(target=tmp_path, closeout_id="latest", json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["closeout"]["status"] == "reviewed"
+    health = projects_cmd.health(tmp_path)
+    assert health["issue_count"] == 0
+    assert health["closeout"]["quieted_count"] == 1
+    assert projects_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    quiet_import = json.loads(capsys.readouterr().out)
+    assert quiet_import["created"] == 0
+    assert quiet_import["skipped"] == 0
+
+    config.write_text(config.read_text() + 'migration_blockers = ["manual docs review"]\n')
+    changed_health = projects_cmd.health(tmp_path)
+    assert changed_health["issue_count"] == 1
+    assert changed_health["top_issue"]["name"] == "project_closeout_changed"
+    assert changed_health["closeout"]["changed_fingerprint_count"] == 1
+    assert projects_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    changed_import = json.loads(capsys.readouterr().out)
+    assert changed_import["created"] == 1
+
+    assert projects_cmd.closeout(target=tmp_path, status="deferred", reason="wait for release", json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "deferred"
+    assert projects_cmd.health(tmp_path)["issue_count"] == 0
+    assert projects_cmd.closeout(target=tmp_path, status="superseded", reason="needs fresh review", json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "superseded"
+    assert projects_cmd.health(tmp_path)["issue_count"] == 1
+    assert projects_cmd.closeout(target=tmp_path, status="archived", reason="accepted archive", json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "archived"
+    assert projects_cmd.health(tmp_path)["issue_count"] == 0
+
+    assert cli.main(["projects", "closeout-show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["closeout"]["status"] == "archived"
+    assert release_cmd.plan(target=tmp_path, base_ref=None, json_output=True) in {0, 1}
+    release = json.loads(capsys.readouterr().out)
+    assert release["evidence"]["projects"]["closeout"]["quieted_count"] == 1
+
+
 def test_tool_pack_and_sync_plan(tmp_path, capsys):
     assert tools_cmd.init(target=tmp_path, update_gitignore=False) == 0
     capsys.readouterr()

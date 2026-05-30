@@ -100,6 +100,8 @@ Goal: add reviewed closeout for manual-only project move plans so deferred moves
 
 Acceptance: tests cover reviewed, deferred, superseded, archived, changed-fingerprint, and import routing states.
 
+Status: implemented with `brigade projects closeout/closeouts/closeout-show`, local project closeout receipts under `.brigade/projects/closeouts/`, quieting for reviewed, deferred, and archived unchanged readiness issues, superseded non-quieting records, changed-fingerprint resurfacing, and import routing through active project closeout issues.
+
 ### Phase 74: Learning Accepted-Risk And Dismissal Quieting
 Goal: add source-aware quieting for learning candidates that become accepted risk, dismissed, archived, or deferred.
 

@@ -324,6 +324,9 @@ brigade projects readiness plan
 brigade projects readiness record
 brigade projects readiness list
 brigade projects readiness show <receipt-id|latest>
+brigade projects closeout
+brigade projects closeouts
+brigade projects closeout-show <closeout-id|latest>
 brigade projects import-issues
 brigade learn plan
 brigade learn doctor

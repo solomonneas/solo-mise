@@ -489,6 +489,7 @@ Implementation scope:
 
 - Add `brigade projects audit`.
 - Add `brigade projects readiness plan/record/list/show`.
+- Add `brigade projects closeout/closeouts/closeout-show`.
 - Add optional gitignored `.brigade/projects.toml`.
 - Inspect configured local or public project records without cloning by default.
 - For each project, classify:
@@ -517,11 +518,13 @@ Implementation scope:
   - migration blockers
   - manual commands only, not executed
 - Route stale or missing project-readiness work into the scanner inbox as `source: project-consolidation`.
+- Close out reviewed, deferred, superseded, or archived project move plans locally, quiet unchanged issues, and resurface changed fingerprints.
 
 Acceptance:
 
 - Tests cover project audit text and JSON.
 - Tests cover project readiness receipt text and JSON for all project decisions.
+- Tests cover reviewed, deferred, superseded, archived, and changed-fingerprint closeout states.
 - Tests cover classification rules for bake-in, integrate, catalog-only, move-candidate, and leave-alone.
 - Tests cover migration plan generation with manual-only commands.
 - Tests prove no GitHub transfer, archive, visibility, or remote mutation occurs.
@@ -532,6 +535,7 @@ Phase 36 status:
 - Implemented command surface: `brigade projects audit` and `brigade projects import-issues`.
 - Added gitignored `.brigade/projects.toml` contract for safe labels, decisions, readiness flags, and manual-only migration plans.
 - Added `brigade projects readiness plan/record/list/show` so local receipts capture docs, license, security, release, ownership, and migration-blocker readiness without running any remote mutation.
+- Added `brigade projects closeout/closeouts/closeout-show` so reviewed, deferred, or archived unchanged move-plan issues can quiet daily noise while changed fingerprints route back through `project-consolidation` imports.
 - Exact project names and owner names remain local config concerns, not public docs or imports.
 
 ### 10. Self-Learning Loop Closure

@@ -12,7 +12,7 @@ from .prompt import prompt_for_selection  # imported here so tests can monkeypat
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    from . import repos_cmd
+    from . import projects_cmd, repos_cmd
 
     parser = argparse.ArgumentParser(
         prog="brigade",
@@ -1036,6 +1036,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_projects_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_projects_import.add_argument("--dry-run", action="store_true", help="Report without writing imports.")
     p_projects_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_projects_closeout = projects_sub.add_parser("closeout", help="Write a reviewed project migration closeout receipt.")
+    p_projects_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_projects_closeout.add_argument("--status", choices=sorted(projects_cmd.PROJECT_CLOSEOUT_STATUSES), required=True, help="Closeout status.")
+    p_projects_closeout.add_argument("--reason", required=True, help="Review reason.")
+    p_projects_closeout.add_argument("--project-id", default=None, help="Close out one blocked project.")
+    p_projects_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_projects_closeouts = projects_sub.add_parser("closeouts", help="List project migration closeout receipts.")
+    p_projects_closeouts.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_projects_closeouts.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_projects_closeout_show = projects_sub.add_parser("closeout-show", help="Show one project migration closeout receipt.")
+    p_projects_closeout_show.add_argument("closeout_id", help="Closeout id or latest.")
+    p_projects_closeout_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_projects_closeout_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_projects_readiness = projects_sub.add_parser("readiness", help="Plan and record project migration readiness receipts.")
     projects_readiness_sub = p_projects_readiness.add_subparsers(dest="projects_readiness_command", metavar="<projects-readiness-command>")
     projects_readiness_sub.required = True
@@ -2118,6 +2131,12 @@ def main(argv=None) -> int:
             return projects_cmd.audit(target=args.target, json_output=args.json)
         if args.projects_command == "import-issues":
             return projects_cmd.import_issues(target=args.target, dry_run=args.dry_run, json_output=args.json)
+        if args.projects_command == "closeout":
+            return projects_cmd.closeout(target=args.target, status=args.status, reason=args.reason, project_id=args.project_id, json_output=args.json)
+        if args.projects_command == "closeouts":
+            return projects_cmd.closeouts(target=args.target, json_output=args.json)
+        if args.projects_command == "closeout-show":
+            return projects_cmd.closeout_show(target=args.target, closeout_id=args.closeout_id, json_output=args.json)
         if args.projects_command == "readiness":
             if args.projects_readiness_command == "plan":
                 return projects_cmd.readiness_plan(target=args.target, json_output=args.json)

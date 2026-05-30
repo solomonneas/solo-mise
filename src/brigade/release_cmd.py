@@ -427,6 +427,7 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
             "issue_count": projects_health.get("issue_count"),
             "top_issue": projects_health.get("top_issue"),
             "readiness": projects_health.get("readiness"),
+            "closeout": projects_health.get("closeout"),
         },
         "learning": {
             "candidate_count": learning_health.get("candidate_count"),

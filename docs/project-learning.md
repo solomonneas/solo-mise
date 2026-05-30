@@ -38,12 +38,17 @@ brigade projects readiness plan
 brigade projects readiness record
 brigade projects readiness list
 brigade projects readiness show latest
+brigade projects closeout --status deferred --reason "reviewed externally"
+brigade projects closeouts
+brigade projects closeout-show latest
 brigade projects import-issues
 ```
 
 `brigade projects readiness plan` calculates decision-specific readiness for docs, license, security, release, ownership, and migration blockers. `record` writes a local receipt under `.brigade/projects/readiness/`, while `list` and `show` inspect those receipts. Release readiness and the operator center can reference the latest receipt, but Brigade does not run any migration command.
 
-Migration plans and readiness receipts are manual-only. Brigade does not transfer repos, archive repos, change visibility, push, tag, publish, or mutate remotes.
+`brigade projects closeout` writes reviewed project migration closeouts under `.brigade/projects/closeouts/`. `reviewed`, `deferred`, and `archived` closeouts quiet unchanged readiness issues, while changed source fingerprints resurface in doctor, brief, and import routing. `superseded` records that a prior closeout is no longer valid and does not quiet the active issue.
+
+Migration plans, readiness receipts, and closeouts are manual-only. Brigade does not transfer repos, archive repos, change visibility, push, tag, publish, or mutate remotes.
 
 ## Learning Loop
 

@@ -13,6 +13,8 @@ from . import work_cmd
 OK = "ok"
 WARN = "warn"
 DECISIONS = {"bake-in", "integrate", "catalog-only", "move-candidate", "leave-alone"}
+PROJECT_CLOSEOUT_STATUSES = {"reviewed", "deferred", "superseded", "archived"}
+QUIETING_PROJECT_CLOSEOUT_STATUSES = {"reviewed", "deferred", "archived"}
 
 
 def _now() -> datetime:
@@ -25,6 +27,10 @@ def config_path(target: Path) -> Path:
 
 def readiness_root(target: Path) -> Path:
     return target / ".brigade" / "projects" / "readiness"
+
+
+def closeout_root(target: Path) -> Path:
+    return target / ".brigade" / "projects" / "closeouts"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -307,7 +313,7 @@ def readiness_plan(*, target: Path, json_output: bool = False) -> int:
 def readiness_record(*, target: Path, json_output: bool = False) -> int:
     target = target.expanduser().resolve()
     payload = readiness_payload(target)
-    readiness_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-project-readiness"
+    readiness_id = f"{_now().strftime('%Y%m%d-%H%M%S-%f')}-project-readiness"
     payload.update({"readiness_id": readiness_id, "created_at": _now().isoformat(), "status": "recorded"})
     root = readiness_root(target) / readiness_id
     _write_json(root / "readiness.json", payload)
@@ -335,6 +341,84 @@ def _readiness_receipts(target: Path) -> list[dict[str, Any]]:
         payload["path"] = str(path.parent)
         receipts.append(payload)
     return sorted(receipts, key=lambda item: str(item.get("created_at") or item.get("readiness_id") or ""), reverse=True)
+
+
+def _project_closeouts(target: Path) -> list[dict[str, Any]]:
+    root = closeout_root(target.expanduser().resolve())
+    receipts: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return receipts
+    for path in sorted(root.glob("*/closeout.json")):
+        payload = _read_json(path)
+        if payload is None:
+            continue
+        payload.setdefault("closeout_id", path.parent.name)
+        payload["path"] = str(path.parent)
+        receipts.append(payload)
+    return sorted(receipts, key=lambda item: str(item.get("created_at") or item.get("closeout_id") or ""), reverse=True)
+
+
+def _latest_closeout_by_project(target: Path) -> dict[str, dict[str, Any]]:
+    closeouts = _project_closeouts(target)
+    latest: dict[str, dict[str, Any]] = {}
+    for closeout in closeouts:
+        status = str(closeout.get("status") or "")
+        for item in closeout.get("projects", []):
+            if not isinstance(item, dict):
+                continue
+            project_id = str(item.get("project_id") or "")
+            if project_id and project_id not in latest:
+                latest[project_id] = {**item, "closeout_id": closeout.get("closeout_id"), "closeout_status": status, "created_at": closeout.get("created_at"), "path": closeout.get("path")}
+    return latest
+
+
+def _project_issue_summary(target: Path) -> dict[str, Any]:
+    readiness = readiness_payload(target)
+    closeout_by_project = _latest_closeout_by_project(target)
+    active: list[dict[str, Any]] = []
+    quieted: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    for record in readiness.get("projects", []):
+        if not isinstance(record, dict) or record.get("status") != "blocked":
+            continue
+        project_id = str(record.get("project_id") or "")
+        closeout = closeout_by_project.get(project_id)
+        issue = {
+            "status": WARN,
+            "name": "project_readiness_blocked",
+            "detail": f"{project_id} has {len(record.get('issue_types') or [])} readiness issue(s)",
+            "project_id": project_id,
+            "source_fingerprint": record.get("source_fingerprint"),
+            "readiness_status": record.get("status"),
+            "decision": record.get("decision"),
+        }
+        if closeout and closeout.get("source_fingerprint") != record.get("source_fingerprint"):
+            changed_issue = {
+                **issue,
+                "name": "project_closeout_changed",
+                "detail": f"{project_id} changed since project closeout {closeout.get('closeout_id')}",
+                "closeout_id": closeout.get("closeout_id"),
+            }
+            changed.append(changed_issue)
+            active.append(changed_issue)
+            continue
+        if closeout and closeout.get("closeout_status") in QUIETING_PROJECT_CLOSEOUT_STATUSES:
+            quieted.append({**issue, "closeout_id": closeout.get("closeout_id"), "closeout_status": closeout.get("closeout_status")})
+            continue
+        active.append(issue)
+    config_issues = [issue for issue in readiness.get("issues", []) if isinstance(issue, dict) and issue.get("name") == "projects_config"]
+    active = config_issues + active
+    return {
+        "readiness": readiness,
+        "issues": active,
+        "issue_count": len(active),
+        "top_issue": active[0] if active else None,
+        "quieted": quieted,
+        "quieted_count": len(quieted),
+        "changed_fingerprint_issues": changed,
+        "changed_fingerprint_count": len(changed),
+        "latest_closeout": _project_closeouts(target)[0] if _project_closeouts(target) else None,
+    }
 
 
 def _find_readiness(target: Path, readiness_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -382,6 +466,104 @@ def readiness_show(*, target: Path, readiness_id: str, json_output: bool = False
     return 0
 
 
+def closeout(*, target: Path, status: str, reason: str, project_id: str | None = None, json_output: bool = False) -> int:
+    if status not in PROJECT_CLOSEOUT_STATUSES:
+        print(f"error: status must be one of: {', '.join(sorted(PROJECT_CLOSEOUT_STATUSES))}", file=sys.stderr)
+        return 1
+    target = target.expanduser().resolve()
+    readiness = readiness_payload(target)
+    blocked = [project for project in readiness.get("projects", []) if isinstance(project, dict) and project.get("status") == "blocked"]
+    if project_id:
+        blocked = [project for project in blocked if project.get("project_id") == project_id]
+    if project_id and not blocked:
+        print(f"error: blocked project not found: {project_id}", file=sys.stderr)
+        return 1
+    closeout_id = f"{_now().strftime('%Y%m%d-%H%M%S-%f')}-project-closeout"
+    payload = {
+        "target": str(target),
+        "closeout_id": closeout_id,
+        "created_at": _now().isoformat(),
+        "status": status,
+        "reason": reason,
+        "project_count": len(blocked),
+        "projects": [
+            {
+                "project_id": project.get("project_id"),
+                "safe_label": project.get("safe_label"),
+                "decision": project.get("decision"),
+                "readiness_status": project.get("status"),
+                "missing_readiness": project.get("missing_readiness"),
+                "migration_blocker_count": project.get("migration_blocker_count"),
+                "source_fingerprint": project.get("source_fingerprint"),
+            }
+            for project in blocked
+        ],
+        "quieting_status": status in QUIETING_PROJECT_CLOSEOUT_STATUSES,
+        "manual_only": True,
+        "remote_mutation": False,
+        "receipt_fingerprint": work_cmd._stable_hash(
+            {
+                "status": status,
+                "reason": reason,
+                "projects": [
+                    {"project_id": project.get("project_id"), "source_fingerprint": project.get("source_fingerprint")}
+                    for project in blocked
+                ],
+            }
+        ),
+    }
+    root = closeout_root(target) / closeout_id
+    _write_json(root / "closeout.json", payload)
+    payload["path"] = str(root)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"project_closeout: {closeout_id}")
+    print(f"status: {status}")
+    print(f"projects: {len(blocked)}")
+    print(f"path: {root}")
+    print("remote_mutation: false")
+    return 0
+
+
+def closeouts(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    receipts = _project_closeouts(target)
+    payload = {"target": str(target), "closeouts": receipts, "closeout_count": len(receipts)}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"project_closeouts: {target}")
+    print(f"closeouts: {len(receipts)}")
+    for receipt in receipts:
+        print(f"- {receipt.get('closeout_id')} status={receipt.get('status')} projects={receipt.get('project_count')}")
+    return 0
+
+
+def closeout_show(*, target: Path, closeout_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    receipts = _project_closeouts(target)
+    if closeout_id == "latest":
+        matches = receipts[:1]
+    else:
+        matches = [receipt for receipt in receipts if str(receipt.get("closeout_id") or "").startswith(closeout_id)]
+    if not matches:
+        print(f"error: project closeout not found: {closeout_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: project closeout id is ambiguous: {closeout_id}", file=sys.stderr)
+        return 1
+    payload = {"target": str(target), "closeout": matches[0]}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    receipt = matches[0]
+    print(f"project_closeout: {receipt.get('closeout_id')}")
+    print(f"status: {receipt.get('status')}")
+    print(f"projects: {receipt.get('project_count')}")
+    return 0
+
+
 def _records(payload: dict[str, Any]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     readiness_by_project = {
@@ -424,8 +606,16 @@ def _records(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def import_issues(*, target: Path, dry_run: bool = False, json_output: bool = False) -> int:
-    payload = audit_payload(target)
-    imported, skipped, dismissed = work_cmd._append_import_records(target.expanduser().resolve(), _records(payload), dry_run=dry_run)
+    target = target.expanduser().resolve()
+    summary = _project_issue_summary(target)
+    readiness = summary["readiness"]
+    payload = {
+        **readiness,
+        "issues": summary["issues"],
+        "issue_count": summary["issue_count"],
+        "top_issue": summary["top_issue"],
+    }
+    imported, skipped, dismissed = work_cmd._append_import_records(target, _records(payload), dry_run=dry_run)
     output = {"target": payload["target"], "created": len(imported), "skipped": len(skipped), "dismissed": len(dismissed), "dry_run": dry_run}
     if json_output:
         print(json.dumps(output, indent=2, sort_keys=True))
@@ -441,16 +631,23 @@ def health(target: Path) -> dict[str, Any]:
     payload = audit_payload(target)
     readiness = readiness_payload(target)
     latest = _readiness_receipts(target)
+    issues = _project_issue_summary(target)
     return {
         "target": payload["target"],
         "project_count": payload["project_count"],
-        "issue_count": readiness["issue_count"],
-        "top_issue": readiness["top_issue"],
-        "checks": readiness["issues"] or payload["checks"],
+        "issue_count": issues["issue_count"],
+        "top_issue": issues["top_issue"],
+        "checks": issues["issues"] or [check for check in payload["checks"] if check.get("status") == OK],
         "readiness": {
             "ready_count": readiness["ready_count"],
             "blocked_count": readiness["blocked_count"],
             "receipt_fingerprint": readiness["receipt_fingerprint"],
             "latest": latest[0] if latest else None,
+        },
+        "closeout": {
+            "latest": issues["latest_closeout"],
+            "quieted_count": issues["quieted_count"],
+            "changed_fingerprint_count": issues["changed_fingerprint_count"],
+            "quieted": issues["quieted"],
         },
     }
