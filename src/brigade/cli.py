@@ -813,6 +813,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_import_ingest.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_work_import_ingest.add_argument("--dry-run", action="store_true", help="Validate and report without writing imports.")
     p_work_import_ingest.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_import_issue_repairs = import_sub.add_parser("issue-repairs", help="Import repair tasks for stale issue-backed local tasks.")
+    p_work_import_issue_repairs.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_import_issue_repairs.add_argument("--dry-run", action="store_true", help="Report without writing imports.")
+    p_work_import_issue_repairs.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_import_plan = import_sub.add_parser("plan", help="Preview the task or action a work import would create.")
     p_work_import_plan.add_argument("import_id", help="Import id or unique prefix.")
     p_work_import_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -2542,6 +2546,12 @@ def main(argv=None) -> int:
                 return work_cmd.import_ingest(
                     target=args.target,
                     input_path=args.input_path,
+                    dry_run=args.dry_run,
+                    json_output=args.json,
+                )
+            if args.import_command == "issue-repairs":
+                return work_cmd.import_issue_repairs(
+                    target=args.target,
                     dry_run=args.dry_run,
                     json_output=args.json,
                 )

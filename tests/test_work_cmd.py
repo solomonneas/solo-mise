@@ -249,6 +249,141 @@ def test_work_doctor_warns_when_issue_backed_task_is_closed(tmp_path, monkeypatc
     assert "[warn] github_issues_closed: 1 remote issue(s) are closed: issue-task" in out
 
 
+def test_work_import_issue_repairs_for_missing_issue_context(tmp_path, capsys):
+    _init_git_repo(tmp_path)
+    (tmp_path / ".brigade" / "work").mkdir(parents=True)
+    _write_json(
+        tmp_path / ".brigade" / "work" / "tasks.json",
+        {
+            "version": 1,
+            "tasks": [
+                {
+                    "id": "issue-task",
+                    "text": "Issue task",
+                    "status": "pending",
+                    "source": "github_issue",
+                    "created_at": "2026-05-25T08:00:00+00:00",
+                    "updated_at": "2026-05-25T08:00:00+00:00",
+                }
+            ],
+        },
+    )
+
+    assert work_cmd.import_issue_repairs(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] == 1
+    item = payload["imports"][0]
+    assert item["source"] == "github-issue-repair"
+    assert item["type"] == "workflow"
+    assert item["metadata"]["issue_type"] == "missing_issue_context"
+    assert item["metadata"]["source_fingerprint"]
+    assert "without mutating GitHub" in item["acceptance"][0]
+
+    assert work_cmd.import_issue_repairs(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] == 0
+    assert payload["skipped_duplicates"] == 1
+
+
+def test_work_import_issue_repairs_for_closed_remote_issue_without_github_mutation(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    (tmp_path / ".brigade" / "work").mkdir(parents=True)
+    _write_json(
+        tmp_path / ".brigade" / "work" / "tasks.json",
+        {
+            "version": 1,
+            "tasks": [
+                {
+                    "id": "issue-task",
+                    "text": "Issue task",
+                    "status": "pending",
+                    "source": "github_issue",
+                    "created_at": "2026-05-25T08:00:00+00:00",
+                    "updated_at": "2026-05-25T08:00:00+00:00",
+                    "metadata": {
+                        "github_issue": {
+                            "url": "https://github.com/acme/widgets/issues/9",
+                            "number": 9,
+                            "title": "Issue task",
+                            "state": "OPEN",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    calls = []
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None)
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        assert args[:3] == ["gh", "issue", "view"]
+        assert "close" not in args
+        assert "edit" not in args
+        assert "comment" not in args
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "number": 9,
+                    "title": "Issue task",
+                    "labels": [{"name": "bug"}],
+                    "state": "CLOSED",
+                    "body": "Private body must not be copied.",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(work_cmd.subprocess, "run", fake_run)
+
+    assert work_cmd.import_issue_repairs(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert calls
+    assert payload["created"] == 1
+    item = payload["imports"][0]
+    assert item["priority"] == "high"
+    assert item["metadata"]["issue_type"] == "closed_remote_issue"
+    assert item["metadata"]["remote_issue_state"] == "CLOSED"
+    assert "Private body" not in json.dumps(item)
+
+
+def test_work_import_issue_repairs_for_unavailable_gh(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    (tmp_path / ".brigade" / "work").mkdir(parents=True)
+    _write_json(
+        tmp_path / ".brigade" / "work" / "tasks.json",
+        {
+            "version": 1,
+            "tasks": [
+                {
+                    "id": "issue-task",
+                    "text": "Issue task",
+                    "status": "pending",
+                    "source": "github_issue",
+                    "created_at": "2026-05-25T08:00:00+00:00",
+                    "updated_at": "2026-05-25T08:00:00+00:00",
+                    "metadata": {
+                        "github_issue": {
+                            "number": 9,
+                            "title": "Issue task",
+                            "state": "OPEN",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: None)
+
+    assert work_cmd.import_issue_repairs(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] == 1
+    assert payload["imports"][0]["metadata"]["issue_type"] == "gh_unavailable"
+
+
 def test_work_doctor_warns_for_scanner_queue_health(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     dogfood_cmd.init(target=tmp_path)

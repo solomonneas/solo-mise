@@ -1040,6 +1040,163 @@ def _read_github_issue(target: Path, issue_ref: str) -> tuple[dict[str, Any] | N
     )
 
 
+def _safe_issue_task_id(task: dict[str, Any]) -> str:
+    value = task.get("id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return _stable_hash({"text": task.get("text"), "created_at": task.get("created_at")})
+
+
+def _issue_repair_record(
+    task: dict[str, Any],
+    *,
+    issue_type: str,
+    detail: str,
+    issue: dict[str, Any] | None = None,
+    remote_issue: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    task_id = _safe_issue_task_id(task)
+    issue_ref = _github_issue_ref(issue or {}) if issue else None
+    source_key = f"{task_id}:{issue_type}:{issue_ref or 'missing-ref'}"
+    fingerprint_payload = {
+        "task_id": task_id,
+        "task_text": task.get("text"),
+        "issue_type": issue_type,
+        "issue_ref": issue_ref,
+        "stored_state": (issue or {}).get("state") if issue else None,
+        "stored_title": (issue or {}).get("title") if issue else None,
+        "remote_state": (remote_issue or {}).get("state") if remote_issue else None,
+        "remote_title": (remote_issue or {}).get("title") if remote_issue else None,
+        "error": error,
+    }
+    metadata = {
+        "source_item_key": source_key,
+        "source_item_id": source_key,
+        "source_fingerprint": _stable_hash(fingerprint_payload),
+        "task_id": task_id,
+        "issue_type": issue_type,
+        "safe_summary": detail,
+    }
+    if issue_ref:
+        metadata["github_issue_ref"] = issue_ref
+    if issue:
+        for key in ("url", "number", "title", "state"):
+            value = issue.get(key)
+            if value not in (None, ""):
+                metadata[f"github_issue_{key}"] = value
+    if remote_issue:
+        for key in ("url", "number", "title", "state"):
+            value = remote_issue.get(key)
+            if value not in (None, ""):
+                metadata[f"remote_issue_{key}"] = value
+    if error:
+        metadata["check_error"] = _short(error, 240)
+    return {
+        "kind": "task",
+        "source": "github-issue-repair",
+        "text": f"Repair issue-backed task context for {task_id}: {detail}",
+        "type": "workflow",
+        "priority": "high" if issue_type == "closed_remote_issue" else "normal",
+        "template": "bugfix",
+        "acceptance": [
+            f"Review local task {task_id} against its issue context without mutating GitHub.",
+            "Refresh, complete, dismiss, or replace the local task with explicit local evidence.",
+            "`brigade work doctor` no longer reports the same issue-backed task warning.",
+        ],
+        "metadata": metadata,
+    }
+
+
+def _issue_repair_records(target: Path) -> list[dict[str, Any]]:
+    pending = _pending_tasks(target)
+    records: list[dict[str, Any]] = []
+    issue_tasks: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for task in pending:
+        issue = _task_issue_metadata(task)
+        if issue is None:
+            if str(task.get("source") or "") == "github_issue":
+                records.append(
+                    _issue_repair_record(
+                        task,
+                        issue_type="missing_issue_context",
+                        detail="task is marked issue-backed but has no usable GitHub issue metadata",
+                    )
+                )
+            continue
+        issue_ref = _github_issue_ref(issue)
+        title = issue.get("title")
+        if issue_ref is None or not isinstance(title, str) or not title.strip():
+            records.append(
+                _issue_repair_record(
+                    task,
+                    issue_type="missing_issue_context",
+                    detail="task has incomplete GitHub issue metadata",
+                    issue=issue,
+                )
+            )
+            continue
+        issue_tasks.append((task, issue))
+    if not issue_tasks:
+        return records
+    if shutil.which("gh") is None:
+        for task, issue in issue_tasks:
+            records.append(
+                _issue_repair_record(
+                    task,
+                    issue_type="gh_unavailable",
+                    detail="gh CLI is unavailable, so issue context cannot be checked",
+                    issue=issue,
+                    error="gh CLI is not available on PATH",
+                )
+            )
+        return records
+    for task, issue in issue_tasks:
+        issue_ref = _github_issue_ref(issue)
+        if issue_ref is None:
+            continue
+        remote_issue, _, error = _read_github_issue(target, issue_ref)
+        if remote_issue is None:
+            records.append(
+                _issue_repair_record(
+                    task,
+                    issue_type="issue_check_failed",
+                    detail="remote issue context could not be read",
+                    issue=issue,
+                    error=error or "issue check failed",
+                )
+            )
+            continue
+        remote_state = str(remote_issue.get("state") or "").lower()
+        if remote_state == "closed":
+            records.append(
+                _issue_repair_record(
+                    task,
+                    issue_type="closed_remote_issue",
+                    detail="remote issue is closed while the local task is still pending",
+                    issue=issue,
+                    remote_issue=remote_issue,
+                )
+            )
+            continue
+        stored_title = str(issue.get("title") or "").strip()
+        remote_title = str(remote_issue.get("title") or "").strip()
+        stored_state = str(issue.get("state") or "").strip().lower()
+        if (stored_title and remote_title and stored_title != remote_title) or (
+            stored_state and remote_state and stored_state != remote_state
+        ):
+            records.append(
+                _issue_repair_record(
+                    task,
+                    issue_type="stale_issue_context",
+                    detail="stored issue title or state differs from the current issue context",
+                    issue=issue,
+                    remote_issue=remote_issue,
+                )
+            )
+    return records
+
+
 def _import_record_key(item: dict[str, Any]) -> tuple[str, str, str]:
     return (
         str(item.get("source") or "manual"),
@@ -6368,6 +6525,49 @@ def import_ingest(
         print(f"skipped_dismissed: {len(skipped_dismissed)}")
     for item in imported:
         print(f"- {item.get('id')} [{item.get('kind')}] {item.get('source')}: {_short(str(item.get('text', '')))}")
+    return 0
+
+
+def import_issue_repairs(
+    *,
+    target: Path,
+    dry_run: bool = False,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    records = _issue_repair_records(target)
+    imported, skipped, skipped_dismissed = _append_import_records(target, records, dry_run=dry_run)
+    payload = {
+        "target": str(target),
+        "imports_path": str(_imports_path(target)),
+        "dry_run": dry_run,
+        "candidate_count": len(records),
+        "created": len(imported),
+        "imported": len(imported),
+        "skipped": len(skipped),
+        "skipped_duplicates": len(skipped),
+        "dismissed": len(skipped_dismissed),
+        "skipped_dismissed": len(skipped_dismissed),
+        "invalid": 0,
+        "imports": imported,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"issue repair imports: {target}")
+    print(f"imports_path: {_imports_path(target)}")
+    print(f"dry_run: {dry_run}")
+    print(f"candidates: {len(records)}")
+    print(f"imported: {len(imported)}")
+    print(f"skipped_duplicates: {len(skipped)}")
+    if skipped_dismissed:
+        print(f"skipped_dismissed: {len(skipped_dismissed)}")
+    for item in imported:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        print(f"- {item.get('id')} {metadata.get('issue_type')}: {_short(str(item.get('text', '')))}")
     return 0
 
 

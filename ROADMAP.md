@@ -136,7 +136,7 @@ Goal: make Brigade support a narrow issue lifecycle for daily work: pick one tas
 - Let `brigade work run` consume structured acceptance criteria from the local task ledger or a GitHub issue mirror. Status: started with local ledger acceptance criteria and issue-body criteria imported into the ledger.
 - Record completed task evidence locally. Status: started with consumed task snapshots in work-session artifacts and completion metadata for session path, dogfood run path, and acceptance criteria.
 - Keep repo-shareable workflow rules separate from gitignored personal/global preferences. Status: implemented with public-safe `rules/issue-tdd-loop.md` and `rules/acceptance-driven-work.md` install templates plus `brigade work doctor` visibility.
-- Add doctor checks for missing acceptance criteria or stale active issue context. Status: started with missing acceptance, closed remote issues, unchecked issue-backed tasks, and stale active sessions.
+- Add doctor checks for missing acceptance criteria or stale active issue context. Status: started with missing acceptance, closed remote issues, unchecked issue-backed tasks, stale active sessions, and `brigade work import issue-repairs` for local repair imports.
 
 First build slice:
 

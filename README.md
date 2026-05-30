@@ -100,6 +100,7 @@ For machines that ingest handoffs from multiple repos, copy `.brigade/handoff-so
 Run `brigade handoff lint` before ingesting pending handoffs when you want to catch action/target mismatches early.
 If your ingestor writes a latest-run log, set `ingestor.last_run_log` in that local config so the doctor can warn on stale runs, skipped malformed handoffs, and warning summaries hidden behind no-reply cron output.
 Use `brigade handoff issues` to group those warnings with repair guidance, then `brigade handoff sync-issues` to import new issues and close stale local handoff tasks/imports once the latest scan no longer reports them.
+Use `brigade work import issue-repairs` when issue-backed local tasks need review because `gh` is unavailable, issue metadata is incomplete, a remote issue is closed, or stored issue context is stale. The command creates local repair imports only and never mutates GitHub.
 
 ## Run a brigade
 

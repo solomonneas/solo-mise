@@ -267,9 +267,9 @@ DEFERRED_ROADMAP_ITEMS: tuple[dict[str, Any], ...] = (
         "subsystem": "work",
         "owner": "work",
         "source_section": "Issue And TDD Loop Closure",
-        "deferred_reason": "The first acceptance phase completed the local acceptance rollup before repair-import routing.",
+        "deferred_reason": "Closed in phase 80 with local repair imports for stale or unreadable issue-backed task context.",
         "suggested_phase": 80,
-        "status": "planned",
+        "status": "implemented",
     },
     {
         "id": "repo-shareable-workflow-rule-templates",

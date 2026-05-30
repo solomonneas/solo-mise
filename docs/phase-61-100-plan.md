@@ -149,6 +149,8 @@ Goal: route stale active issue context and closed remote issue mismatches into r
 
 Acceptance: tests cover issue-backed tasks, missing issue context, closed remote issue checks, and no GitHub mutation.
 
+Status: implemented with `brigade work import issue-repairs`, stable source fingerprints, missing-context and closed-remote tests, unavailable-`gh` handling, and no GitHub mutation coverage.
+
 ### Phase 81: Task Acceptance Release Rollup Hardening
 Goal: improve acceptance coverage rollups across pending tasks, completed tasks, review findings, work closeouts, release readiness, and release candidates.
 
