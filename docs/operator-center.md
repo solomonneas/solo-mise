@@ -13,6 +13,8 @@ brigade center reviews
 brigade center reviews --json
 brigade center templates
 brigade center templates --json
+brigade center schema
+brigade center schema --json
 brigade center report plan
 brigade center report build
 brigade center report list
@@ -43,6 +45,8 @@ brigade center actions archive --completed
 - priority or severity when known
 - safe summary
 - suggested next command
+
+`schema` exports a read-only manifest for wrapper-facing JSON contracts. It covers `status`, `activity`, `reviews`, `templates`, report evidence, report review action plans, and daily action queues. The manifest names stable top-level fields, item fields, action fields, and source commands without reading or writing local receipts.
 
 `templates` lists local workflow templates for context packs, tool packs, project audits, release candidates, and review closeouts.
 

@@ -350,6 +350,7 @@ brigade center status
 brigade center activity
 brigade center reviews
 brigade center templates
+brigade center schema
 brigade center report plan
 brigade center report build
 brigade center report list

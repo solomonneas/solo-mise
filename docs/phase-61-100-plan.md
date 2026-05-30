@@ -205,6 +205,8 @@ Goal: export stable local JSON schemas for center status, activity, reviews, tem
 
 Acceptance: tests cover schema output, read-only behavior, and wrapper-facing field stability.
 
+Status: implemented with `brigade center schema`, covering status, activity, reviews, templates, report evidence, report review, and action queue JSON contracts with read-only checks, docs, and focused tests.
+
 ### Phase 89: Operator Report Diff Receipts
 Goal: compare two operator reports and write local diff receipts showing changed queues, resolved items, new blockers, and stale references.
 

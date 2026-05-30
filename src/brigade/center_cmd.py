@@ -15,6 +15,7 @@ from uuid import uuid4
 from . import chat_cmd, context_cmd, handoff_cmd, learn_cmd, memory_cmd, projects_cmd, release_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd, work_cmd
 
 SCHEMA_VERSION = 1
+SCHEMA_MANIFEST_VERSION = 1
 REPORT_STALE_HOURS = 24
 ACTION_STATUSES = {"pending", "active", "done", "deferred", "archived"}
 
@@ -85,6 +86,188 @@ def _action_schema(name: str) -> dict[str, Any]:
             "updated_at",
             "reviewed_at",
             "source_fingerprint",
+        ],
+    }
+
+
+def _schema_field(name: str, value_type: str, *, required: bool = True, description: str = "") -> dict[str, Any]:
+    return {
+        "name": name,
+        "type": value_type,
+        "required": required,
+        "description": description,
+    }
+
+
+def _center_schema_manifest_schemas() -> list[dict[str, Any]]:
+    item_fields = [
+        _schema_field("subsystem", "string", description="Owning local Brigade subsystem."),
+        _schema_field("id", "string", description="Stable local item id."),
+        _schema_field("local_id", "string", description="Subsystem-local id used for drill-down commands."),
+        _schema_field("status", "string", description="Current local status."),
+        _schema_field("priority", "string|null", required=False, description="Priority when available."),
+        _schema_field("severity", "string|null", required=False, description="Severity when available."),
+        _schema_field("safe_summary", "string", description="Redacted operator-facing summary."),
+        _schema_field("created_at", "string|null", required=False, description="ISO timestamp when available."),
+        _schema_field("updated_at", "string|null", required=False, description="ISO timestamp when available."),
+        _schema_field("receipt_path", "string|null", required=False, description="Local receipt path label when available."),
+        _schema_field("path", "string|null", required=False, description="Local artifact path label when available."),
+        _schema_field("suggested_next_command", "string", description="Manual local command to inspect or act."),
+    ]
+    action_fields = [
+        _schema_field("action_id", "string", description="Stable action id."),
+        _schema_field("source_report_id", "string", description="Operator report that produced the action."),
+        _schema_field("source_group", "string", description="Review group from the source report."),
+        _schema_field("source_subsystem", "string", description="Subsystem that owns the source item."),
+        _schema_field("source_local_id", "string", description="Subsystem-local source item id."),
+        _schema_field("status", "string", description="One of pending, active, done, deferred, archived."),
+        _schema_field("priority", "string|null", required=False, description="Priority when available."),
+        _schema_field("severity", "string|null", required=False, description="Severity when available."),
+        _schema_field("safe_summary", "string", description="Redacted operator-facing summary."),
+        _schema_field("suggested_command", "string", description="Manual local command, never auto-executed."),
+        _schema_field("created_at", "string", description="ISO timestamp."),
+        _schema_field("updated_at", "string", description="ISO timestamp."),
+        _schema_field("reviewed_at", "string|null", required=False, description="Source report review timestamp when available."),
+        _schema_field("source_fingerprint", "string", description="Stable dedupe fingerprint."),
+    ]
+    return [
+        {
+            "id": "center-status",
+            "command": "brigade center status --json",
+            "description": "Read-only aggregate of local operator-center subsystem health.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("active_session", "object|null", required=False),
+                _schema_field("pending_task_count", "integer"),
+                _schema_field("pending_import_count", "integer"),
+                _schema_field("review_queue_count", "integer"),
+                _schema_field("operator_report", "object"),
+                _schema_field("action_queue", "object"),
+                _schema_field("release_readiness", "object|null", required=False),
+                _schema_field("release_candidate", "object|null", required=False),
+            ],
+        },
+        {
+            "id": "center-activity",
+            "command": "brigade center activity --json",
+            "description": "Unified local receipt activity ledger.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("activity", "array"),
+                _schema_field("activity_count", "integer"),
+            ],
+            "item_fields": item_fields,
+        },
+        {
+            "id": "center-reviews",
+            "command": "brigade center reviews --json",
+            "description": "Unified pending local review queue.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("reviews", "array"),
+                _schema_field("review_count", "integer"),
+            ],
+            "item_fields": item_fields,
+        },
+        {
+            "id": "center-templates",
+            "command": "brigade center templates --json",
+            "description": "Local templates exposed to wrappers.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("templates", "array"),
+                _schema_field("template_count", "integer"),
+            ],
+            "item_fields": item_fields,
+        },
+        {
+            "id": "center-report",
+            "command": "brigade center report plan --json",
+            "description": "Operator report evidence contract used by planned and built report bundles.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("generated_at", "string"),
+                _schema_field("git", "object"),
+                _schema_field("status", "object"),
+                _schema_field("activity", "array"),
+                _schema_field("reviews", "array"),
+                _schema_field("summaries", "object"),
+                _schema_field("suggested_next_commands", "object"),
+                _schema_field("receipt_references", "array"),
+                _schema_field("report_fingerprint", "string"),
+                _schema_field("report_id", "string", required=False),
+                _schema_field("bundle_files", "array", required=False),
+            ],
+            "item_fields": item_fields,
+        },
+        {
+            "id": "center-report-review",
+            "command": "brigade center report review latest --json",
+            "description": "Grouped action-plan view over one operator report.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("report_id", "string"),
+                _schema_field("report_path", "string|null", required=False),
+                _schema_field("action_plan", "object"),
+                _schema_field("suggested_next_commands", "object"),
+            ],
+            "item_fields": item_fields,
+        },
+        {
+            "id": "center-actions",
+            "command": "brigade center actions list --json",
+            "description": "Daily operator action queue contract.",
+            "top_level_fields": [
+                _schema_field("schema_version", "integer"),
+                _schema_field("schema", "object"),
+                _schema_field("target", "string"),
+                _schema_field("actions_path", "string"),
+                _schema_field("actions", "array"),
+                _schema_field("action_count", "integer"),
+                _schema_field("counts", "object"),
+            ],
+            "action_fields": action_fields,
+        },
+    ]
+
+
+def _center_schema_manifest(target: Path) -> dict[str, Any]:
+    schemas = _center_schema_manifest_schemas()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "manifest_version": SCHEMA_MANIFEST_VERSION,
+        "schema": {
+            "name": "center-schema-manifest",
+            "version": SCHEMA_MANIFEST_VERSION,
+        },
+        "target": str(target.expanduser().resolve()),
+        "read_only": True,
+        "write_required": False,
+        "schema_count": len(schemas),
+        "schemas": schemas,
+        "checks": [
+            {
+                "status": "ok",
+                "name": "center_schema_manifest_read_only",
+                "detail": "schema export does not inspect or mutate local receipts",
+            },
+            {
+                "status": "ok",
+                "name": "wrapper_field_contracts_present",
+                "detail": "status, activity, reviews, templates, reports, report review, and actions are described",
+            },
         ],
     }
 
@@ -492,6 +675,21 @@ def status(*, target: Path, json_output: bool = False) -> int:
     print(f"reviews: {payload['review_queue_count']}")
     print(f"actions: {payload['action_queue']['open_count']}")
     print(f"context_packs: {payload['context']['pack_count']}")
+    return 0
+
+
+def schema(*, target: Path, json_output: bool = False) -> int:
+    payload = _center_schema_manifest(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"center schema manifest: {payload['target']}")
+    print(f"schemas: {payload['schema_count']}")
+    print("read_only: true")
+    for schema_item in payload["schemas"]:
+        print(f"- {schema_item['id']}: {schema_item['command']}")
+    for check in payload["checks"]:
+        print(f"[{check['status']}] {check['name']}: {check['detail']}")
     return 0
 
 

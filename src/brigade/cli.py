@@ -1146,6 +1146,9 @@ def _build_parser() -> argparse.ArgumentParser:
         p_center_action.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
         if name in {"activity", "reviews"}:
             p_center_action.add_argument("--limit", type=int, default=50, help="Maximum rows to show.")
+    p_center_schema = center_sub.add_parser("schema", help="Show local operator-center JSON schema manifest.")
+    p_center_schema.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_center_schema.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_center_report = center_sub.add_parser("report", help="Plan, build, and inspect local operator report bundles.")
     center_report_sub = p_center_report.add_subparsers(dest="center_report_command", metavar="<center-report-command>")
     center_report_sub.required = True
@@ -2260,6 +2263,8 @@ def main(argv=None) -> int:
             return center_cmd.reviews(target=args.target, limit=args.limit, json_output=args.json)
         if args.center_command == "templates":
             return center_cmd.templates(target=args.target, json_output=args.json)
+        if args.center_command == "schema":
+            return center_cmd.schema(target=args.target, json_output=args.json)
         if args.center_command == "report":
             if args.center_report_command == "plan":
                 return center_cmd.report_plan(target=args.target, json_output=args.json)

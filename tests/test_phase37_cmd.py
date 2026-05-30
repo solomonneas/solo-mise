@@ -113,6 +113,44 @@ def test_center_json_items_have_stable_schema_and_drilldown_fields(tmp_path, cap
         assert key in first
 
 
+def test_center_schema_manifest_is_stable_and_read_only(tmp_path, capsys):
+    before = {str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*")}
+
+    assert center_cmd.schema(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    after = {str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*")}
+
+    assert after == before
+    assert payload["schema"]["name"] == "center-schema-manifest"
+    assert payload["read_only"] is True
+    assert payload["write_required"] is False
+    schema_ids = {schema["id"] for schema in payload["schemas"]}
+    assert {
+        "center-status",
+        "center-activity",
+        "center-reviews",
+        "center-templates",
+        "center-report",
+        "center-report-review",
+        "center-actions",
+    } <= schema_ids
+    schemas = {schema["id"]: schema for schema in payload["schemas"]}
+    status_fields = {field["name"] for field in schemas["center-status"]["top_level_fields"]}
+    assert {"target", "pending_task_count", "pending_import_count", "review_queue_count", "operator_report", "action_queue"} <= status_fields
+    activity_fields = {field["name"] for field in schemas["center-activity"]["item_fields"]}
+    assert {"subsystem", "local_id", "status", "safe_summary", "receipt_path", "suggested_next_command"} <= activity_fields
+    action_fields = {field["name"] for field in schemas["center-actions"]["action_fields"]}
+    assert {"action_id", "source_report_id", "source_group", "source_subsystem", "source_local_id", "source_fingerprint"} <= action_fields
+    assert all(check["status"] == "ok" for check in payload["checks"])
+
+    assert center_cmd.schema(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "center schema manifest:" in out
+    assert "- center-actions: brigade center actions list --json" in out
+    assert cli.main(["center", "schema", "--target", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["schema_count"] == payload["schema_count"]
+
+
 def test_center_report_plan_build_list_show_archive_and_cli(tmp_path, capsys):
     _seed_task_and_import(tmp_path)
     assert center_cmd.report_plan(target=tmp_path, json_output=True) == 0
