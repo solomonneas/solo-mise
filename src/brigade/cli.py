@@ -864,6 +864,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Filter by import kind.",
     )
     p_work_import_triage.add_argument("--metadata", action="append", default=[], help="Filter by metadata key=value. May be repeated.")
+    p_work_import_provenance = import_sub.add_parser("provenance", help="Audit producer import provenance fields.")
+    p_work_import_provenance.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_import_provenance.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_import_show = import_sub.add_parser("show", help="Show one work import.")
     p_work_import_show.add_argument("import_id", help="Import id or unique prefix.")
     p_work_import_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -2441,6 +2444,8 @@ def main(argv=None) -> int:
                     kind=args.kind,
                     metadata=args.metadata,
                 )
+            if args.import_command == "provenance":
+                return work_cmd.import_provenance(target=args.target, json_output=args.json)
             if args.import_command == "show":
                 return work_cmd.import_show(target=args.target, import_id=args.import_id)
             if args.import_command == "promote":

@@ -81,9 +81,10 @@ Inbox hygiene commands help keep reviewed scanner output from becoming queue clu
 ```bash
 brigade work inbox doctor
 brigade work inbox archive
+brigade work import provenance
 ```
 
-`inbox doctor` reports pending scanner imports missing provenance, stale pending imports, promoted imports whose ledger task is missing, dismissed imports whose source fingerprint changed, noisy sources, scanner runs that produced no imports despite a configured `import_path`, missing sweep references, lost sweep provenance, and unclosed sweeps. `inbox archive` moves old promoted, dismissed, and superseded imports to `.brigade/work/imports/archive.jsonl` while preserving pending imports.
+`inbox doctor` reports pending scanner imports missing provenance, cross-producer provenance contract gaps, stale pending imports, promoted imports whose ledger task is missing, dismissed imports whose source fingerprint changed, noisy sources, scanner runs that produced no imports despite a configured `import_path`, missing sweep references, lost sweep provenance, and unclosed sweeps. `work import provenance` shows the underlying read-only audit for producer imports, including missing source identity, fingerprints, safe summaries, evidence references, and scanner run metadata. `inbox archive` moves old promoted, dismissed, and superseded imports to `.brigade/work/imports/archive.jsonl` while preserving pending imports.
 
 ## Config Shape
 

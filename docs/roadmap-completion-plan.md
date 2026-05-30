@@ -337,7 +337,7 @@ Deliverable: finish the scanner-ready inbox as a complete reviewed daily loop.
 
 Implementation scope:
 
-- Tighten `work inbox doctor` coverage for stale, noisy, missing-provenance, broken-promoted, changed-dismissed, and no-import scanner runs.
+- Tighten `work inbox doctor` coverage for stale, noisy, missing-provenance, cross-producer provenance contract gaps, broken-promoted, changed-dismissed, and no-import scanner runs.
 - Add explicit review state to sweep reviews: pending, reviewed, archived.
 - Add `brigade work sweep closeout <sweep-id|latest>` to record that the operator reviewed, dismissed, promoted, or intentionally deferred all actionable imports from a sweep.
 - Make `work brief` prefer unclosed sweep reviews before suggesting new sweeps.

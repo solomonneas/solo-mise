@@ -37,6 +37,8 @@ Goal: audit scanner, backup, memory-care, security, review, tool-catalog, repo-f
 
 Acceptance: focused fixtures prove every local producer writes source fingerprints, safe summaries, evidence labels, and dismissed-until-changed metadata.
 
+Status: implemented with `brigade work import provenance` and inbox doctor provenance contract warnings.
+
 ### Phase 65: Producer Privacy Regression Suite
 Goal: add shared privacy fixtures proving raw private evidence never leaks from producer outputs into imports, handoffs, context packs, release evidence, or public docs.
 

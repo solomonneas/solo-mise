@@ -1322,6 +1322,70 @@ def test_work_import_validate_ingest_and_promote_task_metadata(tmp_path, monkeyp
     assert task["metadata"]["scanner"] == "daily"
 
 
+def test_work_import_provenance_audits_cross_producer_contract(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    config = tmp_path / ".brigade" / "scanners.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        """
+[[scanner]]
+id = "repo-scan"
+source = "repo-scan"
+command = "python3 scanner.py"
+cadence = "daily@02:00"
+enabled = true
+timeout = 30
+output_path = ".brigade/repo-scan.jsonl"
+import_path = ".brigade/repo-scan.jsonl"
+import_format = "jsonl"
+conflict_window = "02:00-02:10"
+"""
+    )
+    complete = work_cmd._make_import(
+        "Review scanner finding",
+        kind="finding",
+        source="repo-scan",
+        metadata={
+            "scanner_id": "repo-scan",
+            "scanner_source": "repo-scan",
+            "scanner_run_id": "run-1",
+            "source_item_key": "finding-1",
+            "source_fingerprint": "fingerprint-1",
+            "safe_summary": "safe finding summary",
+            "scanner_receipt_path": ".brigade/scanners/runs/run-1/receipt.json",
+        },
+    )
+    missing = work_cmd._make_import(
+        "Review backup issue",
+        kind="incident",
+        source="backup-health",
+        metadata={"source_item_key": "backup:nas:stale"},
+    )
+    manual = work_cmd._make_import("Manual note", kind="task", source="manual")
+    work_cmd._write_imports(tmp_path, [complete, missing, manual])
+
+    assert work_cmd.import_provenance(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "work import provenance:" in out
+    assert "audited_imports: 2" in out
+    assert "complete: 1" in out
+    assert "incomplete: 1" in out
+    assert "source_fingerprint" in out
+    assert "safe_summary" in out
+    assert "evidence_reference" in out
+
+    assert cli.main(["work", "import", "provenance", "--target", str(tmp_path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["audited_import_count"] == 2
+    assert payload["complete_count"] == 1
+    assert payload["incomplete_count"] == 1
+    assert payload["missing_by_source"] == {"backup-health": 1}
+    issue = payload["issues"][0]
+    assert issue["id"] == missing["id"]
+    assert issue["dismissed_until_changed_ready"] is False
+    assert set(issue["missing_fields"]) == {"evidence_reference", "safe_summary", "source_fingerprint"}
+
+
 def test_work_inbox_groups_scanner_imports_and_reports_candidate(tmp_path, monkeypatch, capsys):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(
@@ -4357,16 +4421,17 @@ conflict_window = "02:00-02:10"
     assert "[warn] inbox_promoted_task_missing:" in out
     assert "[warn] inbox_dismissed_changed:" in out
     assert "[warn] inbox_noisy_sources:" in out
+    assert "[warn] inbox_provenance_contract:" in out
     assert "[warn] inbox_scanner_run_no_imports:" in out
 
     assert work_cmd.inbox_doctor(target=tmp_path, json_output=True) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["issue_count"] == 6
+    assert payload["issue_count"] == 7
     assert payload["top_issue"]["name"] == "inbox_missing_provenance"
 
     assert work_cmd.brief(target=tmp_path) == 0
     out = capsys.readouterr().out
-    assert "inbox_hygiene: 6 issue(s)" in out
+    assert "inbox_hygiene: 7 issue(s)" in out
     assert "inbox_top_issue: inbox_missing_provenance" in out
 
     assert work_cmd.doctor(target=tmp_path) == 0

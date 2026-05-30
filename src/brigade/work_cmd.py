@@ -227,6 +227,45 @@ SCANNER_DEFAULTS = (
         "conflict_window": "04:20-04:40",
     },
 )
+PROVENANCE_AUDIT_SOURCES = {
+    "backup-health",
+    "chat-memory-sweep",
+    "code-review",
+    "context-pack",
+    "handoff-ingest",
+    "learning-loop",
+    "memory-care",
+    "memory-refresh",
+    "project-consolidation",
+    "repo-fleet",
+    "repo-fleet-release",
+    "roadmap-audit",
+    "scanner-health",
+    "security-scan",
+    "tool-catalog",
+}
+PROVENANCE_SAFE_SUMMARY_KEYS = {
+    "detail",
+    "evidence_summary",
+    "rationale",
+    "safe_description",
+    "safe_detail",
+    "safe_summary",
+    "summary",
+}
+PROVENANCE_EVIDENCE_KEYS = {
+    "evidence_path",
+    "evidence_references",
+    "local_evidence_path",
+    "log_path",
+    "queue_path",
+    "receipt_path",
+    "report_path",
+    "review_run_id",
+    "scanner_receipt_path",
+    "scanner_run_id",
+    "source_path",
+}
 REVIEW_CONFIG_REL_PATH = ".brigade/reviews.toml"
 REVIEW_RUN_STALE_HOURS = 72
 REVIEW_REQUIRED_FIELDS = ("id", "name", "command", "output_path", "findings_path", "privacy_mode")
@@ -6761,6 +6800,139 @@ def import_triage(
     return 0
 
 
+def _metadata_has_any(metadata: dict[str, Any], keys: set[str]) -> bool:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and value:
+            return True
+        if isinstance(value, dict) and value:
+            return True
+        if isinstance(value, (int, float, bool)):
+            return True
+    return False
+
+
+def _provenance_audit_sources(target: Path) -> set[str]:
+    sources = set(PROVENANCE_AUDIT_SOURCES)
+    sources.update(_scanner_source_map(target))
+    return sources
+
+
+def _provenance_audit_item(
+    item: dict[str, Any],
+    *,
+    scanner_sources: dict[str, dict[str, Any]],
+    audited_sources: set[str],
+) -> dict[str, Any] | None:
+    source = str(item.get("source") or "manual")
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    is_configured_scanner = source in scanner_sources
+    if source not in audited_sources and not is_configured_scanner:
+        return None
+
+    missing: list[str] = []
+    source_identity = _import_source_identity(item)
+    fingerprint = _import_fingerprint(item)
+    explicit_fingerprint = metadata.get("source_fingerprint")
+    has_explicit_fingerprint = isinstance(explicit_fingerprint, str) and bool(explicit_fingerprint.strip())
+    if source_identity is None:
+        missing.append("source_item_key")
+    if not has_explicit_fingerprint:
+        missing.append("source_fingerprint")
+    if not _metadata_has_any(metadata, PROVENANCE_SAFE_SUMMARY_KEYS):
+        missing.append("safe_summary")
+    if not _metadata_has_any(metadata, PROVENANCE_EVIDENCE_KEYS):
+        missing.append("evidence_reference")
+
+    if is_configured_scanner:
+        for key in ("scanner_id", "scanner_source", "scanner_run_id"):
+            if not metadata.get(key):
+                missing.append(key)
+
+    missing = sorted(set(missing))
+    return {
+        "id": item.get("id"),
+        "source": source,
+        "kind": item.get("kind", "task"),
+        "status": item.get("status", "pending"),
+        "producer": "scanner" if is_configured_scanner else source,
+        "source_identity": list(source_identity) if source_identity else None,
+        "source_fingerprint": explicit_fingerprint.strip() if has_explicit_fingerprint else None,
+        "effective_source_fingerprint": fingerprint,
+        "has_source_identity": source_identity is not None,
+        "has_source_fingerprint": has_explicit_fingerprint,
+        "has_safe_summary": "safe_summary" not in missing,
+        "has_evidence_reference": "evidence_reference" not in missing,
+        "dismissed_until_changed_ready": source_identity is not None and has_explicit_fingerprint,
+        "provenance_complete": not missing,
+        "missing_fields": missing,
+    }
+
+
+def _import_provenance_payload(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    imports = [item for item in _read_imports(target) if isinstance(item, dict)]
+    scanner_sources = _scanner_source_map(target)
+    audited_sources = _provenance_audit_sources(target)
+    items = [
+        audit
+        for item in imports
+        if (audit := _provenance_audit_item(item, scanner_sources=scanner_sources, audited_sources=audited_sources))
+        is not None
+    ]
+    missing_by_field: dict[str, int] = {}
+    missing_by_source: dict[str, int] = {}
+    incomplete = [item for item in items if not item["provenance_complete"]]
+    for item in incomplete:
+        source = str(item.get("source") or "manual")
+        missing_by_source[source] = missing_by_source.get(source, 0) + 1
+        for field in item.get("missing_fields", []):
+            missing_by_field[field] = missing_by_field.get(field, 0) + 1
+    return {
+        "target": str(target),
+        "imports_path": str(_imports_path(target)),
+        "audited_source_count": len(audited_sources),
+        "import_count": len(imports),
+        "audited_import_count": len(items),
+        "complete_count": len(items) - len(incomplete),
+        "incomplete_count": len(incomplete),
+        "missing_by_field": dict(sorted(missing_by_field.items())),
+        "missing_by_source": dict(sorted(missing_by_source.items())),
+        "items": items,
+        "issues": incomplete,
+    }
+
+
+def import_provenance(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not target.is_dir():
+        print(f"error: --target is not a directory: {target}", file=sys.stderr)
+        return 2
+    payload = _import_provenance_payload(target)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"work import provenance: {target}")
+    print(f"imports_path: {payload['imports_path']}")
+    print(f"audited_imports: {payload['audited_import_count']}")
+    print(f"complete: {payload['complete_count']}")
+    print(f"incomplete: {payload['incomplete_count']}")
+    if payload["missing_by_field"]:
+        print("missing_by_field:")
+        for field, count in payload["missing_by_field"].items():
+            print(f"  {field}: {count}")
+    if payload["missing_by_source"]:
+        print("missing_by_source:")
+        for source, count in payload["missing_by_source"].items():
+            print(f"  {source}: {count}")
+    for item in payload["issues"][:20]:
+        fields = ", ".join(str(field) for field in item.get("missing_fields", []))
+        print(f"- {item.get('id')} {item.get('source')} {item.get('kind')} missing={fields}")
+    return 0
+
+
 def _inbox_payload(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     pending = _pending_imports(target)
@@ -6977,6 +7149,23 @@ def _inbox_hygiene_payload(target: Path) -> dict[str, Any]:
             "inbox_noisy_sources",
             ", ".join(noisy_sources) if noisy_sources else "none",
             noisy_sources[:10],
+        )
+    )
+
+    provenance = _import_provenance_payload(target)
+    provenance_missing = [
+        str(item.get("id"))
+        for item in provenance["issues"]
+        if item.get("status", "pending") == "pending"
+    ]
+    checks.append(
+        _import_hygiene_issue(
+            WARN if provenance_missing else OK,
+            "inbox_provenance_contract",
+            f"{len(provenance_missing)} pending producer import(s) missing provenance contract fields"
+            if provenance_missing
+            else "producer imports satisfy the provenance contract",
+            provenance_missing[:10],
         )
     )
 
