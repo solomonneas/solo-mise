@@ -69,6 +69,9 @@ brigade repos release waivers record <train-id|latest> --scope missing-evidence 
 brigade repos release waivers list
 brigade repos release waivers show <waiver-id>
 brigade repos release waivers revoke <waiver-id> --reason "risk changed"
+brigade repos release waivers renew <waiver-id> --reason "reviewed again" --expires-at <timestamp>
+brigade repos release waivers doctor <train-id|latest>
+brigade repos release waivers import-issues <train-id|latest>
 ```
 
 Fleet reports are written under:
@@ -136,7 +139,9 @@ Each repo is classified as `ready`, `blocked`, `needs-review`, `needs-dispatch`,
 
 `brigade repos release report <train-id|latest>` writes `RELEASE_TRAIN_REPORT.md` and `RELEASE_TRAIN_REPORT.json` into the train bundle. `checklist` prints the required evidence rows for each repo. `hygiene` reports unclosed, stale, or missing-report trains. `import-issues` routes missing or blocked release evidence into the local work inbox as `source: repo-fleet-release`. `activity` shows a chronological local ledger for train creation, closeout, actions, evidence, waivers, reports, and manifests. `manifest` writes `RELEASE_TRAIN_MANIFEST.json` with bundle file labels and fingerprints. `audit` checks for missing bundle files, stale manifests, open actions, and unresolved release evidence.
 
-`brigade repos release ready <train-id|latest>` is a local manual-publish gate that fails when the train has blocked repos, unresolved train actions, missing evidence, or blocked evidence. `brigade repos release waivers` can record explicit local waivers for `blocked-repo`, `unresolved-action`, `missing-evidence`, and `blocked-evidence` scopes. Active waivers are included in ready output and can allow the ready gate to pass without hiding the underlying counts. Waivers are local metadata only and can be revoked when risk changes.
+`brigade repos release ready <train-id|latest>` is a local manual-publish gate that fails when the train has blocked repos, unresolved train actions, missing evidence, or blocked evidence. `brigade repos release waivers` can record explicit local waivers for `blocked-repo`, `unresolved-action`, `missing-evidence`, and `blocked-evidence` scopes. Active waivers are included in ready output and can allow the ready gate to pass without hiding the underlying counts. Expired waivers do not satisfy the ready gate.
+
+Waivers can include `--expires-at <timestamp>`, be renewed with `renew`, and be revoked when risk changes. `waivers doctor` reports expired waivers, waivers with no expiry, stale reviews, and waivers tied to older train fingerprints. `waivers import-issues` routes waiver follow-up into the local work inbox as `source: repo-fleet-release-waiver` with stable fingerprints and dismissed-until-changed behavior. Waivers are local metadata only.
 
 Privacy boundaries:
 

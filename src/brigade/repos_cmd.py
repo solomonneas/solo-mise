@@ -29,6 +29,7 @@ RELEASE_EVIDENCE_STEPS = {"verification", "release-doctor", "candidate-compare",
 RELEASE_EVIDENCE_STATUSES = {"completed", "skipped", "blocked", "deferred"}
 REQUIRED_RELEASE_EVIDENCE_STEPS = ("verification", "release-doctor", "candidate-compare", "tag", "push", "release")
 RELEASE_WAIVER_SCOPES = {"blocked-repo", "unresolved-action", "missing-evidence", "blocked-evidence"}
+RELEASE_WAIVER_STALE_HOURS = 168
 RELEASE_BUNDLE_FILES = (
     "FLEET_RELEASE_EVIDENCE.json",
     "FLEET_RELEASE_TRAIN.md",
@@ -2652,11 +2653,16 @@ def _write_release_waivers(target: Path, waivers: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(waiver, sort_keys=True) + "\n")
 
 
+def _release_waiver_expired(waiver: dict[str, Any]) -> bool:
+    expires_at = _parse_time(waiver.get("expires_at"))
+    return bool(expires_at and expires_at < _now())
+
+
 def _active_release_waivers(target: Path, train_id: str) -> list[dict[str, Any]]:
     return [
         waiver
         for waiver in _read_release_waivers(target)
-        if waiver.get("train_id") == train_id and waiver.get("status") == "active"
+        if waiver.get("train_id") == train_id and waiver.get("status") == "active" and not _release_waiver_expired(waiver)
     ]
 
 
@@ -2681,6 +2687,7 @@ def release_waiver_record(
     scope: str,
     reason: str,
     repo_id: str | None = None,
+    expires_at: str | None = None,
     json_output: bool = False,
 ) -> int:
     target = target.expanduser().resolve()
@@ -2693,6 +2700,9 @@ def release_waiver_record(
         return 2
     if not reason:
         print("error: --reason is required", file=sys.stderr)
+        return 2
+    if expires_at and _parse_time(expires_at) is None:
+        print("error: --expires-at must be an ISO timestamp", file=sys.stderr)
         return 2
     train_repos = train.get("repos") if isinstance(train.get("repos"), list) else []
     repos = [repo for repo in train_repos if isinstance(repo, dict)]
@@ -2711,9 +2721,10 @@ def release_waiver_record(
         "scope": scope,
         "status": "active",
         "reason": _safe_text(reason),
+        "expires_at": expires_at,
         "created_at": now,
         "updated_at": now,
-        "source_fingerprint": _fingerprint_payload({"train_id": train_id_value, "repo_id": repo_id or "all", "scope": scope, "reason": reason}),
+        "source_fingerprint": _fingerprint_payload({"train_id": train_id_value, "repo_id": repo_id or "all", "scope": scope, "reason": reason, "expires_at": expires_at}),
     }
     replaced = False
     for index, existing in enumerate(waivers):
@@ -2790,6 +2801,136 @@ def release_waiver_revoke(*, target: Path, waiver_id: str, reason: str, json_out
         print(json.dumps({"target_label": "repo-fleet", "waiver": waiver}, indent=2, sort_keys=True))
         return 0
     print(f"repo fleet release waiver revoked: {waiver.get('waiver_id')}")
+    return 0
+
+
+def release_waiver_renew(*, target: Path, waiver_id: str, reason: str, expires_at: str | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    if not reason:
+        print("error: --reason is required", file=sys.stderr)
+        return 2
+    if expires_at and _parse_time(expires_at) is None:
+        print("error: --expires-at must be an ISO timestamp", file=sys.stderr)
+        return 2
+    waivers, waiver, error = _find_release_waiver(target, waiver_id)
+    if waiver is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if error and "not found" in error else 2
+    train, _ = _resolve_release_train(target, str(waiver.get("train_id") or ""))
+    now = _now().isoformat()
+    waiver["status"] = "active"
+    waiver["reason"] = _safe_text(reason)
+    waiver["expires_at"] = expires_at
+    waiver["renewed_at"] = now
+    waiver["updated_at"] = now
+    if isinstance(train, dict):
+        waiver["train_fingerprint"] = train.get("train_fingerprint")
+    waiver["source_fingerprint"] = _fingerprint_payload({"train_id": waiver.get("train_id"), "repo_id": waiver.get("repo_id") or "all", "scope": waiver.get("scope"), "reason": reason, "expires_at": expires_at})
+    _write_release_waivers(target, waivers)
+    if json_output:
+        print(json.dumps({"target_label": "repo-fleet", "waiver": waiver}, indent=2, sort_keys=True))
+        return 0
+    print(f"repo fleet release waiver renewed: {waiver.get('waiver_id')}")
+    return 0
+
+
+def _release_waiver_health_payload(target: Path, train_id: str | None = None) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    selected_train_id = train_id
+    if train_id == "latest":
+        latest = latest_release_train(target)
+        selected_train_id = str(latest.get("train_id")) if isinstance(latest, dict) else train_id
+    waivers = _read_release_waivers(target)
+    if selected_train_id:
+        waivers = [waiver for waiver in waivers if str(waiver.get("train_id") or "").startswith(selected_train_id)]
+    issues: list[dict[str, Any]] = []
+    now = _now()
+    for waiver in waivers:
+        waiver_id = str(waiver.get("waiver_id") or "")
+        status = str(waiver.get("status") or "")
+        if status != "active":
+            continue
+        train, _ = _resolve_release_train(target, str(waiver.get("train_id") or ""))
+        if _release_waiver_expired(waiver):
+            issues.append({"status": WARN, "name": "release_waiver_expired", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} is expired", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"reviewed again\""})
+            continue
+        if not waiver.get("expires_at"):
+            issues.append({"status": WARN, "name": "release_waiver_missing_expiry", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} has no expiry", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"set expiry\" --expires-at <timestamp>"})
+        created = _parse_time(waiver.get("renewed_at") or waiver.get("created_at"))
+        if created and (now - created).total_seconds() / 3600 > RELEASE_WAIVER_STALE_HOURS:
+            issues.append({"status": WARN, "name": "release_waiver_stale_review", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} has not been reviewed recently", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"reviewed again\""})
+        if isinstance(train, dict) and waiver.get("train_fingerprint") and train.get("train_fingerprint") and waiver.get("train_fingerprint") != train.get("train_fingerprint"):
+            issues.append({"status": WARN, "name": "release_waiver_train_changed", "waiver_id": waiver_id, "train_id": waiver.get("train_id"), "scope": waiver.get("scope"), "detail": f"{waiver_id} references an older train fingerprint", "suggested_next_command": f"brigade repos release waivers renew {waiver_id} --reason \"train reviewed again\""})
+    return {"target_label": "repo-fleet", "waivers_path_label": ".brigade/repos/releases/waivers.jsonl", "train_id": selected_train_id, "waiver_count": len(waivers), "issues": issues, "issue_count": len(issues), "top_issue": issues[0] if issues else None}
+
+
+def release_waiver_doctor(*, target: Path, train_id: str | None = None, json_output: bool = False) -> int:
+    payload = _release_waiver_health_payload(target, train_id)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print("repo fleet release waiver doctor")
+    print(f"issues: {payload['issue_count']}")
+    for issue in payload["issues"]:
+        print(f"[{issue.get('status')}] {issue.get('name')}: {issue.get('detail')}")
+    return 0
+
+
+def _release_waiver_import_records(health: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for issue in health.get("issues") if isinstance(health.get("issues"), list) else []:
+        if not isinstance(issue, dict):
+            continue
+        waiver_id = str(issue.get("waiver_id") or "unknown")
+        fingerprint = _fingerprint_payload({"waiver_id": waiver_id, "name": issue.get("name"), "scope": issue.get("scope"), "train_id": issue.get("train_id")})
+        records.append(
+            {
+                "text": f"Review fleet release waiver {waiver_id}: {issue.get('name')}",
+                "kind": "task",
+                "source": "repo-fleet-release-waiver",
+                "type": "docs",
+                "priority": "high" if issue.get("name") in {"release_waiver_expired", "release_waiver_train_changed"} else "normal",
+                "template": "docs",
+                "acceptance": [
+                    "The release waiver is renewed with current review context or revoked.",
+                    "The fleet release ready gate and audit output reflect the current waiver state.",
+                    "No verification, publish, tag, push, or release command is executed by Brigade.",
+                ],
+                "metadata": {
+                    "train_id": issue.get("train_id"),
+                    "waiver_id": waiver_id,
+                    "scope": issue.get("scope"),
+                    "issue_type": issue.get("name"),
+                    "safe_summary": issue.get("detail"),
+                    "source_item_key": f"{issue.get('train_id')}:{waiver_id}:{issue.get('name')}",
+                    "source_fingerprint": fingerprint,
+                },
+            }
+        )
+    return records
+
+
+def release_waiver_import_issues(*, target: Path, train_id: str | None = None, dry_run: bool = False, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    health = _release_waiver_health_payload(target, train_id)
+    records = _release_waiver_import_records(health)
+    imported, skipped, dismissed = work_cmd._append_import_records(target, records, dry_run=dry_run)
+    payload = {
+        "target_label": "repo-fleet",
+        "train_id": health.get("train_id"),
+        "dry_run": dry_run,
+        "issue_count": len(records),
+        "created": len(imported),
+        "skipped": len(skipped),
+        "dismissed": len(dismissed),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print("repo fleet release waiver imports")
+    print(f"created: {len(imported)}")
+    print(f"skipped: {len(skipped)}")
+    print(f"dismissed: {len(dismissed)}")
     return 0
 
 
@@ -3393,12 +3534,17 @@ def _release_audit_payload(target: Path, train: dict[str, Any]) -> dict[str, Any
         issues.append({"status": WARN, "name": "release_train_blocked_evidence", "detail": f"{summary.get('blocked_count')} repo(s) have blocked evidence", "suggested_next_command": f"brigade repos release evidence plan {train_id}"})
     if int(train.get("blocker_count") or 0) > 0:
         issues.append({"status": WARN, "name": "release_train_blocked_repos", "detail": f"{train.get('blocker_count')} repo blocker(s) remain", "suggested_next_command": f"brigade repos release show {train_id}"})
+    waiver_health = _release_waiver_health_payload(target, train_id)
+    for issue in waiver_health.get("issues") if isinstance(waiver_health.get("issues"), list) else []:
+        if isinstance(issue, dict):
+            issues.append(dict(issue))
     return {
         "target_label": "repo-fleet",
         "train_id": train_id,
         "generated_at": _now().isoformat(),
         "issue_count": len(issues),
         "issues": issues,
+        "waiver_issue_count": waiver_health.get("issue_count"),
         "summary": {key: summary.get(key) for key in ("repo_count", "counts", "unresolved_action_count", "missing_evidence_count", "blocked_count")},
     }
 
@@ -3531,6 +3677,7 @@ def release_ready(*, target: Path, train_id: str = "latest", json_output: bool =
     blockers: list[str] = []
     waived: list[dict[str, Any]] = []
     active_waivers = _active_release_waivers(target, str(train.get("train_id") or ""))
+    waiver_health = _release_waiver_health_payload(target, str(train.get("train_id") or ""))
     waived_scopes = _release_waiver_scope_names(active_waivers)
     checks = [
         ("blocked-repo", int(train.get("blocker_count") or 0), "train has blocked repos"),
@@ -3553,6 +3700,8 @@ def release_ready(*, target: Path, train_id: str = "latest", json_output: bool =
         "blockers": blockers,
         "waived": waived,
         "waiver_count": len(active_waivers),
+        "waiver_issues": waiver_health.get("issues"),
+        "waiver_issue_count": waiver_health.get("issue_count"),
         "summary": {key: summary.get(key) for key in ("repo_count", "counts", "unresolved_action_count", "missing_evidence_count", "blocked_count")},
     }
     if json_output:

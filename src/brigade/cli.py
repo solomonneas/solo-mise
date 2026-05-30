@@ -408,6 +408,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_repos_release_waivers_record.add_argument("--scope", required=True, choices=sorted(repos_cmd.RELEASE_WAIVER_SCOPES), help="Waiver scope.")
     p_repos_release_waivers_record.add_argument("--repo", dest="repo_id", default=None, help="Optional repo id from the train.")
     p_repos_release_waivers_record.add_argument("--reason", required=True, help="Safe waiver reason.")
+    p_repos_release_waivers_record.add_argument("--expires-at", default=None, help="Optional ISO timestamp when the waiver should expire.")
     p_repos_release_waivers_record.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_repos_release_waivers_record.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_repos_release_waivers_list = repos_release_waivers_sub.add_parser("list", help="List fleet release waivers.")
@@ -424,6 +425,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p_repos_release_waivers_revoke.add_argument("--reason", required=True, help="Safe revocation reason.")
     p_repos_release_waivers_revoke.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_repos_release_waivers_revoke.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_release_waivers_renew = repos_release_waivers_sub.add_parser("renew", help="Renew one fleet release waiver.")
+    p_repos_release_waivers_renew.add_argument("waiver_id", help="Waiver id or unique prefix.")
+    p_repos_release_waivers_renew.add_argument("--reason", required=True, help="Safe renewal reason.")
+    p_repos_release_waivers_renew.add_argument("--expires-at", default=None, help="Optional ISO timestamp when the waiver should expire.")
+    p_repos_release_waivers_renew.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_release_waivers_renew.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_release_waivers_doctor = repos_release_waivers_sub.add_parser("doctor", help="Check fleet release waiver health.")
+    p_repos_release_waivers_doctor.add_argument("train_id", nargs="?", default=None, help="Optional train id, unique prefix, or latest.")
+    p_repos_release_waivers_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_release_waivers_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_release_waivers_import = repos_release_waivers_sub.add_parser("import-issues", help="Import fleet release waiver issues into the local work inbox.")
+    p_repos_release_waivers_import.add_argument("train_id", nargs="?", default=None, help="Optional train id, unique prefix, or latest.")
+    p_repos_release_waivers_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_release_waivers_import.add_argument("--dry-run", action="store_true", help="Validate without writing imports.")
+    p_repos_release_waivers_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     # handoff
     p_handoff = sub.add_parser("handoff", help="Inspect memory handoff inbox health.")
@@ -1890,13 +1906,19 @@ def main(argv=None) -> int:
                 return 2
             if args.repos_release_command == "waivers":
                 if args.repos_release_waivers_command == "record":
-                    return repos_cmd.release_waiver_record(target=args.target, train_id=args.train_id, scope=args.scope, repo_id=args.repo_id, reason=args.reason, json_output=args.json)
+                    return repos_cmd.release_waiver_record(target=args.target, train_id=args.train_id, scope=args.scope, repo_id=args.repo_id, reason=args.reason, expires_at=args.expires_at, json_output=args.json)
                 if args.repos_release_waivers_command == "list":
                     return repos_cmd.release_waiver_list(target=args.target, train_id=args.train_id, limit=args.limit, json_output=args.json)
                 if args.repos_release_waivers_command == "show":
                     return repos_cmd.release_waiver_show(target=args.target, waiver_id=args.waiver_id, json_output=args.json)
                 if args.repos_release_waivers_command == "revoke":
                     return repos_cmd.release_waiver_revoke(target=args.target, waiver_id=args.waiver_id, reason=args.reason, json_output=args.json)
+                if args.repos_release_waivers_command == "renew":
+                    return repos_cmd.release_waiver_renew(target=args.target, waiver_id=args.waiver_id, reason=args.reason, expires_at=args.expires_at, json_output=args.json)
+                if args.repos_release_waivers_command == "doctor":
+                    return repos_cmd.release_waiver_doctor(target=args.target, train_id=args.train_id, json_output=args.json)
+                if args.repos_release_waivers_command == "import-issues":
+                    return repos_cmd.release_waiver_import_issues(target=args.target, train_id=args.train_id, dry_run=args.dry_run, json_output=args.json)
                 parser.error(f"unknown repos release waivers command: {args.repos_release_waivers_command}")
                 return 2
             parser.error(f"unknown repos release command: {args.repos_release_command}")

@@ -171,6 +171,7 @@ Acceptance:
 - Tests cover release train reconcile and summary for complete, skipped, deferred, blocked, and missing evidence states.
 - Tests cover release train report, checklist, hygiene, import-issues, and ready gate behavior without remote mutation.
 - Tests cover release train waivers, activity, manifests, audits, waiver-aware ready behavior, and revocation without remote mutation.
+- Tests cover release waiver expiry, renewal, doctor checks, import routing, stale review warnings, and ready/audit visibility.
 - Tests prove private repo names, owner names, org names, local paths, and raw evidence are not copied into public docs, fixtures, imports, handoffs, release evidence, or committed diffs.
 
 Phase 35 status:
@@ -241,6 +242,15 @@ Phase 51-55 status:
 - Implemented command surface: `brigade repos release audit <train-id|latest>`.
 - Release waivers are local records for `blocked-repo`, `unresolved-action`, `missing-evidence`, and `blocked-evidence` scopes. The ready gate reports active waivers and can pass when remaining blockers are explicitly waived without hiding the underlying counts.
 - Release activity gives one chronological local ledger across train creation, closeout, train actions, manual evidence, waivers, reports, and manifests. Manifests record bundle file labels and fingerprints. Audits report missing bundle files, stale manifests, open actions, blocked repos, and unresolved manual evidence.
+
+Phase 56-60 status:
+
+- Implemented command surface: `brigade repos release waivers renew <waiver-id>`.
+- Implemented command surface: `brigade repos release waivers doctor <train-id|latest>`.
+- Implemented command surface: `brigade repos release waivers import-issues <train-id|latest>`.
+- Release waivers can now carry `expires_at`. Expired waivers no longer satisfy `brigade repos release ready`.
+- Waiver doctor reports expired active waivers, waivers missing expiry, stale waiver reviews, and waivers tied to an older train fingerprint. Waiver import routing creates `source: repo-fleet-release-waiver` tasks with stable fingerprints and dismissed-until-changed behavior.
+- Release ready and release audit include waiver health issues so reviewed risk remains visible even when an active waiver allows readiness to pass.
 
 ### 3. Inspiration Pattern Registry
 
