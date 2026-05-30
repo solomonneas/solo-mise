@@ -121,6 +121,8 @@ Goal: add SARIF output for security findings if it can be implemented with no de
 
 Acceptance: tests cover SARIF schema shape or a documented deferral with release evidence and roadmap status.
 
+Status: implemented with dependency-free SARIF 2.1.0 generation in security scan bundles, `brigade security sarif` regeneration from existing reports, release evidence for SARIF readiness, and redacted SARIF payload tests.
+
 ### Phase 77: Agent Instruction Guardrail Fixtures
 Goal: expand security fixtures for repo guidance, skills, slash commands, subagents, tool wrappers, and prompt-injection risks.
 

@@ -618,7 +618,7 @@ Phase 36 status:
 
 - Implemented command surface: `brigade security closeout`.
 - Security closeouts write local receipts under `.brigade/security/closeouts/` with finding ids, fingerprints, status, suppressions, and accepted-risk state.
-- Deferred: SARIF. Reason: JSON and Markdown evidence bundles already exist, and SARIF needs a focused schema compatibility pass without new dependencies.
+- Added dependency-free SARIF 2.1.0 output through `brigade security sarif` and scan bundle generation.
 
 ### 12. Issue And TDD Loop Closure
 

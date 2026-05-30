@@ -25,13 +25,16 @@ Keep tokens, private URLs, hostnames, mount paths, repo paths, and credentials o
 ```bash
 brigade security scan --target .
 brigade security findings
+brigade security sarif
 brigade security show <finding-id>
 brigade security suppress <finding-id-or-fingerprint> --reason "reviewed false positive"
 brigade security unsuppress <finding-id-or-fingerprint>
 brigade security doctor
 ```
 
-Findings include stable `id`, `fingerprint`, `rule_id`, `severity`, `category`, `path`, `line`, `safe_excerpt`, and `remediation_hint` fields. Secret-looking values are redacted before JSON reports, Markdown reports, work imports, docs, or session artifacts are written.
+Findings include stable `id`, `fingerprint`, `rule_id`, `severity`, `category`, `path`, `line`, `safe_excerpt`, and `remediation_hint` fields. Secret-looking values are redacted before JSON reports, Markdown reports, SARIF, work imports, docs, or session artifacts are written.
+
+Security scans write `security-report.sarif` next to the JSON and Markdown reports. `brigade security sarif` can regenerate that SARIF file from an existing local evidence bundle without rescanning.
 
 ## Inbox Flow
 

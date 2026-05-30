@@ -192,6 +192,7 @@ def inspect_evidence_bundle(path: Path) -> dict[str, Any]:
     path = path.expanduser().resolve()
     json_path = path / "security-report.json"
     markdown_path = path / "security-report.md"
+    sarif_path = path / "security-report.sarif"
     enrichment_path = path / "security-enrichment.json"
     if not path.is_dir():
         return {"ready": False, "path": str(path), "reason": "missing"}
@@ -210,6 +211,8 @@ def inspect_evidence_bundle(path: Path) -> dict[str, Any]:
         "generated_at": payload.get("generated_at"),
         "finding_count": payload.get("finding_count"),
         "policy": payload.get("policy"),
+        "sarif_ready": sarif_path.is_file(),
+        "sarif_path": str(sarif_path) if sarif_path.is_file() else None,
         "enrichment_ready": enrichment_path.is_file(),
     }
 
@@ -651,6 +654,29 @@ def review(*, target: Path, output_dir: Path | None = None, json_output: bool = 
 
 def findings(*, target: Path, output_dir: Path | None = None, json_output: bool = False) -> int:
     return review(target=target, output_dir=output_dir, json_output=json_output)
+
+
+def sarif(*, target: Path, output_dir: Path | None = None, output_path: Path | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    artifacts_dir = output_dir.expanduser().resolve() if output_dir is not None else default_artifacts_dir(target)
+    try:
+        report = _load_report(artifacts_dir)
+    except FileNotFoundError as exc:
+        print(f"error: security report not found: {exc}", file=sys.stderr)
+        return 2
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"error: invalid security report: {exc}", file=sys.stderr)
+        return 2
+    payload = _sarif_report(report)
+    destination = output_path.expanduser().resolve() if output_path is not None else artifacts_dir / "security-report.sarif"
+    _write_json(destination, payload)
+    output = {"target": str(target), "path": str(destination), "result_count": len(payload["runs"][0]["results"]), "sarif": payload}
+    if json_output:
+        print(json.dumps(output, indent=2, sort_keys=True))
+        return 0
+    print(f"security sarif: {destination}")
+    print(f"results: {output['result_count']}")
+    return 0
 
 
 def _resolve_finding_record(target: Path, identifier: str, output_dir: Path | None = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -2036,6 +2062,90 @@ def _render_markdown_report(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _sarif_level(severity: object) -> str:
+    rendered = str(severity or "").lower()
+    if rendered in {"critical", "high"}:
+        return "error"
+    if rendered == "medium":
+        return "warning"
+    return "note"
+
+
+def _sarif_report(report: dict[str, Any]) -> dict[str, Any]:
+    rules: dict[str, dict[str, Any]] = {}
+    results: list[dict[str, Any]] = []
+    for finding in report.get("findings", []):
+        if not isinstance(finding, dict):
+            continue
+        rule_id = str(finding.get("rule_id") or finding.get("category") or "brigade.security")
+        if rule_id not in rules:
+            rules[rule_id] = {
+                "id": rule_id,
+                "name": str(finding.get("title") or rule_id),
+                "shortDescription": {"text": str(finding.get("title") or rule_id)},
+                "fullDescription": {"text": str(finding.get("remediation_hint") or finding.get("suggestion") or finding.get("title") or rule_id)},
+                "properties": {
+                    "category": finding.get("category"),
+                    "severity": finding.get("severity"),
+                },
+            }
+        region: dict[str, Any] = {}
+        try:
+            line = int(finding.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        if line > 0:
+            region["startLine"] = line
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": _sarif_level(finding.get("severity")),
+                "message": {"text": str(finding.get("title") or finding.get("safe_excerpt") or finding.get("evidence") or rule_id)},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": str(finding.get("path") or "")},
+                            **({"region": region} if region else {}),
+                        }
+                    }
+                ],
+                "partialFingerprints": {"primaryLocationLineHash": str(finding.get("fingerprint") or finding.get("id") or "")},
+                "properties": {
+                    "id": finding.get("id"),
+                    "fingerprint": finding.get("fingerprint"),
+                    "severity": finding.get("severity"),
+                    "category": finding.get("category"),
+                    "confidence": finding.get("confidence"),
+                    "surface": finding.get("surface"),
+                    "safe_excerpt": finding.get("safe_excerpt") or finding.get("evidence"),
+                    "remediation_hint": finding.get("remediation_hint") or finding.get("suggestion"),
+                },
+            }
+        )
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "Brigade Security",
+                        "informationUri": "https://github.com/escoffier-labs/brigade",
+                        "rules": list(rules.values()),
+                    }
+                },
+                "results": results,
+                "properties": {
+                    "target": report.get("target"),
+                    "generated_at": report.get("generated_at"),
+                    "policy": report.get("policy"),
+                    "finding_count": report.get("finding_count"),
+                },
+            }
+        ],
+    }
+
+
 def write_evidence_bundle(report: dict[str, Any], output_dir: Path) -> Path:
     output_dir = output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2043,6 +2153,7 @@ def write_evidence_bundle(report: dict[str, Any], output_dir: Path) -> Path:
     report["artifacts"] = str(output_dir)
     (output_dir / "security-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     (output_dir / "security-report.md").write_text(_render_markdown_report(report))
+    (output_dir / "security-report.sarif").write_text(json.dumps(_sarif_report(report), indent=2, sort_keys=True) + "\n")
     return output_dir
 
 

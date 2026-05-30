@@ -1,6 +1,7 @@
 import json
 
 from brigade import cli
+from brigade import release_cmd
 from brigade import security_cmd
 from brigade import work_cmd
 
@@ -409,8 +410,10 @@ def test_security_scan_writes_redacted_evidence_bundle(tmp_path, capsys):
 
     json_path = output_dir / "security-report.json"
     markdown_path = output_dir / "security-report.md"
+    sarif_path = output_dir / "security-report.sarif"
     assert json_path.is_file()
     assert markdown_path.is_file()
+    assert sarif_path.is_file()
 
     payload = json.loads(json_path.read_text())
     assert payload["artifacts"] == str(output_dir.resolve())
@@ -423,6 +426,20 @@ def test_security_scan_writes_redacted_evidence_bundle(tmp_path, capsys):
     assert "Possible sensitive secret material" in markdown
     assert "[REDACTED]" in markdown
     assert "abcd1234" not in markdown
+    sarif = json.loads(sarif_path.read_text())
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["tool"]["driver"]["name"] == "Brigade Security"
+    assert sarif["runs"][0]["results"][0]["ruleId"] == payload["findings"][0]["rule_id"]
+    assert sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == ".env"
+    assert "[REDACTED]" in json.dumps(sarif)
+    assert "abcd1234" not in json.dumps(sarif)
+    assert security_cmd.sarif(target=tmp_path, output_dir=output_dir, json_output=True) == 0
+    sarif_payload = json.loads(capsys.readouterr().out)
+    assert sarif_payload["result_count"] == 1
+    assert sarif_payload["sarif"]["version"] == "2.1.0"
+    assert release_cmd.plan(target=tmp_path, base_ref=None, json_output=True) in {0, 1}
+    release = json.loads(capsys.readouterr().out)
+    assert release["evidence"]["security"]["evidence"]["sarif_ready"] is True
 
 
 def test_security_enrich_writes_local_enrichment_bundle(tmp_path, capsys):
@@ -573,17 +590,24 @@ def test_security_findings_show_config_and_doctor_cli(tmp_path, monkeypatch):
         seen.append(("doctor", kwargs))
         return 0
 
+    def fake_sarif(**kwargs):
+        seen.append(("sarif", kwargs))
+        return 0
+
     monkeypatch.setattr(security_cmd, "findings", fake_findings)
     monkeypatch.setattr(security_cmd, "show", fake_show)
     monkeypatch.setattr(security_cmd, "show_config", fake_show_config)
     monkeypatch.setattr(security_cmd, "doctor", fake_doctor)
+    monkeypatch.setattr(security_cmd, "sarif", fake_sarif)
 
     assert cli.main(["security", "findings", "--target", str(tmp_path), "--output-dir", str(tmp_path / "out"), "--json"]) == 0
+    assert cli.main(["security", "sarif", "--target", str(tmp_path), "--output-dir", str(tmp_path / "out"), "--output-path", str(tmp_path / "out.sarif"), "--json"]) == 0
     assert cli.main(["security", "show", "security-0123456789abcdef", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["security", "config", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["security", "doctor", "--target", str(tmp_path), "--json"]) == 0
     assert seen == [
         ("findings", {"target": tmp_path, "output_dir": tmp_path / "out", "json_output": True}),
+        ("sarif", {"target": tmp_path, "output_dir": tmp_path / "out", "output_path": tmp_path / "out.sarif", "json_output": True}),
         ("show", {"target": tmp_path, "finding_id": "security-0123456789abcdef", "output_dir": None, "json_output": True}),
         ("config", {"target": tmp_path, "json_output": True}),
         ("doctor", {"target": tmp_path, "json_output": True}),

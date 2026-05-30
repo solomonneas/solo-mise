@@ -1335,6 +1335,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_security_findings.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to review.")
     p_security_findings.add_argument("--output-dir", type=Path, default=None, help="Security evidence bundle directory.")
     p_security_findings.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_security_sarif = security_sub.add_parser("sarif", help="Write SARIF for an existing security report.")
+    p_security_sarif.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to review.")
+    p_security_sarif.add_argument("--output-dir", type=Path, default=None, help="Security evidence bundle directory.")
+    p_security_sarif.add_argument("--output-path", type=Path, default=None, help="SARIF output path. Defaults to security-report.sarif in the bundle.")
+    p_security_sarif.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_security_show = security_sub.add_parser("show", help="Show one local security finding.")
     p_security_show.add_argument("finding_id", help="Finding id, id prefix, or fingerprint.")
     p_security_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to review.")
@@ -2739,6 +2744,8 @@ def main(argv=None) -> int:
             return security_cmd.review(target=args.target, output_dir=args.output_dir, json_output=args.json)
         if args.security_command == "findings":
             return security_cmd.findings(target=args.target, output_dir=args.output_dir, json_output=args.json)
+        if args.security_command == "sarif":
+            return security_cmd.sarif(target=args.target, output_dir=args.output_dir, output_path=args.output_path, json_output=args.json)
         if args.security_command == "show":
             return security_cmd.show(
                 target=args.target,

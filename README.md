@@ -695,6 +695,7 @@ brigade security scan --target . --output-dir .brigade/security/latest
 brigade security config
 brigade security doctor
 brigade security findings
+brigade security sarif
 brigade security show <finding-id>
 brigade security enrich --target .
 brigade security suppress <finding-id-or-fingerprint> --reason "reviewed false positive"
@@ -817,7 +818,8 @@ Security commands:
 - `brigade security config` shows the local profile, enabled checks, include/exclude paths, severity threshold, output path, suppressions, and enrichment settings.
 - `brigade security fix` creates `.brigade/security/` and refreshes the managed `.gitignore` block.
 - `brigade security scan --target .` runs a read-only agent workspace security scan.
-- `brigade security scan --output-dir .brigade/security/latest` writes redacted report artifacts with stable finding ids, fingerprints, rule ids, severity, category, path, line, safe excerpt, and remediation hint.
+- `brigade security scan --output-dir .brigade/security/latest` writes redacted report artifacts with stable finding ids, fingerprints, rule ids, severity, category, path, line, safe excerpt, remediation hint, and dependency-free SARIF.
+- `brigade security sarif` regenerates `security-report.sarif` from an existing local evidence bundle.
 - `brigade security scan --import-findings` writes the local evidence bundle and turns unsuppressed findings into deduped `security-scan` work imports with safe metadata.
 - `brigade security findings` lists the latest reviewable findings, and `brigade security show <finding-id>` inspects one finding.
 - `brigade security doctor` reports config, evidence, suppression, and open-finding health in text or JSON.
