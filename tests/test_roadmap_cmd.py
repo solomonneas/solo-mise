@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from brigade import cli
 from brigade import roadmap_cmd
@@ -26,6 +27,28 @@ def test_roadmap_audit_classifies_stale_sections_and_command_mismatch(tmp_path):
     assert "brigade roadmap audit" not in payload["missing_cli_commands"]
 
 
+def test_roadmap_audit_normalizes_parameterized_and_parent_commands(tmp_path):
+    (tmp_path / "ROADMAP.md").write_text("# Roadmap\n")
+    (tmp_path / "README.md").write_text(
+        "Use `brigade tools show simplify`, `brigade center`, and `brigade run review this repo`.\n"
+        "A prose sentence says brigade makes no network calls by default.\n"
+        "```bash\n"
+        "brigade chat surfaces show surface-one --json\n"
+        "```\n"
+    )
+
+    payload = roadmap_cmd.audit_payload(tmp_path)
+
+    assert "brigade tools show simplify" in payload["documented_commands"]
+    assert "brigade tools show" in payload["normalized_documented_commands"]
+    assert "brigade center" in payload["normalized_documented_commands"]
+    assert "brigade run" in payload["normalized_documented_commands"]
+    assert "brigade chat surfaces show" in payload["normalized_documented_commands"]
+    assert "brigade makes no network calls" not in payload["documented_commands"]
+    assert "brigade tools show simplify" not in payload["missing_cli_commands"]
+    assert "brigade chat surfaces show surface-one" not in payload["missing_cli_commands"]
+
+
 def test_roadmap_audit_json_and_imports(tmp_path, capsys):
     (tmp_path / "ROADMAP.md").write_text("# Roadmap\n")
     (tmp_path / "README.md").write_text("Run `brigade missing localcommand`.\n")
@@ -49,8 +72,17 @@ def test_roadmap_patterns_cover_neutral_families_and_decisions(capsys, tmp_path)
 
     decisions = {item["decision"] for item in payload["decisions"]}
     assert {"bake-in", "integrate", "catalog-only", "move-candidate", "leave-alone"} <= decisions
-    assert any(check["name"] == "pattern_missing_owner" for check in payload["checks"])
-    assert any(check["name"] == "pattern_missing_tests" for check in payload["checks"])
+    assert payload["issue_count"] == 0
+    assert all(check["status"] == "ok" for check in payload["checks"])
+
+
+def test_phase_61_100_plan_lists_forty_public_safe_phases():
+    plan = (Path(__file__).parents[1] / "docs" / "phase-61-100-plan.md").read_text()
+
+    assert plan.count("### Phase ") == 40
+    for phase in range(61, 101):
+        assert f"### Phase {phase}:" in plan
+    assert "private repo names" in plan
 
 
 def test_roadmap_cli_dispatch(tmp_path, monkeypatch):

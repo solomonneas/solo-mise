@@ -2,7 +2,7 @@
 
 Brigade is being built as a practical daily workflow first, then a portable setup other people can adapt. The core direction is an organized version of real agent work: one command to start, predictable local artifacts, reviewable memory handoffs, and enough inspection to trust the loop during normal work.
 
-## Current Phase: Daily Driver
+## Foundation: Daily Driver
 
 Status: in progress.
 
@@ -14,7 +14,7 @@ Status: in progress.
 - `brigade work run --queue-next` queues extracted follow-up work without duplicating equivalent pending tasks.
 - `brigade work import add/list/show/promote` gives scanners and wrappers a stable local inbox for candidate work.
 
-## Next Phase: Scanner-Ready Inbox
+## Foundation: Scanner-Ready Inbox
 
 Status: active.
 
@@ -127,7 +127,7 @@ Brigade-specific additions:
 - Track false-positive taxonomy, runtime-confidence rules, suppressions, and regression fixtures as first-class project artifacts. Status: started with `brigade security findings`, `show`, `review`, reasoned suppressions, unsuppress, and stale-suppression doctor warnings.
 - Close out reviewed security findings and accepted risk. Status: started with `brigade security closeout` and local receipts that preserve safe finding ids, fingerprints, suppressions, and accepted-risk status.
 
-## Current Phase: Issue And TDD Work Loop
+## Active Phase: Issue And TDD Work Loop
 
 Goal: make Brigade support a narrow issue lifecycle for daily work: pick one task, define acceptance, test first when practical, implement, review, refactor, and close.
 
@@ -172,3 +172,9 @@ Goal: keep the system usable by the original operator while making it adaptable 
 - Provide templates for fresh-start users without publishing private workspace state.
 - Keep public repo docs focused on patterns, commands, and safety contracts.
 - Leave release, tag, push-to-main, and production-impacting actions behind explicit approval gates.
+
+## Active Phase Queue: Roadmap Completion Hardening
+
+Status: active.
+
+The detailed working queue for phases 61-100 lives in [`docs/phase-61-100-plan.md`](docs/phase-61-100-plan.md). The queue focuses on roadmap audit precision, deferred-item ownership, command documentation contracts, cross-producer provenance, privacy regression coverage, chat export hardening, backup and tool closeouts, context and learning receipts, security report compatibility, issue/TDD repair imports, memory and handoff hardening, release evidence schemas, operator-center schemas, fleet release reports, CI platform warnings, install smoke receipts, public template privacy, and a final local operator readiness closeout.

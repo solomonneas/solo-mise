@@ -53,7 +53,7 @@ The cookbook explains the why. This package gives you the kitchen.
 Browse the public template index in [`templates/`](templates/).
 The installable source files live under `src/brigade/templates/`; root workspace files are local dogfood state and stay ignored.
 
-See [`ROADMAP.md`](ROADMAP.md) for the daily-driver, scanner inbox, chat-surface scanner, and memory-card decay roadmap.
+See [`ROADMAP.md`](ROADMAP.md) for the daily-driver, scanner inbox, chat-surface scanner, and memory-card decay roadmap. The active phase queue for roadmap completion hardening is tracked in [`docs/phase-61-100-plan.md`](docs/phase-61-100-plan.md).
 
 ## What you do not get
 

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `docs/phase-61-100-plan.md` as the public, testable phase queue for roadmap completion hardening.
 - Public `templates/` index that points fresh-start users at the packaged starter templates without exposing local dogfood workspace files.
 - Built-in `brigade doctor` bootstrap budget checks that fail hard when installed bootstrap files exceed conservative byte limits.
 - Built-in `brigade doctor` memory-card budget checks that fail when `memory/cards/*.md` cards become too large.
@@ -148,6 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade run --read-only` prompt policy for planning and review runs that should inspect and recommend only, with native `codex exec --sandbox read-only` enforcement for Codex agents.
 
 ### Changed
+- `brigade roadmap audit` now reads documented commands from command snippets instead of prose and normalizes parameterized examples such as `brigade tools show <id>` to their CLI command path.
+- Roadmap phase headings now distinguish foundations, active work, and the phase queue so stale Current/Next warnings are actionable.
 - Public repo contents now keep live dogfood workspace files, internal planning notes, and root memory cards untracked; public templates remain under `src/brigade/templates/`.
 - Dogfood handoff defaults now use `.codex/memory-handoffs/` for new Codex-driven local configs while preserving explicit configured inbox paths such as `.claude/memory-handoffs/`.
 - Bootstrap truncation is now treated as a hard doctor failure to prevent by moving durable detail into memory cards before agents load context.

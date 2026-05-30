@@ -252,6 +252,12 @@ Phase 56-60 status:
 - Waiver doctor reports expired active waivers, waivers missing expiry, stale waiver reviews, and waivers tied to an older train fingerprint. Waiver import routing creates `source: repo-fleet-release-waiver` tasks with stable fingerprints and dismissed-until-changed behavior.
 - Release ready and release audit include waiver health issues so reviewed risk remains visible even when an active waiver allows readiness to pass.
 
+Phase 61 status:
+
+- Implemented `docs/phase-61-100-plan.md` as the public phase queue for roadmap completion hardening.
+- Tightened `brigade roadmap audit` command discovery so it scans command snippets, ignores prose, and normalizes parent commands and parameterized examples to known CLI command paths.
+- Closed the context-engineering pattern registry owner and test-hint gap.
+
 ### 3. Inspiration Pattern Registry
 
 Deliverable: a bounded local record of external workflow patterns Brigade intends to support.

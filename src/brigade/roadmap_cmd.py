@@ -13,6 +13,35 @@ from . import work_cmd
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
+DOC_COMMAND_TOP_LEVELS = {
+    "add",
+    "center",
+    "chat",
+    "context",
+    "doctor",
+    "dogfood",
+    "handoff",
+    "handoff-template",
+    "hermes-fragments",
+    "ingest",
+    "init",
+    "learn",
+    "memory",
+    "openclaw-fragments",
+    "projects",
+    "reconfigure",
+    "release",
+    "repos",
+    "roadmap",
+    "roster",
+    "run",
+    "runs",
+    "scrub",
+    "security",
+    "status",
+    "tools",
+    "work",
+}
 
 PATTERN_FAMILIES: tuple[dict[str, Any], ...] = (
     {
@@ -53,9 +82,9 @@ PATTERN_FAMILIES: tuple[dict[str, Any], ...] = (
     {
         "id": "context-engineering-packs",
         "family": "context-engineering packs",
-        "owner": None,
-        "status": "planned",
-        "test_hint": None,
+        "owner": "context",
+        "status": "covered",
+        "test_hint": "context pack plan, build, show, and archive tests",
     },
     {
         "id": "cross-harness-skill-plugin-sync",
@@ -247,25 +276,46 @@ def _section_stale_checks(sections: list[dict[str, Any]]) -> list[dict[str, Any]
     return checks
 
 
-def _documented_brigade_commands(target: Path) -> list[str]:
+def _commands_from_text(text: str) -> set[str]:
     commands: set[str] = set()
     command_re = re.compile(r"\bbrigade\b(?P<tail>[^\n`]*)")
-    for path in _public_doc_paths(target):
-        text = _read_text(path)
-        for match in command_re.finditer(text):
-            words: list[str] = []
-            for raw in match.group("tail").split():
-                word = raw.strip("`'\"(),.:;")
-                if not word or word == "brigade" or word.startswith("-") or "<" in word or ">" in word:
-                    break
-                if not re.fullmatch(r"[a-z0-9_-]+", word):
-                    break
-                words.append(word)
-                if len(words) >= 4:
-                    break
-            if not words:
-                continue
+
+    def add_command(raw_command: str, *, require_known_head: bool = False) -> None:
+        match = command_re.search(raw_command)
+        if not match:
+            return
+        words: list[str] = []
+        for raw in match.group("tail").split():
+            word = raw.strip("`'\"(),.:;")
+            if not word or word == "brigade" or word.startswith("-") or "<" in word or ">" in word:
+                break
+            if not re.fullmatch(r"[a-z0-9_-]+", word):
+                break
+            words.append(word)
+            if len(words) >= 5:
+                break
+        if words:
+            if require_known_head and words[0] not in DOC_COMMAND_TOP_LEVELS:
+                return
             commands.add(" ".join(["brigade", *words]))
+
+    for match in re.finditer(r"`([^\n`]*\bbrigade\b[^\n`]*)`", text):
+        add_command(match.group(1))
+    in_fence = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence and stripped.startswith("brigade "):
+            add_command(stripped, require_known_head=True)
+    return commands
+
+
+def _documented_brigade_commands(target: Path) -> list[str]:
+    commands: set[str] = set()
+    for path in _public_doc_paths(target):
+        commands.update(_commands_from_text(_read_text(path)))
     return sorted(commands)
 
 
@@ -292,6 +342,24 @@ def _cli_command_paths() -> list[str]:
     return sorted(commands)
 
 
+def _cli_command_prefixes(commands: list[str]) -> set[str]:
+    prefixes: set[str] = set()
+    for command in commands:
+        parts = command.split()
+        for index in range(2, len(parts) + 1):
+            prefixes.add(" ".join(parts[:index]))
+    return prefixes
+
+
+def _normalize_documented_command(command: str, known_prefixes: set[str]) -> str:
+    parts = command.split()
+    for length in range(len(parts), 1, -1):
+        candidate = " ".join(parts[:length])
+        if candidate in known_prefixes:
+            return candidate
+    return command
+
+
 def audit_payload(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     roadmap = _parse_roadmap(target)
@@ -304,10 +372,18 @@ def audit_payload(target: Path) -> dict[str, Any]:
 
     documented = _documented_brigade_commands(target)
     cli_commands = _cli_command_paths()
-    documented_set = set(documented)
+    cli_prefixes = _cli_command_prefixes(cli_commands)
+    normalized_documented = sorted(
+        {_normalize_documented_command(command, cli_prefixes) for command in documented}
+    )
+    documented_set = set(normalized_documented)
     cli_set = set(cli_commands)
-    missing_cli = sorted(command for command in documented_set - cli_set if "..." not in command)
-    missing_docs = sorted(command for command in cli_set - documented_set)
+    missing_cli = sorted(
+        command
+        for command in documented
+        if "..." not in command and _normalize_documented_command(command, cli_prefixes) not in cli_prefixes
+    )
+    missing_docs = sorted(command for command in cli_set if command not in documented_set)
     checks.append(
         {
             "status": WARN if missing_cli else OK,
@@ -329,6 +405,7 @@ def audit_payload(target: Path) -> dict[str, Any]:
         "target": str(target),
         "roadmap": roadmap,
         "documented_commands": documented,
+        "normalized_documented_commands": normalized_documented,
         "cli_commands": cli_commands,
         "missing_cli_commands": missing_cli,
         "missing_documented_commands": missing_docs,
