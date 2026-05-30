@@ -1211,6 +1211,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_center_actions_show.add_argument("action_id", help="Action id or unique prefix.")
     p_center_actions_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_center_actions_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_center_actions_doctor = center_actions_sub.add_parser("doctor", help="Check local daily operator action aging policy.")
+    p_center_actions_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_center_actions_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_center_actions_import = center_actions_sub.add_parser("import-issues", help="Import stale operator action issues into the work inbox.")
+    p_center_actions_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_center_actions_import.add_argument("--dry-run", action="store_true", help="Report without writing imports.")
+    p_center_actions_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     for name in ("start", "done"):
         p_center_actions_state = center_actions_sub.add_parser(name, help=f"Mark one action {name}.")
         p_center_actions_state.add_argument("action_id", help="Action id or unique prefix.")
@@ -2319,6 +2326,10 @@ def main(argv=None) -> int:
                 return center_cmd.actions_list(target=args.target, limit=args.limit, json_output=args.json)
             if args.center_actions_command == "show":
                 return center_cmd.actions_show(target=args.target, action_id=args.action_id, json_output=args.json)
+            if args.center_actions_command == "doctor":
+                return center_cmd.actions_doctor(target=args.target, json_output=args.json)
+            if args.center_actions_command == "import-issues":
+                return center_cmd.actions_import_issues(target=args.target, dry_run=args.dry_run, json_output=args.json)
             if args.center_actions_command == "start":
                 return center_cmd.actions_start(target=args.target, action_id=args.action_id, json_output=args.json)
             if args.center_actions_command == "done":

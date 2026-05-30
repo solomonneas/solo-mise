@@ -364,6 +364,8 @@ brigade center actions plan <report-id>
 brigade center actions build <report-id>
 brigade center actions list
 brigade center actions show <action-id>
+brigade center actions doctor
+brigade center actions import-issues
 brigade center actions start <action-id>
 brigade center actions done <action-id>
 brigade center actions defer <action-id> --reason "not today"

@@ -29,6 +29,8 @@ brigade center actions plan <report-id>
 brigade center actions build <report-id>
 brigade center actions list
 brigade center actions show <action-id>
+brigade center actions doctor
+brigade center actions import-issues
 brigade center actions start <action-id>
 brigade center actions done <action-id>
 brigade center actions defer <action-id> --reason "not today"
@@ -119,6 +121,8 @@ Each action stores:
 
 `start`, `done`, and `defer` only update local action metadata. `archive --completed` archives completed actions and leaves pending, active, and deferred actions in the queue. Center status, center reviews, work brief, work doctor, and release doctor surface open action queue health.
 
+`brigade center actions doctor` applies local aging policy to the action queue. Defaults warn on pending actions older than 24 hours, active actions older than 8 hours, deferred actions older than 72 hours, and completed actions older than 24 hours that have not been archived. `brigade center actions import-issues` routes those stale action issues into the work import inbox as `source: center-action-policy` without running suggested commands.
+
 ## Repo Fleet Rollups
 
 `brigade repos sweep plan/run/runs/show/closeout` explicitly refreshes safe local evidence across configured repos. A sweep runs only configured foreground local read/report commands inside each enabled repo, records per-command status and safe stdout/stderr summaries, stores raw logs only in gitignored local files, and writes one receipt under `.brigade/repos/sweeps/`. Sweep receipts use safe repo ids, labels, command labels, status counts, receipt labels, and local log labels.
@@ -137,4 +141,4 @@ Each action stores:
 
 Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, fleet action queue, dispatch, reconciliation, fleet release train action, and manual evidence health.
 
-The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, `center report diff --record`, and `center actions build/start/done/defer/archive` write local gitignored center files.
+The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, `center report diff --record`, `center actions import-issues`, and `center actions build/start/done/defer/archive` write local gitignored center files or work imports.

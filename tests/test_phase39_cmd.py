@@ -198,6 +198,108 @@ def test_center_actions_state_transitions_and_archive(tmp_path, capsys):
     assert rebuild["created_count"] == 0
 
 
+def test_center_actions_aging_policy_doctor_archive_and_imports(tmp_path, capsys):
+    actions_path = tmp_path / ".brigade" / "center" / "actions" / "actions.json"
+    stale_actions = [
+        {
+            "schema_version": 1,
+            "action_id": "act-pending",
+            "source_report_id": "report-one",
+            "source_group": "pending_work_imports",
+            "source_subsystem": "work-import",
+            "source_local_id": "import-one",
+            "status": "pending",
+            "safe_summary": "Pending action",
+            "suggested_command": "brigade work import plan import-one",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "source_fingerprint": "fp-pending",
+        },
+        {
+            "schema_version": 1,
+            "action_id": "act-active",
+            "source_report_id": "report-one",
+            "source_group": "urgent_blockers",
+            "source_subsystem": "security",
+            "source_local_id": "security-one",
+            "status": "active",
+            "safe_summary": "Active action",
+            "suggested_command": "brigade security findings",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "source_fingerprint": "fp-active",
+        },
+        {
+            "schema_version": 1,
+            "action_id": "act-deferred",
+            "source_report_id": "report-one",
+            "source_group": "project_learning_candidates",
+            "source_subsystem": "learning",
+            "source_local_id": "learn-one",
+            "status": "deferred",
+            "safe_summary": "Deferred action",
+            "suggested_command": "brigade learn plan",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "deferred_at": "2026-01-01T00:00:00+00:00",
+            "source_fingerprint": "fp-deferred",
+        },
+        {
+            "schema_version": 1,
+            "action_id": "act-done",
+            "source_report_id": "report-one",
+            "source_group": "handoff_drafts",
+            "source_subsystem": "handoff-draft",
+            "source_local_id": "handoff-one",
+            "status": "done",
+            "safe_summary": "Done action",
+            "suggested_command": "brigade handoff show handoff-one",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": "2026-01-01T00:00:00+00:00",
+            "source_fingerprint": "fp-done",
+        },
+    ]
+    _write_json(actions_path, {"schema_version": 1, "actions": stale_actions})
+
+    health = center_cmd.actions_health(tmp_path)
+    issue_names = {issue["name"] for issue in health["policy_issues"]}
+    assert {
+        "center_action_stale_pending",
+        "center_action_stale_active",
+        "center_action_deferred_too_long",
+        "center_action_completed_unarchived",
+    } <= issue_names
+
+    assert center_cmd.actions_doctor(target=tmp_path, json_output=True) == 0
+    doctor = json.loads(capsys.readouterr().out)
+    assert doctor["health"]["policy_issue_count"] == 4
+    assert cli.main(["center", "actions", "doctor", "--target", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["health"]["policy_issue_count"] == 4
+
+    assert center_cmd.actions_import_issues(target=tmp_path, dry_run=True, json_output=True) == 0
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run["dry_run"] is True
+    assert dry_run["created_count"] == 4
+    assert not (tmp_path / ".brigade" / "work" / "imports" / "inbox.jsonl").exists()
+
+    assert center_cmd.actions_import_issues(target=tmp_path, json_output=True) == 0
+    imported = json.loads(capsys.readouterr().out)
+    assert imported["created_count"] == 4
+    inbox = tmp_path / ".brigade" / "work" / "imports" / "inbox.jsonl"
+    records = [json.loads(line) for line in inbox.read_text().splitlines()]
+    assert {record["source"] for record in records} == {"center-action-policy"}
+    assert all(record["acceptance"] for record in records)
+    assert center_cmd.actions_import_issues(target=tmp_path, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["skipped_count"] == 4
+
+    assert center_cmd.actions_archive_completed(target=tmp_path, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["archived_count"] == 1
+    health_after_archive = center_cmd.actions_health(tmp_path)
+    assert "center_action_completed_unarchived" not in {issue["name"] for issue in health_after_archive["policy_issues"]}
+
+
 def test_center_actions_integrate_with_center_work_and_release(tmp_path, monkeypatch, capsys):
     _init_git(tmp_path)
     _seed_release_prereqs(tmp_path)

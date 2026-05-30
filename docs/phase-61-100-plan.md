@@ -219,6 +219,8 @@ Goal: add local aging thresholds and review policies for operator actions withou
 
 Acceptance: tests cover stale pending, stale active, deferred too long, archived completed, and import routing.
 
+Status: implemented with action aging thresholds in `actions_health`, `brigade center actions doctor`, `brigade center actions import-issues`, completed-action archive quieting, docs, and focused tests.
+
 ### Phase 91: Safe Repo Root Discovery Plan
 Goal: add an explicit root discovery plan for repo fleet entries under configured roots without scanning arbitrary home directories by default.
 

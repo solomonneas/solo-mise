@@ -18,6 +18,10 @@ SCHEMA_VERSION = 1
 SCHEMA_MANIFEST_VERSION = 1
 REPORT_STALE_HOURS = 24
 ACTION_STATUSES = {"pending", "active", "done", "deferred", "archived"}
+ACTION_PENDING_STALE_HOURS = 24
+ACTION_ACTIVE_STALE_HOURS = 8
+ACTION_DEFERRED_STALE_HOURS = 72
+ACTION_DONE_ARCHIVE_HOURS = 24
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -1677,12 +1681,77 @@ def _action_counts(actions: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _action_age_hours(action: dict[str, Any], *, now: datetime, fields: tuple[str, ...]) -> float | None:
+    for field in fields:
+        stamp = _parse_time(action.get(field))
+        if stamp is not None:
+            return (now - stamp).total_seconds() / 3600
+    return None
+
+
+def _action_policy_issue(action: dict[str, Any], *, now: datetime) -> dict[str, Any] | None:
+    action_id = str(action.get("action_id") or "")
+    status = str(action.get("status") or "pending")
+    if status == "pending":
+        age = _action_age_hours(action, now=now, fields=("created_at", "updated_at"))
+        if age is not None and age > ACTION_PENDING_STALE_HOURS:
+            return {
+                "status": "warn",
+                "name": "center_action_stale_pending",
+                "action_id": action_id,
+                "detail": f"{action_id} has been pending for {age:.1f}h",
+                "suggested_next_command": f"brigade center actions start {action_id}",
+                "age_hours": round(age, 2),
+            }
+    elif status == "active":
+        age = _action_age_hours(action, now=now, fields=("started_at", "updated_at", "created_at"))
+        if age is not None and age > ACTION_ACTIVE_STALE_HOURS:
+            return {
+                "status": "warn",
+                "name": "center_action_stale_active",
+                "action_id": action_id,
+                "detail": f"{action_id} has been active for {age:.1f}h",
+                "suggested_next_command": f"brigade center actions done {action_id}",
+                "age_hours": round(age, 2),
+            }
+    elif status == "deferred":
+        age = _action_age_hours(action, now=now, fields=("deferred_at", "updated_at", "created_at"))
+        if age is not None and age > ACTION_DEFERRED_STALE_HOURS:
+            return {
+                "status": "warn",
+                "name": "center_action_deferred_too_long",
+                "action_id": action_id,
+                "detail": f"{action_id} has been deferred for {age:.1f}h",
+                "suggested_next_command": f"brigade center actions show {action_id}",
+                "age_hours": round(age, 2),
+            }
+    elif status == "done":
+        age = _action_age_hours(action, now=now, fields=("completed_at", "updated_at", "created_at"))
+        if age is not None and age > ACTION_DONE_ARCHIVE_HOURS:
+            return {
+                "status": "warn",
+                "name": "center_action_completed_unarchived",
+                "action_id": action_id,
+                "detail": f"{action_id} has been completed for {age:.1f}h and should be archived",
+                "suggested_next_command": "brigade center actions archive --completed",
+                "age_hours": round(age, 2),
+            }
+    return None
+
+
+def _action_policy_issues(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = _now()
+    issues = [_action_policy_issue(action, now=now) for action in actions]
+    return [issue for issue in issues if issue is not None]
+
+
 def actions_health(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     actions = _read_actions(target)
     open_actions = [action for action in actions if action.get("status") in {"pending", "active", "deferred"}]
     open_actions.sort(key=_action_priority_rank)
     checks: list[dict[str, Any]] = []
+    policy_issues = _action_policy_issues(actions)
     if open_actions:
         top = open_actions[0]
         checks.append(
@@ -1693,16 +1762,119 @@ def actions_health(target: Path) -> dict[str, Any]:
                 "suggested_next_command": f"brigade center actions show {top.get('action_id')}",
             }
         )
+    checks.extend(policy_issues)
     return {
         "actions_path": str(_actions_path(target)),
         "action_count": len(actions),
         "open_count": len(open_actions),
         "counts": _action_counts(actions),
+        "policy": {
+            "pending_stale_hours": ACTION_PENDING_STALE_HOURS,
+            "active_stale_hours": ACTION_ACTIVE_STALE_HOURS,
+            "deferred_stale_hours": ACTION_DEFERRED_STALE_HOURS,
+            "done_archive_hours": ACTION_DONE_ARCHIVE_HOURS,
+        },
+        "policy_issues": policy_issues,
+        "policy_issue_count": len(policy_issues),
         "top_action": open_actions[0] if open_actions else None,
         "checks": checks,
         "issue_count": len(checks),
         "top_issue": checks[0] if checks else None,
     }
+
+
+def actions_doctor(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _action_schema("center-actions-doctor"),
+        "target": str(target),
+        "health": actions_health(target),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"center actions doctor: {target}")
+    health = payload["health"]
+    print(f"actions: {health['action_count']}")
+    print(f"open: {health['open_count']}")
+    print(f"policy_issues: {health['policy_issue_count']}")
+    for issue in health["policy_issues"]:
+        print(f"[{issue['status']}] {issue['name']}: {issue['detail']}")
+    return 0
+
+
+def _action_policy_import_record(issue: dict[str, Any], actions_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    action_id = str(issue.get("action_id") or "")
+    action = actions_by_id.get(action_id, {})
+    source_key = f"center-action-policy:{issue.get('name')}:{action_id}"
+    fingerprint = _fingerprint_payload(
+        {
+            "source_key": source_key,
+            "source_fingerprint": action.get("source_fingerprint"),
+            "status": action.get("status"),
+            "issue": issue.get("name"),
+        }
+    )
+    return {
+        "kind": "task",
+        "source": "center-action-policy",
+        "text": str(issue.get("detail") or f"Review operator action {action_id}"),
+        "type": "task",
+        "priority": "high" if issue.get("name") == "center_action_stale_active" else "normal",
+        "acceptance": [
+            f"Operator action `{action_id}` is reviewed.",
+            "The action is started, completed, deferred with a fresh reason, or archived as appropriate.",
+            "No suggested command is executed automatically by this import.",
+        ],
+        "metadata": {
+            "source_item_key": source_key,
+            "source_fingerprint": fingerprint,
+            "issue_type": issue.get("name"),
+            "action_id": action_id,
+            "action_status": action.get("status"),
+            "source_report_id": action.get("source_report_id"),
+            "source_subsystem": action.get("source_subsystem"),
+            "source_local_id": action.get("source_local_id"),
+            "safe_summary": action.get("safe_summary"),
+            "suggested_command": action.get("suggested_command"),
+            "suggested_next_command": issue.get("suggested_next_command"),
+        },
+    }
+
+
+def actions_import_issues(*, target: Path, dry_run: bool = False, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    actions = _read_actions(target)
+    actions_by_id = {str(action.get("action_id") or ""): action for action in actions}
+    issues = _action_policy_issues(actions)
+    records = [_action_policy_import_record(issue, actions_by_id) for issue in issues]
+    imported, skipped, skipped_dismissed = work_cmd._append_import_records(target, records, dry_run=dry_run)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _action_schema("center-actions-import-issues"),
+        "target": str(target),
+        "dry_run": dry_run,
+        "issue_count": len(issues),
+        "created_count": len(imported),
+        "skipped_count": len(skipped),
+        "dismissed_count": len(skipped_dismissed),
+        "imports_path": str(work_cmd._imports_path(target)),
+        "issues": issues,
+        "created": imported,
+        "skipped": skipped,
+        "dismissed": skipped_dismissed,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print("center actions import-issues")
+    print(f"dry_run: {dry_run}")
+    print(f"issues: {len(issues)}")
+    print(f"created: {len(imported)}")
+    print(f"skipped: {len(skipped)}")
+    print(f"dismissed: {len(skipped_dismissed)}")
+    return 0
 
 
 def actions_plan(*, target: Path, report_id: str = "latest", json_output: bool = False) -> int:
