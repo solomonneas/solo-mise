@@ -61,6 +61,24 @@ def test_roadmap_audit_json_and_imports(tmp_path, capsys):
     assert all(item["source"] == "roadmap-audit" for item in _read_imports(tmp_path))
 
 
+def test_roadmap_audit_includes_deferred_ownership_records(tmp_path, capsys):
+    (tmp_path / "ROADMAP.md").write_text("# Roadmap\n")
+    payload = roadmap_cmd.audit_payload(tmp_path)
+
+    deferred = {item["id"]: item for item in payload["deferred_items"]}
+    item = deferred["cross-producer-provenance-audit"]
+    assert item["owner"] == "work"
+    assert item["subsystem"] == "work-inbox"
+    assert item["deferred_reason"]
+    assert item["suggested_phase"] == 64
+    assert payload["deferred_item_count"] >= 10
+    assert all(check["status"] == "ok" for check in payload["checks"] if check["name"].startswith("roadmap_deferred_"))
+
+    assert roadmap_cmd.audit(target=tmp_path, json_output=False) == 0
+    out = capsys.readouterr().out
+    assert "deferred_items:" in out
+
+
 def test_roadmap_patterns_cover_neutral_families_and_decisions(capsys, tmp_path):
     assert roadmap_cmd.patterns(target=tmp_path, json_output=True) == 0
     payload = json.loads(capsys.readouterr().out)

@@ -16,10 +16,14 @@ Goal: make `brigade roadmap audit` accurate enough to drive phases 61-100. Norma
 
 Acceptance: roadmap audit tests cover command normalization, parent-command examples, prose filtering, stale phase behavior, and pattern coverage. README, ROADMAP, CHANGELOG, and this plan document the phase queue.
 
+Status: implemented.
+
 ### Phase 62: Roadmap Ownership And Deferred Item Records
 Goal: add explicit roadmap ownership records for deferred items so later phases can close or re-defer them without ambiguous status text.
 
 Acceptance: roadmap audit JSON includes owner, subsystem, deferred reason, and suggested next phase for known deferred items.
+
+Status: implemented with `deferred_items` in `brigade roadmap audit --json`.
 
 ### Phase 63: Public Command Documentation Contract
 Goal: make public docs and CLI command discovery agree through a stable command contract, without relying on fragile prose scans.

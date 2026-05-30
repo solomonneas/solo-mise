@@ -170,6 +170,139 @@ DECISION_RECORDS: tuple[dict[str, Any], ...] = (
     },
 )
 
+DEFERRED_ROADMAP_ITEMS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "deeper-roadmap-ownership-modeling",
+        "title": "Deeper roadmap ownership modeling",
+        "subsystem": "roadmap",
+        "owner": "roadmap",
+        "source_section": "Roadmap State Audit And Closure Map",
+        "deferred_reason": "Earlier roadmap audit work prioritized command visibility, JSON output, tests, and daily-loop health before richer ownership state.",
+        "suggested_phase": 62,
+        "status": "active",
+    },
+    {
+        "id": "private-pattern-source-aliases",
+        "title": "Private pattern source aliases from local config",
+        "subsystem": "roadmap",
+        "owner": "roadmap",
+        "source_section": "Inspiration Pattern Registry",
+        "deferred_reason": "Exact reference source names belong only in gitignored host-local config, while public docs should expose neutral pattern families.",
+        "suggested_phase": 62,
+        "status": "active",
+    },
+    {
+        "id": "cross-producer-provenance-audit",
+        "title": "Cross-producer provenance audits across historical sources",
+        "subsystem": "work-inbox",
+        "owner": "work",
+        "source_section": "Scanner And Inbox Closure",
+        "deferred_reason": "The scanner closeout phase tightened the common path first and left historical compatibility backfill for a focused pass.",
+        "suggested_phase": 64,
+        "status": "planned",
+    },
+    {
+        "id": "expanded-chat-export-parsers",
+        "title": "Expanded chat export provider aliases and parser fixtures",
+        "subsystem": "chat-surfaces",
+        "owner": "chat",
+        "source_section": "Chat Surface Export Completion",
+        "deferred_reason": "The no-live-API boundary kept the first implementation focused on local export contracts and privacy gates.",
+        "suggested_phase": 66,
+        "status": "planned",
+    },
+    {
+        "id": "outbound-backup-status-messages",
+        "title": "Outbound backup operator status messages",
+        "subsystem": "backup-health",
+        "owner": "backup",
+        "source_section": "Backup And Recovery Closure",
+        "deferred_reason": "Outbound notifications require product-specific surfaces and remain outside the local read-only operator loop.",
+        "suggested_phase": None,
+        "status": "out-of-scope",
+    },
+    {
+        "id": "tool-projection-parity-closeout",
+        "title": "Separate tool projection parity closeout receipt",
+        "subsystem": "tool-catalog",
+        "owner": "tools",
+        "source_section": "Shared Tool Catalog Completion",
+        "deferred_reason": "Projection state is represented in packs and sync plans first, while closeout state needs a focused compatibility pass.",
+        "suggested_phase": 68,
+        "status": "planned",
+    },
+    {
+        "id": "context-harness-destination-writes",
+        "title": "Context pack writes into harness destinations",
+        "subsystem": "context",
+        "owner": "context",
+        "source_section": "Context Engineering Packs",
+        "deferred_reason": "Context sync planning remains read-only until a future explicit context apply command exists.",
+        "suggested_phase": 70,
+        "status": "planned",
+    },
+    {
+        "id": "learning-accepted-risk-quieting",
+        "title": "Rich accepted-risk quieting across learning sources",
+        "subsystem": "learning",
+        "owner": "learn",
+        "source_section": "Self-Learning Loop Closure",
+        "deferred_reason": "Candidate import routing exists first, while source-specific quieting policies remain subsystem-owned.",
+        "suggested_phase": 74,
+        "status": "planned",
+    },
+    {
+        "id": "security-sarif-output",
+        "title": "Dependency-free security SARIF output",
+        "subsystem": "security",
+        "owner": "security",
+        "source_section": "Security Plugin Closure",
+        "deferred_reason": "JSON and Markdown evidence bundles exist, and SARIF needs a focused schema compatibility pass without new dependencies.",
+        "suggested_phase": 76,
+        "status": "planned",
+    },
+    {
+        "id": "stale-issue-repair-imports",
+        "title": "Stale active issue repair imports",
+        "subsystem": "work",
+        "owner": "work",
+        "source_section": "Issue And TDD Loop Closure",
+        "deferred_reason": "The first acceptance phase completed the local acceptance rollup before repair-import routing.",
+        "suggested_phase": 80,
+        "status": "planned",
+    },
+    {
+        "id": "repo-shareable-workflow-rule-templates",
+        "title": "Repo-shareable workflow rule templates",
+        "subsystem": "install",
+        "owner": "templates",
+        "source_section": "Issue And TDD Loop Closure",
+        "deferred_reason": "The first acceptance phase avoided mixing public workflow rules with personal preferences.",
+        "suggested_phase": 79,
+        "status": "planned",
+    },
+    {
+        "id": "safe-memory-autofix-planning",
+        "title": "Safe memory-care autofix planning",
+        "subsystem": "memory-care",
+        "owner": "memory",
+        "source_section": "Memory And Handoff Closure",
+        "deferred_reason": "Memory-care closeouts record review state first, with mutation-free repair planning left for a focused pass.",
+        "suggested_phase": 83,
+        "status": "planned",
+    },
+    {
+        "id": "recursive-repo-root-discovery",
+        "title": "Safe repo root discovery from configured roots",
+        "subsystem": "repo-fleet",
+        "owner": "repos",
+        "source_section": "Repository Fleet Readiness",
+        "deferred_reason": "Explicit repo config avoids accidentally exposing private repo names or paths; discovery needs a dry-run privacy-safe plan.",
+        "suggested_phase": 91,
+        "status": "planned",
+    },
+)
+
 
 def _roadmap_path(target: Path) -> Path:
     return target / "ROADMAP.md"
@@ -360,6 +493,29 @@ def _normalize_documented_command(command: str, known_prefixes: set[str]) -> str
     return command
 
 
+def _deferred_items() -> list[dict[str, Any]]:
+    return [dict(item) for item in DEFERRED_ROADMAP_ITEMS]
+
+
+def _deferred_item_checks(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    missing_owner = [item["id"] for item in items if not item.get("owner")]
+    missing_phase = [item["id"] for item in items if item.get("status") != "out-of-scope" and not item.get("suggested_phase")]
+    return [
+        {
+            "status": WARN if missing_owner else OK,
+            "name": "roadmap_deferred_missing_owner",
+            "detail": f"{len(missing_owner)} deferred item(s) missing owner" if missing_owner else "none",
+            "items": missing_owner,
+        },
+        {
+            "status": WARN if missing_phase else OK,
+            "name": "roadmap_deferred_missing_phase",
+            "detail": f"{len(missing_phase)} deferred item(s) missing suggested phase" if missing_phase else "none",
+            "items": missing_phase,
+        },
+    ]
+
+
 def audit_payload(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     roadmap = _parse_roadmap(target)
@@ -400,10 +556,14 @@ def audit_payload(target: Path) -> dict[str, Any]:
             "commands": missing_docs[:20],
         }
     )
+    deferred_items = _deferred_items()
+    checks.extend(_deferred_item_checks(deferred_items))
     issues = [check for check in checks if check.get("status") != OK]
     return {
         "target": str(target),
         "roadmap": roadmap,
+        "deferred_items": deferred_items,
+        "deferred_item_count": len(deferred_items),
         "documented_commands": documented,
         "normalized_documented_commands": normalized_documented,
         "cli_commands": cli_commands,
@@ -463,6 +623,7 @@ def audit(*, target: Path, json_output: bool = False, import_issues: bool = Fals
     print(f"roadmap audit: {payload['target']}")
     print(f"roadmap: {payload['roadmap']['path']}")
     print(f"sections: {len(payload['roadmap']['sections'])}")
+    print(f"deferred_items: {payload['deferred_item_count']}")
     print(f"issues: {payload['issue_count']}")
     for check in payload["checks"]:
         print(f"[{check['status']}] {check['name']}: {check['detail']}")

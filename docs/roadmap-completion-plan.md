@@ -258,6 +258,12 @@ Phase 61 status:
 - Tightened `brigade roadmap audit` command discovery so it scans command snippets, ignores prose, and normalizes parent commands and parameterized examples to known CLI command paths.
 - Closed the context-engineering pattern registry owner and test-hint gap.
 
+Phase 62 status:
+
+- Added public-safe deferred roadmap ownership records to `brigade roadmap audit --json`.
+- Each known deferred item now has an id, title, subsystem, owner, source section, deferred reason, status, and suggested phase when the item remains in scope.
+- Text audit output includes the deferred item count, while unresolved ownership or missing phase metadata would become roadmap audit warnings.
+
 ### 3. Inspiration Pattern Registry
 
 Deliverable: a bounded local record of external workflow patterns Brigade intends to support.
