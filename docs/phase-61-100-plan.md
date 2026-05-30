@@ -184,6 +184,8 @@ Goal: turn uncovered handoff inboxes and source config drift into reviewed work 
 
 Acceptance: tests cover source coverage doctor, imports, dismissed-until-changed behavior, and no canonical memory edits.
 
+Status: implemented with fingerprinted source coverage imports, dismissed-until-changed uncovered-inbox behavior, missing configured inbox doctor/import coverage, no-memory-edit assertions, docs, and focused tests.
+
 ### Phase 86: Release Evidence Schema Manifest
 Goal: add a machine-readable schema manifest for release readiness, candidates, train bundles, waivers, and evidence records.
 

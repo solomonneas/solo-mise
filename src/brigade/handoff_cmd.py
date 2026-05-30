@@ -125,6 +125,8 @@ class HandoffIssue:
 
     def as_import_record(self) -> dict[str, Any]:
         metadata = dict(self.metadata)
+        metadata.setdefault("source_item_key", _handoff_issue_source_key(self))
+        metadata.setdefault("source_fingerprint", _handoff_issue_fingerprint(self, metadata))
         metadata.update(
             {
                 "handoff_issue_id": self.id,
@@ -269,6 +271,10 @@ def inspect(target: Path, sources: Path | None = None) -> HandoffHealth:
                 f"{inbox.inbox} has {inbox.pending} pending handoff"
                 f"{'s' if inbox.pending != 1 else ''} but is not watched by the source config"
             )
+    for watched_inbox in watched:
+        watched_path = watched_inbox.root / watched_inbox.inbox
+        if not watched_path.exists():
+            warnings.append(f"configured handoff source inbox is missing: {watched_path}")
     for result in lint_results:
         if not result.valid:
             warnings.append(
@@ -315,6 +321,12 @@ def doctor_checks(target: Path, sources: Path | None = None) -> list[tuple[str, 
             f"(exists={exists}, pending={inbox.pending}, processed={inbox.processed}, watched={watched})"
         )
         checks.append((level, f"handoff_watch: {inbox.inbox}", detail))
+
+    if source_config := _source_config_for_checks(health.target, health.sources_path):
+        for watched_inbox in source_config.watched:
+            watched_path = watched_inbox.root / watched_inbox.inbox
+            if not watched_path.exists():
+                checks.append((WARN, "handoff_source_coverage", f"configured inbox missing: {watched_path}"))
 
     if health.ingestor.configured:
         if not health.ingestor.exists:
@@ -363,6 +375,56 @@ def collect_issues(
 ) -> list[HandoffIssue]:
     health = inspect(target, sources=sources)
     issues: list[HandoffIssue] = []
+    wanted_categories = {category for category in categories or [] if category}
+    for failure in health.failures:
+        issues.append(
+            _make_issue(
+                category="source-config-invalid",
+                kind="task",
+                text=f"Repair handoff source config: {failure}",
+                repair="Fix .brigade/handoff-sources.json so Brigade can compare local writer inboxes against canonical ingestor coverage.",
+                evidence=failure,
+                metadata={
+                    "source_item_key": "handoff-ingest:source-config",
+                    "source_path": str(health.sources_path) if health.sources_path else "",
+                },
+            )
+        )
+    pending_total = sum(inbox.pending for inbox in health.inboxes)
+    if pending_total and not health.sources_loaded and not health.failures:
+        issues.append(
+            _make_issue(
+                category="source-config-missing",
+                kind="task",
+                text="Configure handoff source coverage for pending writer inboxes",
+                repair="Create .brigade/handoff-sources.json with every local handoff writer inbox that the canonical ingestor scans.",
+                evidence=f"pending_handoffs={pending_total}",
+                metadata={
+                    "source_item_key": "handoff-ingest:source-config",
+                    "pending_handoffs": pending_total,
+                },
+            )
+        )
+    source_config = _source_config_for_checks(health.target, health.sources_path)
+    if source_config is not None and "source-inbox-missing" in wanted_categories:
+        for watched_inbox in source_config.watched:
+            watched_path = watched_inbox.root / watched_inbox.inbox
+            if watched_path.exists():
+                continue
+            issues.append(
+                _make_issue(
+                    category="source-inbox-missing",
+                    kind="task",
+                    text=f"Repair missing configured handoff inbox {watched_inbox.inbox}",
+                    repair="Create the local handoff inbox, remove stale coverage from .brigade/handoff-sources.json, or correct the configured root/inbox pair.",
+                    evidence=str(watched_path),
+                    metadata={
+                        "source_item_key": f"handoff-ingest:source-inbox:{watched_inbox.inbox}",
+                        "inbox": watched_inbox.inbox,
+                        "path": str(watched_path),
+                    },
+                )
+            )
     for inbox in health.inboxes:
         if inbox.pending and not inbox.watched:
             issues.append(
@@ -380,6 +442,7 @@ def collect_issues(
                     ),
                     evidence=str(inbox.path),
                     metadata={
+                        "source_item_key": f"handoff-ingest:untracked-inbox:{inbox.inbox}",
                         "inbox": inbox.inbox,
                         "path": str(inbox.path),
                         "pending": inbox.pending,
@@ -1941,6 +2004,38 @@ def _make_issue(
         evidence=evidence,
         metadata=metadata or {},
     )
+
+
+def _handoff_issue_source_key(issue: HandoffIssue) -> str:
+    value = issue.metadata.get("source_item_key")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return f"handoff-ingest:{issue.category}:{issue.id}"
+
+
+def _handoff_issue_fingerprint(issue: HandoffIssue, metadata: dict[str, Any]) -> str:
+    payload = {
+        "category": issue.category,
+        "kind": issue.kind,
+        "text": issue.text,
+        "repair": issue.repair,
+        "evidence": issue.evidence,
+        "metadata": {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"source_fingerprint", "handoff_issue_id"}
+        },
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+def _source_config_for_checks(target: Path, sources_path: Path | None) -> SourceConfig | None:
+    if sources_path is None or not sources_path.is_file():
+        return None
+    try:
+        return _load_sources(target, sources_path)
+    except ValueError:
+        return None
 
 
 def _parse_ingestor_log_issues(log_path: Path) -> list[HandoffIssue]:

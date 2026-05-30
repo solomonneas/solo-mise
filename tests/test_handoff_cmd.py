@@ -448,6 +448,60 @@ def test_handoff_doctor_warns_for_pending_handoff_without_source_config(tmp_path
     assert "watched=no" in out
 
 
+def test_handoff_source_coverage_imports_are_fingerprinted_and_respect_dismissal(tmp_path, capsys):
+    inbox = tmp_path / ".claude" / "memory-handoffs"
+    inbox.mkdir(parents=True)
+    (inbox / "one.md").write_text(NO_CARD_HANDOFF)
+    memory_index = tmp_path / "MEMORY.md"
+    memory_index.write_text("# Memory\n")
+
+    assert handoff_cmd.import_issues(target=tmp_path, categories=["untracked-inbox"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 1
+    item = payload["imports"][0]
+    assert item["metadata"]["handoff_issue_category"] == "untracked-inbox"
+    assert item["metadata"]["source_item_key"] == "handoff-ingest:untracked-inbox:.claude/memory-handoffs"
+    first_fingerprint = item["metadata"]["source_fingerprint"]
+
+    assert work_cmd.import_dismiss(target=tmp_path, import_id=item["id"], reason="covered elsewhere") == 0
+    capsys.readouterr()
+    assert handoff_cmd.import_issues(target=tmp_path, categories=["untracked-inbox"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped_dismissed"] == 1
+
+    (inbox / "two.md").write_text(NO_CARD_HANDOFF)
+    assert handoff_cmd.import_issues(target=tmp_path, categories=["untracked-inbox"], json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 1
+    assert payload["imports"][0]["metadata"]["source_fingerprint"] != first_fingerprint
+    assert memory_index.read_text() == "# Memory\n"
+
+
+def test_handoff_source_config_drift_reports_missing_configured_inbox(tmp_path, capsys):
+    config = tmp_path / ".brigade" / "handoff-sources.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "sources": [{"root": ".", "inboxes": [".missing/memory-handoffs"]}],
+            }
+        )
+    )
+
+    assert handoff_cmd.doctor(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[warn] handoff_source_coverage:" in out
+    assert "configured inbox missing" in out
+
+    assert handoff_cmd.import_issues(target=tmp_path, categories=["source-inbox-missing"], dry_run=True, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_category"] == {"source-inbox-missing": 1}
+    item = payload["imports"][0]
+    assert item["metadata"]["source_item_key"] == "handoff-ingest:source-inbox:.missing/memory-handoffs"
+    assert item["metadata"]["source_fingerprint"]
+
+
 def test_handoff_doctor_accepts_configured_claude_and_codex_inboxes(tmp_path, capsys):
     for rel in (".claude/memory-handoffs", ".codex/memory-handoffs"):
         inbox = tmp_path / rel

@@ -80,4 +80,6 @@ Canonical memory ingestion stays outside Brigade, but Brigade can read local rec
 
 Normalized receipts preserve warning events, malformed handoff paths, unreachable source labels, and no-reply state so operators can see when a clean-looking scheduler run still hid skipped, failed, or unreachable work.
 
+Source coverage issues for uncovered writer inboxes include stable source keys and fingerprints. If an operator dismisses an unchanged uncovered-inbox import, Brigade does not recreate it; when the pending inbox coverage state changes, the source fingerprint changes and the repair import can resurface.
+
 This is observability only. Brigade does not run the ingestor, edit canonical memory, promote cards, route documents, or summarize draft content.
