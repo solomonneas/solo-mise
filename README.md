@@ -382,6 +382,11 @@ brigade center readiness closeout
 brigade center readiness list
 brigade center readiness show <readiness-id>
 brigade center readiness import-issues
+brigade daily status
+brigade daily plan
+brigade daily review
+brigade daily run
+brigade daily closeout
 brigade work run
 brigade work run --queue-next
 brigade work run "review today's changes"
@@ -633,7 +638,27 @@ Backup health commands:
 
 Backup health summaries are local and read-only. Brigade does not run `restic`, mount storage, prune, restore, send webhooks, or mutate remote backup state. Keep real hostnames, remotes, mount paths, repo paths, webhook URLs, channel ids, and backup passwords out of public templates and summary records.
 
-Run the daily loop with `brigade work run`.
+Run the agent-facing daily loop with `brigade daily`.
+It wraps the existing work, operator center, repo fleet, scanner, handoff, memory, security, tool, context, backup, learning, and release evidence into one bounded daily workflow.
+The expected wrapper flow is:
+
+```bash
+brigade daily status --json
+brigade daily plan --json
+brigade daily review --json
+brigade daily run --json
+brigade daily closeout --json
+```
+
+`brigade daily status` summarizes the current operating state and prints the next recommended command.
+`brigade daily plan` ranks local candidate actions by urgency, safety, acceptance coverage, provenance, and usefulness, then chooses exactly one recommended action. It writes no state unless `--record` is passed.
+`brigade daily review` previews the selected action, risk, evidence references, acceptance criteria, approval boundary, and likely next command.
+`brigade daily run` executes at most one safe local step, such as running a pending accepted task, promoting an approved import, building a context pack, building an operator report, or importing readiness issues. It refuses approval-required actions unless `--approved` is passed and writes a local receipt under `.brigade/daily/runs/`.
+`brigade daily closeout` marks the latest daily run reviewed, deferred, blocked, or archived and can write a Memory Handoff draft without editing canonical memory.
+
+The daily driver is local and explicit. It does not start daemons, run arbitrary commands, execute scanners, reviewers, tools, or fleet sweeps, mutate remotes, push, tag, publish, or edit canonical memory.
+
+Run a direct work session with `brigade work run`.
 It opens a work session, resolves the next task, runs `brigade dogfood`, and closes completed ledger tasks after successful runs.
 When the resolved ledger task has acceptance criteria, `work run` includes them in the task prompt as the definition of done.
 When `work run` consumes a queued task, the session artifacts record the task snapshot, issue metadata, and acceptance checklist in `session.json`, `start.md`, and `end.md`.

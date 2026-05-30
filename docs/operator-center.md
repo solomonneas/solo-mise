@@ -2,6 +2,8 @@
 
 `brigade center` is a read-only CLI view over local Brigade state. It is meant for wrappers and future UI experiments that need one stable JSON surface without starting a server, database, daemon, scheduler, or sync engine.
 
+`brigade daily` is the agent-facing driver on top of the same local evidence. The center commands answer "what exists"; the daily commands answer "what is the best next safe thing to do, what evidence supports it, and how do I close it out?"
+
 Commands:
 
 ```bash
@@ -40,6 +42,11 @@ brigade center readiness closeout
 brigade center readiness list
 brigade center readiness show <readiness-id>
 brigade center readiness import-issues
+brigade daily status
+brigade daily plan
+brigade daily review
+brigade daily run
+brigade daily closeout
 ```
 
 `status` summarizes active work, pending tasks, pending imports, scanner sweep health, review health, handoff drafts, tool catalog health, learning candidates, context packs, release readiness, release candidates, repo fleet, roadmap health, project consolidation, and security health.
@@ -60,6 +67,30 @@ brigade center readiness import-issues
 `templates` lists local workflow templates for context packs, tool packs, project audits, release candidates, and review closeouts.
 
 Every center row uses the same wrapper-facing fields: `subsystem`, `local_id`, `status`, `priority`, `severity`, `safe_summary`, `created_at`, `updated_at`, `receipt_path`, `path`, and `suggested_next_command`.
+
+## Daily Driver
+
+`brigade daily status` summarizes the current local operating state from work, imports, center reviews, action queues, readiness, handoffs, memory-care, security, tools, release receipts, and operator reports. It also returns the next recommended command.
+
+`brigade daily plan` ranks local candidate actions by urgency, safety, acceptance coverage, provenance, and expected usefulness. It prefers pending accepted tasks, then reviewed imports with acceptance criteria, reviewed center actions, readiness blockers that can become imports, and stale handoff, memory, or security issues. It chooses one recommended action and writes no state unless `--record` is passed.
+
+`brigade daily review` previews the selected action with safe evidence references, acceptance criteria when available, risk, approval boundary, likely next command, and context pack planning.
+
+`brigade daily run` executes exactly one bounded local step. It can run a pending task, promote an approved import, start a reviewed center action, build an operator report, build a safe context pack, or import readiness issues. It refuses approval-required actions unless `--approved` is passed and records receipts under `.brigade/daily/runs/`.
+
+`brigade daily closeout` updates the latest daily receipt as reviewed, deferred, blocked, or archived. It can also write a Memory Handoff draft for durable knowledge, but it never edits canonical memory.
+
+Daily commands are the intended wrapper path for an agent:
+
+```bash
+brigade daily status --json
+brigade daily plan --json
+brigade daily review --json
+brigade daily run --json
+brigade daily closeout --json
+```
+
+The daily driver never executes arbitrary suggested commands, starts scanners or reviewers, runs tools, runs fleet sweeps, mutates remotes, pushes, tags, publishes, or edits canonical memory.
 
 ## Operator Reports
 
@@ -148,4 +179,4 @@ Each action stores:
 
 Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, fleet action queue, dispatch, reconciliation, fleet release train action, and manual evidence health.
 
-The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, `center report diff --record`, `center actions import-issues`, `center actions build/start/done/defer/archive`, and `center readiness closeout/import-issues` write local gitignored center files or work imports.
+The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, `center report diff --record`, `center actions import-issues`, `center actions build/start/done/defer/archive`, and `center readiness closeout/import-issues` write local gitignored center files or work imports. Daily commands add local plan and run receipts under `.brigade/daily/` and can call only the bounded safe flows documented above.

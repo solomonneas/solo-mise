@@ -80,6 +80,29 @@ def _build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="Show which stations are present and healthy.")
     p_status.add_argument("--target", "-t", type=Path, default=Path("."))
 
+    # daily
+    p_daily = sub.add_parser("daily", help="Run the personal daily operator loop.")
+    daily_sub = p_daily.add_subparsers(dest="daily_command", metavar="<daily-command>")
+    daily_sub.required = True
+    for name in ("status", "review"):
+        p_daily_action = daily_sub.add_parser(name, help=f"Show daily {name}.")
+        p_daily_action.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        p_daily_action.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_plan = daily_sub.add_parser("plan", help="Create the ranked daily plan.")
+    p_daily_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_daily_plan.add_argument("--record", action="store_true", help="Write a local daily plan receipt.")
+    p_daily_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_run = daily_sub.add_parser("run", help="Run one bounded safe daily action.")
+    p_daily_run.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_daily_run.add_argument("--approved", action="store_true", help="Allow the selected action when it requires explicit approval.")
+    p_daily_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_closeout = daily_sub.add_parser("closeout", help="Close out the latest daily run.")
+    p_daily_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_daily_closeout.add_argument("--status", choices=["reviewed", "deferred", "blocked", "archived"], default="reviewed")
+    p_daily_closeout.add_argument("--reason", default=None, help="Closeout reason.")
+    p_daily_closeout.add_argument("--handoff", action="store_true", help="Write and lint a Memory Handoff draft.")
+    p_daily_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+
     # add
     p_add = sub.add_parser("add", help="Install and wire a station's managed tools.")
     p_add.add_argument("station", help="Station to add tools for (e.g. memory, guard, tokens).")
@@ -1844,6 +1867,21 @@ def main(argv=None) -> int:
         from . import status as status_mod
 
         return status_mod.run(target=args.target)
+    if cmd == "daily":
+        from . import daily_cmd
+
+        if args.daily_command == "status":
+            return daily_cmd.status(target=args.target, json_output=args.json)
+        if args.daily_command == "plan":
+            return daily_cmd.plan(target=args.target, record=args.record, json_output=args.json)
+        if args.daily_command == "review":
+            return daily_cmd.review(target=args.target, json_output=args.json)
+        if args.daily_command == "run":
+            return daily_cmd.run(target=args.target, approved=args.approved, json_output=args.json)
+        if args.daily_command == "closeout":
+            return daily_cmd.closeout(target=args.target, status=args.status, reason=args.reason, handoff=args.handoff, json_output=args.json)
+        parser.error(f"unknown daily command: {args.daily_command}")
+        return 2
     if cmd == "add":
         from . import add as add_mod
 

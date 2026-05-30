@@ -758,6 +758,16 @@ Phase 39 status:
 - Action state changes update local metadata only. They do not promote imports, dismiss findings, execute tools, run scanners, run reviewers, or mutate remotes.
 - Center status, center reviews, work brief, work doctor, and release doctor surface open action queue health.
 
+Phase 101 status:
+
+- Implemented command surface: `brigade daily status/plan/review/run/closeout`.
+- `daily status` summarizes the current local operating state across work, imports, center reviews, daily actions, readiness, handoff drafts, memory-care, security, tools, release readiness, and operator reports.
+- `daily plan` ranks pending accepted tasks, reviewed imports, center actions, readiness blockers, and stale handoff, memory, or security issues, chooses exactly one recommended safe action, and writes no state unless `--record` is passed.
+- `daily review` previews the selected action, safe evidence references, acceptance criteria, risk, approval boundary, context pack plan, and likely next command.
+- `daily run` handles one bounded local action with a receipt under `.brigade/daily/runs/`, refusing approval-required actions unless `--approved` is passed.
+- `daily closeout` marks the latest run reviewed, deferred, blocked, or archived and can write a linted Memory Handoff draft without editing canonical memory.
+- The daily driver is the agent-facing entrypoint over the operator system. It does not run arbitrary commands, start scanners or reviewers, run tools, run fleet sweeps, mutate remotes, push, tag, publish, or edit canonical memory.
+
 ## Suggested Execution Order
 
 1. Roadmap audit, inspiration pattern registry, and repo-fleet readiness.
