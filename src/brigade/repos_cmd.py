@@ -27,6 +27,7 @@ DISPATCH_STALE_HOURS = 24
 RELEASE_TRAIN_STALE_HOURS = 168
 RELEASE_EVIDENCE_STEPS = {"verification", "release-doctor", "candidate-compare", "tag", "push", "release", "other"}
 RELEASE_EVIDENCE_STATUSES = {"completed", "skipped", "blocked", "deferred"}
+REQUIRED_RELEASE_EVIDENCE_STEPS = ("verification", "release-doctor", "candidate-compare", "tag", "push", "release")
 
 
 @dataclass(frozen=True)
@@ -2295,6 +2296,11 @@ def release_closeout(*, target: Path, train_id: str = "latest", status: str = "r
         "blocker_count": train.get("blocker_count"),
         "warning_count": train.get("warning_count"),
     }
+    payload["summary"] = {
+        key: value
+        for key, value in _release_summary_payload(target, train).items()
+        if key in {"counts", "repo_count", "ready_count", "blocked_count", "missing_evidence_count", "unresolved_action_count", "summary_fingerprint"}
+    }
     _write_json(train_path / "CLOSEOUT.json", payload)
     train["closeout"] = payload
     train["status"] = status
@@ -2764,6 +2770,180 @@ def release_evidence_show(*, target: Path, evidence_id: str, json_output: bool =
     return 0
 
 
+def _release_records_by_repo_step(records: list[dict[str, Any]], train_id: str) -> dict[tuple[str, str], dict[str, Any]]:
+    by_step: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in records:
+        if record.get("train_id") != train_id:
+            continue
+        repo_id = str(record.get("repo_id") or "")
+        step = str(record.get("step") or "")
+        if repo_id and step:
+            by_step[(repo_id, step)] = record
+    return by_step
+
+
+def _reconcile_release_action(action: dict[str, Any], records_by_step: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    repo_id = str(action.get("repo_id") or "")
+    evidence: list[dict[str, Any]] = []
+    missing_steps: list[str] = []
+    blocked_steps: list[str] = []
+    for step in REQUIRED_RELEASE_EVIDENCE_STEPS:
+        record = records_by_step.get((repo_id, step))
+        if not isinstance(record, dict):
+            missing_steps.append(step)
+            continue
+        status = str(record.get("status") or "")
+        evidence.append({"evidence_id": record.get("evidence_id"), "step": step, "status": status})
+        if status == "blocked":
+            blocked_steps.append(step)
+    if blocked_steps:
+        resolution = "blocked-evidence"
+    elif missing_steps:
+        resolution = "missing-evidence"
+    else:
+        resolution = "evidence-complete"
+    now = _now().isoformat()
+    action["resolution_status"] = resolution
+    action["manual_evidence"] = evidence
+    action["missing_evidence_steps"] = missing_steps
+    action["blocked_evidence_steps"] = blocked_steps
+    action["reconciled_at"] = now
+    action["updated_at"] = now
+    if resolution == "evidence-complete":
+        action["status"] = "done"
+        action.setdefault("completed_at", now)
+    elif action.get("status") == "done":
+        action["status"] = "active"
+    return {
+        "release_action_id": action.get("release_action_id"),
+        "repo_id": repo_id,
+        "status": action.get("status"),
+        "resolution_status": resolution,
+        "missing_evidence_steps": missing_steps,
+        "blocked_evidence_steps": blocked_steps,
+        "manual_evidence": evidence,
+    }
+
+
+def release_reconcile(*, target: Path, train_id: str = "latest", json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    train, error = _resolve_release_train(target, train_id)
+    if train is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if error and "not found" in error else 2
+    train_id_value = str(train.get("train_id") or "")
+    actions = _read_release_actions(target)
+    selected = [action for action in actions if action.get("source_train_id") == train_id_value]
+    records_by_step = _release_records_by_repo_step(_read_release_evidence(target), train_id_value)
+    results = [_reconcile_release_action(action, records_by_step) for action in selected]
+    _write_release_actions(target, actions)
+    payload = {"target_label": "repo-fleet", "train_id": train_id_value, "result_count": len(results), "results": results}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"repo fleet release reconcile: {train_id_value}")
+    for result in results:
+        print(f"- {result.get('release_action_id')} {result.get('repo_id')} [{result.get('resolution_status')}]")
+    return 0
+
+
+def _repo_release_summary(repo: dict[str, Any], train_id: str, records_by_step: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    repo_id = str(repo.get("repo_id") or "unknown")
+    steps: list[dict[str, Any]] = []
+    missing: list[str] = []
+    blocked: list[str] = []
+    deferred: list[str] = []
+    skipped: list[str] = []
+    completed: list[str] = []
+    for step in REQUIRED_RELEASE_EVIDENCE_STEPS:
+        record = records_by_step.get((repo_id, step))
+        if not isinstance(record, dict):
+            missing.append(step)
+            steps.append({"step": step, "status": "missing", "evidence_id": None})
+            continue
+        status = str(record.get("status") or "missing")
+        steps.append({"step": step, "status": status, "evidence_id": record.get("evidence_id")})
+        if status == "blocked":
+            blocked.append(step)
+        elif status == "deferred":
+            deferred.append(step)
+        elif status == "skipped":
+            skipped.append(step)
+        elif status == "completed":
+            completed.append(step)
+    if blocked:
+        evidence_status = "blocked-evidence"
+    elif missing:
+        evidence_status = "missing-evidence"
+    elif deferred:
+        evidence_status = "deferred"
+    elif skipped and not completed:
+        evidence_status = "skipped"
+    else:
+        evidence_status = "manually-completed"
+    return {
+        "repo_id": repo_id,
+        "repo_label": repo.get("repo_label"),
+        "classification": repo.get("classification"),
+        "evidence_status": evidence_status,
+        "steps": steps,
+        "missing_evidence_steps": missing,
+        "blocked_evidence_steps": blocked,
+        "deferred_evidence_steps": deferred,
+        "skipped_evidence_steps": skipped,
+        "completed_evidence_steps": completed,
+        "suggested_next_command": f"brigade repos release evidence plan {train_id}",
+    }
+
+
+def _release_summary_payload(target: Path, train: dict[str, Any]) -> dict[str, Any]:
+    train_id = str(train.get("train_id") or "")
+    records_by_step = _release_records_by_repo_step(_read_release_evidence(target), train_id)
+    actions = [action for action in _read_release_actions(target) if action.get("source_train_id") == train_id]
+    train_repos = train.get("repos") if isinstance(train.get("repos"), list) else []
+    repos = [_repo_release_summary(repo, train_id, records_by_step) for repo in train_repos if isinstance(repo, dict)]
+    counts: dict[str, int] = {}
+    for repo in repos:
+        status = str(repo.get("evidence_status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    unresolved_actions = [action for action in actions if action.get("status") in {"pending", "active", "deferred"}]
+    blocked_evidence = [repo for repo in repos if repo.get("evidence_status") == "blocked-evidence"]
+    missing_evidence = [repo for repo in repos if repo.get("evidence_status") == "missing-evidence"]
+    return {
+        "target_label": "repo-fleet",
+        "train_id": train_id,
+        "generated_at": _now().isoformat(),
+        "repo_count": len(repos),
+        "repos": repos,
+        "counts": counts,
+        "ready_count": sum(1 for repo in train.get("repos", []) if isinstance(repo, dict) and repo.get("classification") == "ready"),
+        "blocked_count": len(blocked_evidence),
+        "missing_evidence_count": len(missing_evidence),
+        "unresolved_action_count": len(unresolved_actions),
+        "unresolved_actions": [{"release_action_id": action.get("release_action_id"), "repo_id": action.get("repo_id"), "status": action.get("status"), "resolution_status": action.get("resolution_status")} for action in unresolved_actions],
+        "suggested_next_commands": ["brigade repos release reconcile latest", "brigade repos release evidence plan latest"],
+        "summary_fingerprint": _fingerprint_payload({"train": train_id, "repos": repos, "actions": unresolved_actions}),
+    }
+
+
+def release_summary(*, target: Path, train_id: str = "latest", json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    train, error = _resolve_release_train(target, train_id)
+    if train is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if error and "not found" in error else 2
+    payload = _release_summary_payload(target, train)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"repo fleet release summary: {payload['train_id']}")
+    print(f"repos: {payload['repo_count']}")
+    print(f"unresolved_actions: {payload['unresolved_action_count']}")
+    for repo in payload["repos"]:
+        print(f"- {repo.get('repo_id')} [{repo.get('evidence_status')}]")
+    return 0
+
+
 def release_train_actions_health(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     actions = _read_release_actions(target)
@@ -2773,6 +2953,14 @@ def release_train_actions_health(target: Path) -> dict[str, Any]:
     if open_actions:
         top = open_actions[0]
         checks.append({"status": WARN, "name": "repo_fleet_release_actions_open", "detail": f"{len(open_actions)} open fleet release action(s)", "suggested_next_command": f"brigade repos release actions show {top.get('release_action_id')}"})
+    unreconciled = [action for action in actions if action.get("status") in {"pending", "active", "deferred"} and not action.get("reconciled_at")]
+    if unreconciled:
+        top = unreconciled[0]
+        checks.append({"status": WARN, "name": "repo_fleet_release_action_unreconciled", "detail": f"{len(unreconciled)} fleet release action(s) need reconciliation", "suggested_next_command": f"brigade repos release reconcile {top.get('source_train_id') or 'latest'}"})
+    missing = [action for action in actions if action.get("resolution_status") == "missing-evidence"]
+    if missing:
+        top = missing[0]
+        checks.append({"status": WARN, "name": "repo_fleet_release_evidence_missing", "detail": f"{len(missing)} fleet release action(s) are missing manual evidence", "suggested_next_command": f"brigade repos release evidence plan {top.get('source_train_id') or 'latest'}"})
     return {"actions_path_label": ".brigade/repos/releases/actions.json", "action_count": len(actions), "open_count": len(open_actions), "top_action": open_actions[0] if open_actions else None, "checks": checks, "issue_count": len(checks), "top_issue": checks[0] if checks else None}
 
 

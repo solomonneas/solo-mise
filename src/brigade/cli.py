@@ -323,6 +323,11 @@ def _build_parser() -> argparse.ArgumentParser:
         p_repos_release_item.add_argument("train_id", help="Train id, unique prefix, or latest.")
         p_repos_release_item.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
         p_repos_release_item.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    for name in ("reconcile", "summary"):
+        p_repos_release_review = repos_release_sub.add_parser(name, help=f"{name.title()} one repo fleet release train.")
+        p_repos_release_review.add_argument("train_id", nargs="?", default="latest", help="Train id, unique prefix, or latest.")
+        p_repos_release_review.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        p_repos_release_review.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_repos_release_closeout = repos_release_sub.add_parser("closeout", help="Close out one repo fleet release train.")
     p_repos_release_closeout.add_argument("train_id", nargs="?", default="latest", help="Train id, unique prefix, or latest.")
     p_repos_release_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
@@ -1801,6 +1806,10 @@ def main(argv=None) -> int:
                 return repos_cmd.release_closeout(target=args.target, train_id=args.train_id, status=args.status, reason=args.reason, json_output=args.json)
             if args.repos_release_command == "archive":
                 return repos_cmd.release_archive(target=args.target, train_id=args.train_id, json_output=args.json)
+            if args.repos_release_command == "reconcile":
+                return repos_cmd.release_reconcile(target=args.target, train_id=args.train_id, json_output=args.json)
+            if args.repos_release_command == "summary":
+                return repos_cmd.release_summary(target=args.target, train_id=args.train_id, json_output=args.json)
             if args.repos_release_command == "actions":
                 if args.repos_release_actions_command == "plan":
                     return repos_cmd.release_actions_plan(target=args.target, train_id=args.train_id, json_output=args.json)

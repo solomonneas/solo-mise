@@ -154,6 +154,7 @@ Implementation scope:
 - Route reviewed fleet actions into target repo work imports and reconcile target repo progress back into the fleet queue without automatic promotion, work execution, fixes, cloning, or remote mutation.
 - Coordinate local fleet release trains from safe per-repo release readiness, candidate, verification, review, security, operator, and fleet action evidence without pushing, tagging, publishing, or mutating remotes.
 - Turn reviewed fleet release trains into local release action queues and record manual publish evidence without executing verification, tag, push, release, or remote-mutating commands.
+- Reconcile fleet release train actions against manual evidence records and include summary counts in train closeout.
 
 Acceptance:
 
@@ -166,6 +167,7 @@ Acceptance:
 - Tests cover fleet action dispatch, idempotency, dismissed-until-changed behavior, changed-fingerprint superseding, action context packs, reconciliation states, and daily-loop integration.
 - Tests cover fleet release train plan/build/list/show/compare/closeout/archive text and JSON, per-repo classifications, bundle evidence, manual-only publish plans, compare warnings, closeout states, daily-loop integration, and release-doctor integration.
 - Tests cover fleet release train action plan/build/list/show/start/done/defer/archive and manual release evidence plan/record/list/show, including health integration and no command execution.
+- Tests cover release train reconcile and summary for complete, skipped, deferred, blocked, and missing evidence states.
 - Tests prove private repo names, owner names, org names, local paths, and raw evidence are not copied into public docs, fixtures, imports, handoffs, release evidence, or committed diffs.
 
 Phase 35 status:
@@ -210,6 +212,14 @@ Phase 44 status:
 - Release train actions are local metadata records under `.brigade/repos/releases/actions.json`, created from reviewed or deferred train repos that are not ready.
 - Manual publish evidence is recorded under `.brigade/repos/releases/evidence.jsonl` for verification, release doctor, candidate compare, tag, push, release, and other manual steps.
 - Repo doctor, center status, center reviews, work brief, work doctor, and release doctor surface open train actions and blocked manual evidence records without executing any publish or verification command.
+
+Phase 45 status:
+
+- Implemented command surface: `brigade repos release reconcile <train-id|latest>`.
+- Implemented command surface: `brigade repos release summary <train-id|latest>`.
+- Reconciliation marks release-train actions done when required manual evidence is completed, skipped, or deferred, and keeps actions open when evidence is missing or blocked.
+- Release summaries report per-repo evidence status, missing evidence, blocked evidence, unresolved action counts, and suggested next commands.
+- Release train closeout now includes reconciliation summary counts when available.
 
 ### 3. Inspiration Pattern Registry
 

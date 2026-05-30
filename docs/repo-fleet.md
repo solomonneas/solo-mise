@@ -41,6 +41,8 @@ brigade repos release build
 brigade repos release list
 brigade repos release show <train-id>
 brigade repos release compare <train-id|latest>
+brigade repos release reconcile <train-id|latest>
+brigade repos release summary <train-id|latest>
 brigade repos release closeout <train-id|latest>
 brigade repos release archive <train-id>
 brigade repos release actions plan <train-id|latest>
@@ -117,6 +119,8 @@ Each repo is classified as `ready`, `blocked`, `needs-review`, `needs-dispatch`,
 `brigade repos release actions plan/build/list/show/start/done/defer/archive` turns a reviewed or deferred release train into a local action queue under `.brigade/repos/releases/actions.json`. Actions are created for repos that are blocked, need review, need dispatch, are in progress, have stale evidence, lack a release candidate, or are deferred. They are metadata records only and never execute suggested commands.
 
 `brigade repos release evidence plan/record/list/show` records manual publish evidence under `.brigade/repos/releases/evidence.jsonl`. Evidence steps are `verification`, `release-doctor`, `candidate-compare`, `tag`, `push`, `release`, and `other`. Statuses are `completed`, `skipped`, `blocked`, and `deferred`. These records describe what the operator did manually; Brigade does not run verification, tag, push, or release commands.
+
+`brigade repos release reconcile <train-id|latest>` compares release-train actions with manual evidence records. An action is marked done only when the repo has required evidence for verification, release doctor, candidate compare, tag, push, and release, and none of those records are blocked. Completed, skipped, and deferred evidence all count as reviewed operator outcomes. Missing or blocked evidence keeps the action open. `brigade repos release summary <train-id|latest>` reports per-repo evidence status, unresolved action counts, and suggested next commands. Release train closeout includes summary counts when available.
 
 Privacy boundaries:
 

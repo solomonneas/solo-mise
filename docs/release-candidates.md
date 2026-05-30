@@ -52,7 +52,7 @@ The train evidence uses safe repo ids, safe labels, local ids, statuses, counts,
 
 The fleet publish plan is manual-only. It can include checklist labels for verification, release doctor, candidate compare, tagging, pushing, and release creation, but Brigade does not run those commands or mutate remotes.
 
-Reviewed release trains can produce local release action queues with `brigade repos release actions build`. Operators can also record manual publish evidence with `brigade repos release evidence record`. Evidence records track the repo id, train id, step, status, safe summary, and fingerprints. They are receipts of manual work, not commands to run.
+Reviewed release trains can produce local release action queues with `brigade repos release actions build`. Operators can also record manual publish evidence with `brigade repos release evidence record`. Evidence records track the repo id, train id, step, status, safe summary, and fingerprints. `brigade repos release reconcile` marks train actions done only after required evidence is completed, skipped, or deferred, and `brigade repos release summary` shows missing or blocked evidence. These are receipts of manual work, not commands to run.
 
 ## Boundary
 

@@ -117,7 +117,7 @@ Each action stores:
 
 `brigade repos release plan/build/list/show/compare/closeout/archive` creates local fleet release train bundles under `.brigade/repos/releases/`. Release trains aggregate per-repo readiness, candidates, fleet action reconciliation, verification, review, security, operator reports, and dirty-state counts into a manual-only publish plan. They classify repos as ready, blocked, needing review or dispatch, in progress, stale, missing a release candidate, or deferred. Compare and closeout keep the train reviewable without pushing, tagging, publishing, or mutating remotes.
 
-`brigade repos release actions` turns reviewed release trains into local per-repo action queues, and `brigade repos release evidence` records manual publish evidence such as verification, release doctor, candidate compare, tag, push, and release outcomes. These records are local metadata only.
+`brigade repos release actions` turns reviewed release trains into local per-repo action queues, and `brigade repos release evidence` records manual publish evidence such as verification, release doctor, candidate compare, tag, push, and release outcomes. `brigade repos release reconcile` resolves actions against those evidence records, and `brigade repos release summary` reports unresolved, missing, blocked, skipped, deferred, and completed evidence. These records are local metadata only.
 
 Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, fleet action queue, dispatch, reconciliation, fleet release train action, and manual evidence health.
 
