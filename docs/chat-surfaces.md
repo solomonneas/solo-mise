@@ -35,7 +35,15 @@ Each surface entry includes:
 - `evidence_policy`
 - `confidence_threshold`
 
-Supported provider families are `discord-export`, `slack-export`, `telegram-export`, `clickclack-export`, and `generic-jsonl`.
+Supported provider families are `discord-export`, `slack-export`, `telegram-export`, `clickclack-export`, and `generic-jsonl`. Config and finding input may also use provider aliases:
+
+- `discord`, `discord-json`
+- `slack`, `slack-json`
+- `telegram`, `telegram-json`
+- `clickclack`
+- `generic`, `generic-json`, `jsonl`
+
+Aliases are normalized to the canonical provider family in sweep output.
 
 ## Finding Contract
 
@@ -55,7 +63,7 @@ Export findings should contain:
 - `acceptance_criteria`
 - `source_fingerprint`
 
-`brigade chat sweep ingest <surface-id>` normalizes those findings into `.brigade/chat-memory-sweeps/<surface-id>-latest.json`. `brigade chat sweep import-issues <surface-id>` converts the normalized findings into `chat-memory-sweep` work imports with stable fingerprints and dismissed-until-changed behavior.
+`brigade chat sweep ingest <surface-id>` normalizes those findings into `.brigade/chat-memory-sweeps/<surface-id>-latest.json`. `brigade chat sweep import-issues <surface-id>` converts the normalized findings into `chat-memory-sweep` work imports with stable fingerprints and dismissed-until-changed behavior. Task findings can be promoted into the normal work task loop; durable non-task findings such as decisions or preferences can be promoted into reviewed Memory Handoff drafts.
 
 ## Privacy Boundary
 

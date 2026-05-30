@@ -363,6 +363,7 @@ Deliverable: finish export-based chat sweep ingestion without live product APIs.
 Implementation scope:
 
 - Complete provider registry docs and fixtures for common chat export families and generic JSONL.
+- Implemented provider alias normalization for common export labels and generic JSONL, with scanner sweep review, task promotion, and handoff promotion coverage.
 - Add optional provider-family aliases for the longer surface list from the roadmap without implementing live adapters.
 - Improve privacy checks for raw transcript fields, user ids, channel ids, private URLs, hostnames, tokens, and unbounded excerpts.
 - Ensure chat-surface producer output works through scanner sweep, sweep review, task promotion, handoff promotion, and release closeout evidence.

@@ -204,6 +204,6 @@ brigade chat sweep ingest discord-export
 brigade chat sweep import-issues discord-export
 ```
 
-Each export finding must provide `provider`, `surface_id`, `issue_id`, `issue_type`, `priority`, `confidence`, `safe_summary`, `evidence_summary`, `suggested_task_text`, and `acceptance_criteria`. Supported provider families are `discord-export`, `slack-export`, `telegram-export`, `clickclack-export`, and `generic-jsonl`.
+Each export finding must provide `provider`, `surface_id`, `issue_id`, `issue_type`, `priority`, `confidence`, `safe_summary`, `evidence_summary`, `suggested_task_text`, and `acceptance_criteria`. Supported provider families are `discord-export`, `slack-export`, `telegram-export`, `clickclack-export`, and `generic-jsonl`; aliases such as `discord`, `slack-json`, `telegram`, `clickclack`, `generic`, and `jsonl` are normalized to those canonical families.
 
 `ingest` writes normalized sweep JSON under `.brigade/chat-memory-sweeps/`, and `import-issues` routes actionable items through the existing source `chat-memory-sweep` import path. Raw private chat fields such as `raw_text`, `raw_messages`, `message_text`, `messages`, and `transcript` are rejected by default. Use safe summaries, channel labels, message ranges, confidence, and local evidence paths instead.

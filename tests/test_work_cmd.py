@@ -6060,6 +6060,142 @@ def test_chat_sweep_validate_accepts_provider_fixtures_and_reports_errors(tmp_pa
     assert any("finding 1 requires evidence_summary" in error for error in payload["errors"])
 
 
+def test_chat_sweep_provider_aliases_ingest_import_review_and_promote(tmp_path, monkeypatch, capsys):
+    _init_git_repo(tmp_path)
+    dogfood_cmd.init(target=tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr(work_cmd.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    alias_cases = [
+        ("discord-alias", "discord", "discord"),
+        ("slack-alias", "slack-json", "slack"),
+        ("telegram-alias", "telegram", "telegram"),
+        ("clickclack-alias", "clickclack", "clickclack"),
+    ]
+    surfaces = []
+    (tmp_path / ".brigade" / "chat-surfaces").mkdir(parents=True, exist_ok=True)
+    for surface_id, provider_alias, file_stem in alias_cases:
+        export = tmp_path / ".brigade" / "chat-surfaces" / f"{file_stem}.json"
+        _write_json(export, {"findings": [_chat_finding(provider_alias, surface_id)]})
+        surfaces.append(
+            {
+                "id": surface_id,
+                "provider": provider_alias,
+                "workspace_label": f"local-{file_stem}",
+                "channel_label": "triage",
+                "export_path": f".brigade/chat-surfaces/{file_stem}.json",
+                "sweep_output_path": f".brigade/chat-memory-sweeps/{surface_id}-latest.json",
+                "enabled": True,
+                "privacy_mode": "summary-only",
+                "evidence_policy": "local-path",
+                "confidence_threshold": "medium",
+            }
+        )
+
+    generic_export = tmp_path / ".brigade" / "chat-surfaces" / "generic.jsonl"
+    generic_export.parent.mkdir(parents=True, exist_ok=True)
+    generic_rows = [
+        _chat_finding(
+            "generic",
+            "generic-alias",
+            issue_id="task-1",
+            suggested_task_text="Review generic export task",
+            source_fingerprint="generic-task-fp",
+        ),
+        _chat_finding(
+            "jsonl",
+            "generic-alias",
+            issue_id="decision-1",
+            issue_type="decision",
+            actionable=False,
+            suggested_task_text="Capture durable chat decision",
+            safe_summary="A durable local decision was recorded.",
+            evidence_summary="The local export contains a decision summary.",
+            source_fingerprint="generic-decision-fp",
+        ),
+    ]
+    generic_export.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in generic_rows))
+    surfaces.append(
+        {
+            "id": "generic-alias",
+            "provider": "jsonl",
+            "workspace_label": "local-generic",
+            "channel_label": "triage",
+            "export_path": ".brigade/chat-surfaces/generic.jsonl",
+            "sweep_output_path": ".brigade/chat-memory-sweeps/generic-alias-latest.json",
+            "enabled": True,
+            "privacy_mode": "summary-only",
+            "evidence_policy": "local-path",
+            "confidence_threshold": "medium",
+        }
+    )
+    _write_chat_surfaces_config(tmp_path, surfaces)
+
+    for surface_id, provider_alias, _ in alias_cases:
+        export_path = tmp_path / next(surface["export_path"] for surface in surfaces if surface["id"] == surface_id)
+        assert chat_cmd.sweep_validate(target=tmp_path, input_path=export_path, json_output=True) == 0
+        assert json.loads(capsys.readouterr().out)["valid"] is True
+        assert chat_cmd.sweep_ingest(target=tmp_path, surface_id=surface_id, json_output=True) == 0
+        ingest = json.loads(capsys.readouterr().out)
+        assert ingest["valid"] is True
+        output = json.loads(Path(ingest["output"]).read_text())
+        assert output["provider"].endswith("-export")
+        assert output["provider"] != provider_alias or provider_alias.endswith("-export")
+
+    assert chat_cmd.sweep_validate(target=tmp_path, input_path=generic_export, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+    assert chat_cmd.sweep_ingest(target=tmp_path, surface_id="generic-alias", json_output=True) == 0
+    generic_ingest = json.loads(capsys.readouterr().out)
+    assert generic_ingest["issues"] == 2
+    generic_output = json.loads(Path(generic_ingest["output"]).read_text())
+    assert generic_output["provider"] == "generic-jsonl"
+    assert {issue["kind"] for issue in generic_output["issues"]} == {"decision", "task"}
+
+    runner = tmp_path / "chat_alias_runner.py"
+    runner.write_text(
+        f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(Path(__file__).parents[1] / "src")!r})
+from brigade import chat_cmd
+
+raise SystemExit(chat_cmd.sweep_import_issues(target=Path("."), surface_id="generic-alias", json_output=True))
+"""
+    )
+    (tmp_path / ".brigade" / "scanners.toml").write_text(
+        f"""
+[[scanner]]
+id = "chat-alias"
+source = "chat-memory-sweep"
+command = "{sys.executable} {runner}"
+cadence = "daily@02:00"
+enabled = true
+timeout = 30
+output_path = ".brigade/chat-memory-sweeps/generic-alias-latest.json"
+conflict_window = "02:00-02:10"
+"""
+    )
+
+    assert work_cmd.sweep(target=tmp_path, scanner_id="chat-alias", ingest=False, json_output=True) == 0
+    sweep_payload = json.loads(capsys.readouterr().out)
+    assert sweep_payload["import_counts"]["created"] == 2
+    assert work_cmd.sweep_review(target=tmp_path, sweep_id="latest", json_output=True) == 0
+    review = json.loads(capsys.readouterr().out)
+    assert len(review["actionable_imports"]) == 2
+    assert {item["kind"] for item in review["imports"]} == {"decision", "task"}
+
+    imports = work_cmd._read_imports(tmp_path)
+    task_import = next(item for item in imports if item["kind"] == "task")
+    decision_import = next(item for item in imports if item["kind"] == "decision")
+    assert work_cmd.import_promote(target=tmp_path, import_id=task_import["id"]) == 0
+    out = capsys.readouterr().out
+    assert "status: promoted" in out
+    assert work_cmd.import_promote_handoff(target=tmp_path, import_id=decision_import["id"], json_output=True) == 0
+    handoff_payload = json.loads(capsys.readouterr().out)
+    assert handoff_payload["import"]["status"] == "promoted"
+    assert Path(handoff_payload["handoff_path"]).is_file()
+
+
 def test_chat_sweep_ingest_import_privacy_idempotency_and_dismissed_change(tmp_path, capsys):
     _init_git_repo(tmp_path)
     export = tmp_path / ".brigade" / "chat-surfaces" / "discord.json"

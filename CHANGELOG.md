@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade work import memory-refresh` to convert memory-refresh candidates into TDD-ready scanner task imports with card identity, refresh reason, evidence summary, and acceptance criteria.
 - Chat sweep imports now convert actionable sweep issues into task imports, preserve local provider/channel/thread/confidence metadata, and omit raw private chat fields.
 - `brigade chat surfaces init/list/show/doctor` plus `brigade chat sweep validate/ingest/import-issues` for local chat export fixtures that normalize safe findings into scanner inbox imports without live chat APIs.
+- Chat surface providers now support aliases for common export names, including Discord, Slack, Telegram, ClickClack, generic JSON, and JSONL, normalized to canonical provider families.
 - Scanner producer imports now use source item keys and fingerprints for idempotency, including dismissed-import protection until a source item materially changes.
 - Inbox doctor now reuses the cross-producer provenance audit to flag producer imports missing source identity, source fingerprints, safe summaries, evidence references, or scanner run metadata.
 - Context packs now summarize docs and guidance files by presence and safe metadata instead of copying file contents, learning candidates avoid raw import text fallback, and release note inputs redact secret-looking values.

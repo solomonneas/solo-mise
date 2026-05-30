@@ -17,6 +17,23 @@ CONFIG_REL_PATH = ".brigade/chat-surfaces.toml"
 OUTPUT_ROOT_REL_PATH = ".brigade/chat-memory-sweeps"
 SWEEP_STALE_HOURS = 48
 PROVIDERS = ("discord-export", "slack-export", "telegram-export", "clickclack-export", "generic-jsonl")
+PROVIDER_ALIASES = {
+    "clickclack": "clickclack-export",
+    "clickclack-export": "clickclack-export",
+    "discord": "discord-export",
+    "discord-export": "discord-export",
+    "discord-json": "discord-export",
+    "generic": "generic-jsonl",
+    "generic-json": "generic-jsonl",
+    "generic-jsonl": "generic-jsonl",
+    "jsonl": "generic-jsonl",
+    "slack": "slack-export",
+    "slack-export": "slack-export",
+    "slack-json": "slack-export",
+    "telegram": "telegram-export",
+    "telegram-export": "telegram-export",
+    "telegram-json": "telegram-export",
+}
 PRIVACY_MODES = ("summary-only", "redact-raw", "strict")
 EVIDENCE_POLICIES = ("summary-only", "local-path", "none")
 PRIORITIES = ("low", "normal", "high", "urgent")
@@ -83,6 +100,42 @@ DEFAULT_SURFACES = (
         "evidence_policy": "local-path",
         "confidence_threshold": "medium",
     },
+    {
+        "id": "telegram-export",
+        "provider": "telegram-export",
+        "workspace_label": "local-telegram-export",
+        "channel_label": "triage",
+        "export_path": ".brigade/chat-surfaces/telegram-export.json",
+        "sweep_output_path": ".brigade/chat-memory-sweeps/telegram-export-latest.json",
+        "enabled": False,
+        "privacy_mode": "summary-only",
+        "evidence_policy": "local-path",
+        "confidence_threshold": "medium",
+    },
+    {
+        "id": "clickclack-export",
+        "provider": "clickclack-export",
+        "workspace_label": "local-clickclack-export",
+        "channel_label": "triage",
+        "export_path": ".brigade/chat-surfaces/clickclack-export.json",
+        "sweep_output_path": ".brigade/chat-memory-sweeps/clickclack-export-latest.json",
+        "enabled": False,
+        "privacy_mode": "summary-only",
+        "evidence_policy": "local-path",
+        "confidence_threshold": "medium",
+    },
+    {
+        "id": "generic-jsonl",
+        "provider": "generic-jsonl",
+        "workspace_label": "local-generic-jsonl",
+        "channel_label": "triage",
+        "export_path": ".brigade/chat-surfaces/generic-jsonl.jsonl",
+        "sweep_output_path": ".brigade/chat-memory-sweeps/generic-jsonl-latest.json",
+        "enabled": False,
+        "privacy_mode": "summary-only",
+        "evidence_policy": "local-path",
+        "confidence_threshold": "medium",
+    },
 )
 CONFIDENCE_RANK = {"high": 0, "medium": 1, "normal": 1, "low": 2}
 
@@ -144,7 +197,7 @@ def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
             errors.append(f"{label} must be a table")
             continue
         surface_id = _string(item.get("id"))
-        provider = _string(item.get("provider"))
+        provider = _provider(item.get("provider"))
         if not surface_id:
             errors.append(f"{label} requires id")
             continue
@@ -153,7 +206,8 @@ def _load_config(target: Path) -> tuple[list[dict[str, Any]], list[str]]:
             continue
         seen.add(surface_id)
         if provider not in PROVIDERS:
-            errors.append(f"{surface_id}: provider must be one of: {', '.join(PROVIDERS)}")
+            aliases = ", ".join(sorted(PROVIDER_ALIASES))
+            errors.append(f"{surface_id}: provider must be one of: {', '.join(PROVIDERS)} or aliases: {aliases}")
             continue
         entry = dict(item)
         entry["id"] = surface_id
@@ -180,6 +234,13 @@ def _string(value: object) -> str | None:
     if isinstance(value, (int, float)):
         return str(value)
     return None
+
+
+def _provider(value: object) -> str | None:
+    text = _string(value)
+    if not text:
+        return None
+    return PROVIDER_ALIASES.get(text.casefold())
 
 
 def _confidence_allows(value: str | None, threshold: str | None) -> bool:
@@ -260,7 +321,7 @@ def _normalize_finding(
 ) -> tuple[dict[str, Any] | None, list[str], int]:
     errors: list[str] = []
     redacted = 0
-    provider = _string(value.get("provider")) or str(surface["provider"])
+    provider = _provider(value.get("provider")) or str(surface["provider"])
     surface_id = _string(value.get("surface_id")) or str(surface["id"])
     issue_id = _string(value.get("issue_id")) or _string(value.get("id"))
     issue_type = _string(value.get("issue_type")) or _string(value.get("kind")) or "task"
@@ -273,7 +334,8 @@ def _normalize_finding(
     if not issue_id:
         errors.append(f"finding {index} requires issue_id")
     if provider not in PROVIDERS:
-        errors.append(f"finding {index} provider must be one of: {', '.join(PROVIDERS)}")
+        aliases = ", ".join(sorted(PROVIDER_ALIASES))
+        errors.append(f"finding {index} provider must be one of: {', '.join(PROVIDERS)} or aliases: {aliases}")
     if surface_id != surface["id"]:
         errors.append(f"finding {index} surface_id must match selected surface: {surface['id']}")
     if issue_type not in ISSUE_TYPES:
@@ -311,6 +373,8 @@ def _normalize_finding(
         "local_evidence_path": _safe_value(_string(value.get("local_evidence_path"))),
         "chat_export_path": str(source_path),
     }
+    explicit_actionable = value.get("actionable")
+    actionable = issue_type == "task" or (isinstance(explicit_actionable, bool) and explicit_actionable)
     normalized = {
         "id": issue_id,
         "issue_id": issue_id,
@@ -320,7 +384,7 @@ def _normalize_finding(
         "severity": priority,
         "priority": priority,
         "confidence": confidence,
-        "actionable": issue_type == "task" or bool(value.get("actionable", True)),
+        "actionable": actionable,
         "provider": provider,
         "surface": surface_id,
         "workspace": metadata["workspace"],
@@ -524,7 +588,7 @@ def sweep_validate(*, target: Path, input_path: Path, json_output: bool = False)
     for index, finding in enumerate(findings, start=1):
         dummy = {
             "id": _string(finding.get("surface_id")) or "validate",
-            "provider": _string(finding.get("provider")) or "generic-jsonl",
+            "provider": _provider(finding.get("provider")) or "generic-jsonl",
             "workspace_label": "validate",
             "channel_label": "validate",
             "privacy_mode": "summary-only",

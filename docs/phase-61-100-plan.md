@@ -51,6 +51,8 @@ Goal: complete local export-family aliases for configured chat surfaces while ke
 
 Acceptance: tests cover alias validation, ingest, import counts, sweep review, task promotion, and handoff promotion for configured export families.
 
+Status: implemented with provider alias normalization, expanded starter surfaces, JSONL fixtures, scanner sweep review coverage, task promotion, and handoff promotion.
+
 ### Phase 67: Backup Closeout Policy And Operator Summary
 Goal: make backup closeouts quiet reviewed risks while surfacing changed fingerprints, stale restore rehearsal evidence, and safe operator status summaries.
 
