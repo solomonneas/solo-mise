@@ -164,6 +164,8 @@ brigade release run
 brigade release runs
 brigade release show <run-id>
 brigade release schema
+brigade release ci doctor
+brigade release ci import-issues
 brigade release candidate plan
 brigade release candidate build
 brigade release candidate list
@@ -661,6 +663,7 @@ Release readiness commands:
 - `brigade release doctor` runs local publish checks such as content-guard when available and reports blockers.
 - `brigade release run` writes a release-readiness receipt under `.brigade/release/runs/`.
 - `brigade release runs` and `brigade release show <run-id>` inspect local release receipts.
+- `brigade release ci doctor` and `import-issues` inspect local GitHub Actions workflow files or saved CI summaries for platform deprecation warnings, keep excerpts redacted, and route follow-up into the work inbox.
 - `brigade release candidate plan` previews a local release candidate bundle.
 - `brigade release candidate build` writes a local bundle under `.brigade/release/candidates/`.
 - `brigade release candidate list`, `show`, and `archive` inspect or archive local candidate bundles.

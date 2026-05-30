@@ -137,6 +137,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_release_schema = release_sub.add_parser("schema", help="Show local release evidence schema manifest.")
     p_release_schema.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_release_schema.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_ci = release_sub.add_parser("ci", help="Inspect local CI platform deprecation evidence.")
+    release_ci_sub = p_release_ci.add_subparsers(dest="release_ci_command", metavar="<release-ci-command>")
+    release_ci_sub.required = True
+    p_release_ci_doctor = release_ci_sub.add_parser("doctor", help="Check local GitHub Actions platform deprecation evidence.")
+    p_release_ci_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_ci_doctor.add_argument("--summary-path", type=Path, default=None, help="Optional local GitHub Actions summary or log file.")
+    p_release_ci_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_ci_import = release_ci_sub.add_parser("import-issues", help="Import CI platform deprecation findings into the local work inbox.")
+    p_release_ci_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_release_ci_import.add_argument("--summary-path", type=Path, default=None, help="Optional local GitHub Actions summary or log file.")
+    p_release_ci_import.add_argument("--dry-run", action="store_true", help="Validate without writing imports.")
+    p_release_ci_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_release_candidate = release_sub.add_parser("candidate", help="Build and inspect local release candidate bundles.")
     release_candidate_sub = p_release_candidate.add_subparsers(dest="release_candidate_command", metavar="<candidate-command>")
     release_candidate_sub.required = True
@@ -1840,6 +1852,13 @@ def main(argv=None) -> int:
             return release_cmd.show(target=args.target, run_id=args.run_id, json_output=args.json)
         if args.release_command == "schema":
             return release_cmd.schema(target=args.target, json_output=args.json)
+        if args.release_command == "ci":
+            if args.release_ci_command == "doctor":
+                return release_cmd.ci_doctor(target=args.target, summary_path=args.summary_path, json_output=args.json)
+            if args.release_ci_command == "import-issues":
+                return release_cmd.ci_import_issues(target=args.target, summary_path=args.summary_path, dry_run=args.dry_run, json_output=args.json)
+            parser.error(f"unknown release ci command: {args.release_ci_command}")
+            return 2
         if args.release_command == "candidate":
             if args.release_candidate_command == "plan":
                 return release_cmd.candidate_plan(target=args.target, base_ref=args.base_ref, json_output=args.json)

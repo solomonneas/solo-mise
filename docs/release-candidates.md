@@ -50,6 +50,8 @@ These are warnings because candidate bundles are review artifacts. They do not r
 
 `brigade release schema` prints a read-only manifest for wrapper-facing release records. The manifest documents required and optional fields for release readiness receipts, release candidate evidence, fleet release train evidence, fleet release waivers, and manual fleet release evidence records. It also reports whether the latest local readiness receipt, candidate packet, and fleet train evidence exist, and it reuses candidate health checks for missing referenced receipts.
 
+`brigade release ci doctor` inspects local GitHub Actions workflow files and saved CI summary or log files for platform deprecation warnings such as older Node action runtimes. `brigade release ci import-issues` routes those findings into the work inbox as `source: ci-platform-deprecation`. Findings carry redacted safe excerpts, local path labels, action labels, fingerprints, and no network calls or workflow mutations.
+
 Release readiness, candidate bundles, and candidate compare include operator report health so an operator can tell whether the local daily review packet is fresh and closed out before publishing manually.
 
 ## Fleet Release Trains

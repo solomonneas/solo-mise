@@ -261,6 +261,8 @@ Goal: detect local GitHub Actions platform deprecation warnings and route them i
 
 Acceptance: tests cover Node action deprecation summaries, safe excerpts, work imports, release evidence, and no network requirement.
 
+Status: implemented with `brigade release ci doctor/import-issues`, local workflow and saved-summary scanning, safe excerpt redaction, work-inbox routing, release readiness and candidate evidence, docs, and focused tests.
+
 ### Phase 97: Install Smoke Matrix Receipts
 Goal: store local install smoke-test matrix receipts matching supported harness combinations.
 
