@@ -5215,6 +5215,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "valid": memory_health["valid"],
             "issue_count": memory_health["issue_count"],
             "top_issue": memory_health["top_issue"],
+            "autofix_plan": memory_health.get("autofix_plan"),
         },
         "security_health": {
             "config_path": security_health["config_path"],
@@ -5898,6 +5899,14 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
                 "memory_care_top_issue: "
                 f"{top_memory.get('issue_type') or top_memory.get('name')} "
                 f"{top_memory.get('file') or _short(str(top_memory.get('detail', '')))}"
+            )
+        autofix_plan = memory_care.get("autofix_plan") if isinstance(memory_care.get("autofix_plan"), dict) else {}
+        if autofix_plan.get("plan_count"):
+            print(
+                "memory_care_fix_plan: "
+                f"planned={autofix_plan.get('plan_count')} "
+                f"blocked={autofix_plan.get('blocked_count')} "
+                f"command={autofix_plan.get('suggested_next_command')}"
             )
 
     security_health = payload.get("security_health") if isinstance(payload.get("security_health"), dict) else {}
@@ -6678,6 +6687,7 @@ def _memory_refresh_cards(payload: dict[str, Any], *, queue_path: Path) -> tuple
             "safe_summary",
             "source",
             "suggested_refresh_action",
+            "safe_autofix_plan",
         ):
             value = card.get(key)
             if value not in (None, ""):

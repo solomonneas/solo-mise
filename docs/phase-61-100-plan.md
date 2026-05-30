@@ -170,6 +170,8 @@ Goal: add planning only for low-risk memory metadata repairs, with no automatic 
 
 Acceptance: tests cover safe plans, blocked plans, raw evidence exclusion, and handoff/task review paths.
 
+Status: implemented with `brigade memory care plan-fixes`, blocked reviewed/freshness metadata repair candidates, no-write assertions, import metadata, daily brief visibility, docs, and focused tests.
+
 ### Phase 84: Handoff Ingest Warning Parser Hardening
 Goal: improve local parsing of ingestor warning logs including no-reply, skipped, failed, malformed, and unreachable-source states.
 

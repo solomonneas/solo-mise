@@ -162,12 +162,76 @@ def test_memory_care_status_explains_freshness_metadata(tmp_path, monkeypatch, c
     assert memory_cmd.status(target=tmp_path, json_output=True) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["metadata"]["freshness_dates"]["missing"] == 1
+    assert payload["autofix_plan"]["plan_count"] == 2
+    assert payload["autofix_plan"]["blocked_count"] == 2
 
     assert memory_cmd.import_issues(target=tmp_path, json_output=True) == 0
     payload = json.loads(capsys.readouterr().out)
     imported_types = {item["metadata"]["issue_type"] for item in payload["imports"]}
     assert "missing-reviewed" in imported_types
     assert "missing-freshness" in imported_types
+
+
+def test_memory_care_plan_fixes_reports_blockers_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(memory_cmd, "_today", lambda: date(2026, 5, 28))
+    cards = tmp_path / "memory" / "cards"
+    reviewed_missing = cards / "reviewed-missing.md"
+    freshness_missing = cards / "freshness-missing.md"
+    _write_card(reviewed_missing, {"topic": "reviewed-missing", "fresh_until": "2026-12-01", "confidence": "high", "evidence": ["README.md"]})
+    _write_card(freshness_missing, {"topic": "freshness-missing", "last_reviewed": "2026-05-01", "confidence": "high", "evidence": ["README.md"]})
+    (tmp_path / "MEMORY.md").write_text(
+        "- [reviewed-missing](memory/cards/reviewed-missing.md)\n"
+        "- [freshness-missing](memory/cards/freshness-missing.md)\n"
+    )
+    before_reviewed = reviewed_missing.read_text()
+    before_freshness = freshness_missing.read_text()
+
+    assert memory_cmd.scan(target=tmp_path, json_output=True) == 0
+    capsys.readouterr()
+    assert memory_cmd.plan_fixes(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["would_write"] is False
+    assert payload["plan_count"] == 2
+    assert payload["blocked_count"] == 2
+    by_type = {item["issue_type"]: item for item in payload["items"]}
+    assert by_type["missing-reviewed"]["candidate_fields"] == {"last_reviewed": "2026-05-28"}
+    assert by_type["missing-reviewed"]["blockers"] == ["requires-current-evidence-review"]
+    assert by_type["missing-freshness"]["candidate_fields"] == {"fresh_until": "<operator-selected-date>"}
+    assert by_type["missing-freshness"]["blockers"] == ["requires-operator-freshness-date"]
+    assert reviewed_missing.read_text() == before_reviewed
+    assert freshness_missing.read_text() == before_freshness
+
+    assert memory_cmd.plan_fixes(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "memory care fix plan:" in out
+    assert "would_write: false" in out
+    assert "blocked: 2" in out
+
+
+def test_memory_care_imports_autofix_plan_and_brief_visibility(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(memory_cmd, "_today", lambda: date(2026, 5, 28))
+    monkeypatch.setattr(work_cmd, "_now", lambda: datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc))
+    cards = tmp_path / "memory" / "cards"
+    _write_card(cards / "missing-reviewed.md", {"topic": "missing-reviewed", "fresh_until": "2026-12-01", "confidence": "high", "evidence": ["README.md"]})
+    (tmp_path / "MEMORY.md").write_text("- [missing-reviewed](memory/cards/missing-reviewed.md)\n")
+
+    assert memory_cmd.scan(target=tmp_path) == 0
+    capsys.readouterr()
+    assert memory_cmd.import_issues(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] == 1
+    metadata = payload["imports"][0]["metadata"]
+    assert metadata["issue_type"] == "missing-reviewed"
+    assert metadata["safe_autofix_plan"]["would_write"] is False
+    assert metadata["safe_autofix_plan"]["blockers"] == ["requires-current-evidence-review"]
+
+    assert work_cmd.brief(target=tmp_path, json_output=True) == 0
+    brief = json.loads(capsys.readouterr().out)
+    assert brief["memory_care"]["autofix_plan"]["plan_count"] == 1
+    assert brief["memory_care"]["autofix_plan"]["suggested_next_command"] == "brigade memory care plan-fixes"
+    assert work_cmd.brief(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "memory_care_fix_plan: planned=1 blocked=1 command=brigade memory care plan-fixes" in out
 
 
 def test_memory_care_imports_dedupe_and_respect_dismissed(tmp_path, monkeypatch, capsys):
@@ -251,6 +315,10 @@ def test_memory_care_cli(tmp_path, monkeypatch):
         seen.append(("scan", kwargs))
         return 0
 
+    def fake_plan_fixes(**kwargs):
+        seen.append(("plan-fixes", kwargs))
+        return 0
+
     def fake_status(**kwargs):
         seen.append(("status", kwargs))
         return 0
@@ -265,17 +333,20 @@ def test_memory_care_cli(tmp_path, monkeypatch):
 
     monkeypatch.setattr(memory_cmd, "init", fake_init)
     monkeypatch.setattr(memory_cmd, "scan", fake_scan)
+    monkeypatch.setattr(memory_cmd, "plan_fixes", fake_plan_fixes)
     monkeypatch.setattr(memory_cmd, "status", fake_status)
     monkeypatch.setattr(memory_cmd, "doctor", fake_doctor)
     monkeypatch.setattr(memory_cmd, "import_issues", fake_import)
     assert cli.main(["memory", "care", "init", "--target", str(tmp_path), "--force", "--no-gitignore"]) == 0
     assert cli.main(["memory", "care", "scan", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["memory", "care", "plan-fixes", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["memory", "care", "status", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["memory", "care", "doctor", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["memory", "care", "import-issues", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
     assert seen == [
         ("init", {"target": tmp_path, "force": True, "update_gitignore": False}),
         ("scan", {"target": tmp_path, "json_output": True}),
+        ("plan-fixes", {"target": tmp_path, "json_output": True}),
         ("status", {"target": tmp_path, "json_output": True}),
         ("doctor", {"target": tmp_path, "json_output": True}),
         ("import", {"target": tmp_path, "dry_run": True, "json_output": True}),

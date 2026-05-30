@@ -527,6 +527,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_memory_care_scan = memory_care_sub.add_parser("scan", help="Scan local memory cards without editing them.")
     p_memory_care_scan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_memory_care_scan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_memory_care_plan_fixes = memory_care_sub.add_parser("plan-fixes", help="Plan safe memory-care metadata fixes without writing files.")
+    p_memory_care_plan_fixes.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_memory_care_plan_fixes.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_memory_care_status = memory_care_sub.add_parser("status", help="Show local memory-care status.")
     p_memory_care_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_memory_care_status.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -2298,6 +2301,8 @@ def main(argv=None) -> int:
                 )
             if args.memory_care_command == "scan":
                 return memory_cmd.scan(target=args.target, json_output=args.json)
+            if args.memory_care_command == "plan-fixes":
+                return memory_cmd.plan_fixes(target=args.target, json_output=args.json)
             if args.memory_care_command == "status":
                 return memory_cmd.status(target=args.target, json_output=args.json)
             if args.memory_care_command == "doctor":

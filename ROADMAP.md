@@ -151,11 +151,11 @@ First build slice:
 
 Goal: prevent durable memory from silently rotting.
 
-- Track freshness metadata, confidence, evidence, and review dates for memory cards. Status: started with memory-care metadata coverage summaries, missing reviewed-date issues, missing freshness-date issues, confidence counts, evidence metadata counts, and reviewed imports.
+- Track freshness metadata, confidence, evidence, and review dates for memory cards. Status: started with memory-care metadata coverage summaries, missing reviewed-date issues, missing freshness-date issues, confidence counts, evidence metadata counts, reviewed imports, and planning-only safe metadata repair output.
 - Run memory-care scanners that detect expired, stale, contradictory, or undersourced cards. Status: implemented with `brigade memory care scan`, local `.brigade/memory-care.toml`, and stable refresh queue output.
 - Import refresh candidates into Brigade as local work imports. Status: implemented with `brigade memory care import-issues`, source `memory-care`, safe metadata, source fingerprints, and dismissed-import protection.
 - Promote refresh candidates into tasks or memory handoffs after review. Status: implemented through the existing work import promotion and acceptance/evidence loop.
-- Auto-fix only within safe gates where source evidence is current, low-risk, and locally reviewable.
+- Auto-fix only within safe gates where source evidence is current, low-risk, and locally reviewable. Status: started with `brigade memory care plan-fixes`, which writes no card files and reports blockers for reviewed/freshness metadata repair candidates.
 - Treat bootstrap truncation as a hard failure. Bootstrap files stay slim, cards hold durable detail, and doctor checks enforce the boundary.
 - Add a handoff doctor that compares repo-local writer inboxes such as `.claude/memory-handoffs/` and `.codex/memory-handoffs/` against the canonical ingestor source list, warning when handoffs exist in directories the owner is not scanning. Status: started with `brigade handoff doctor`, `.brigade/handoff-sources.example.json`, and `brigade doctor` / `brigade work doctor` integration.
 - Add handoff-ingest observability checks for hidden warning states, including unreachable remote sources, malformed handoffs that are skipped, and runs that emit `NO_REPLY` despite warnings. Status: started with optional `ingestor.last_run_log` checks in `brigade handoff doctor`.
