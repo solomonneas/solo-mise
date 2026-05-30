@@ -5563,7 +5563,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
 
     inbox_hygiene = payload.get("inbox_hygiene") if isinstance(payload.get("inbox_hygiene"), dict) else {}
     if inbox_hygiene:
-        print(f"inbox_hygiene: {'ok' if inbox_hygiene.get('issue_count') == 0 else f'{inbox_hygiene.get('issue_count')} issue(s)'}")
+        issue_count = inbox_hygiene.get("issue_count")
+        print(f"inbox_hygiene: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_inbox = inbox_hygiene.get("top_issue") if isinstance(inbox_hygiene.get("top_issue"), dict) else None
         if top_inbox:
             print(
@@ -5621,7 +5622,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     memory_care = payload.get("memory_care") if isinstance(payload.get("memory_care"), dict) else {}
     if memory_care:
         print(f"memory_care_config: {memory_care.get('config_path')}")
-        print(f"memory_care_health: {'ok' if memory_care.get('issue_count') == 0 else f'{memory_care.get('issue_count')} issue(s)'}")
+        issue_count = memory_care.get("issue_count")
+        print(f"memory_care_health: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_memory = memory_care.get("top_issue") if isinstance(memory_care.get("top_issue"), dict) else None
         if top_memory:
             print(
@@ -5633,7 +5635,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     security_health = payload.get("security_health") if isinstance(payload.get("security_health"), dict) else {}
     if security_health:
         print(f"security_config: {security_health.get('config_path')}")
-        print(f"security_health: {'ok' if security_health.get('issue_count') == 0 else f'{security_health.get('issue_count')} issue(s)'}")
+        issue_count = security_health.get("issue_count")
+        print(f"security_health: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_security = security_health.get("top_finding") if isinstance(security_health.get("top_finding"), dict) else None
         if top_security:
             print(
@@ -5646,7 +5649,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     backup_health = payload.get("backup_health") if isinstance(payload.get("backup_health"), dict) else {}
     if backup_health:
         print(f"backup_config: {backup_health.get('config_path')}")
-        print(f"backup_health: {'ok' if backup_health.get('issue_count') == 0 else f'{backup_health.get('issue_count')} issue(s)'}")
+        issue_count = backup_health.get("issue_count")
+        print(f"backup_health: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_backup = backup_health.get("top_issue") if isinstance(backup_health.get("top_issue"), dict) else None
         if top_backup:
             print(
@@ -5658,7 +5662,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     tool_catalog = payload.get("tool_catalog") if isinstance(payload.get("tool_catalog"), dict) else {}
     if tool_catalog:
         print(f"tool_config: {tool_catalog.get('config_path')}")
-        print(f"tool_catalog: {'ok' if tool_catalog.get('issue_count') == 0 else f'{tool_catalog.get('issue_count')} issue(s)'}")
+        issue_count = tool_catalog.get("issue_count")
+        print(f"tool_catalog: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_tool = tool_catalog.get("top_issue") if isinstance(tool_catalog.get("top_issue"), dict) else None
         if top_tool:
             print(
@@ -5699,9 +5704,10 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
 
     roadmap_completion = payload.get("roadmap_completion") if isinstance(payload.get("roadmap_completion"), dict) else {}
     if roadmap_completion:
+        issue_count = roadmap_completion.get("issue_count")
         print(
             "roadmap_completion: "
-            f"{'ok' if roadmap_completion.get('issue_count') == 0 else f'{roadmap_completion.get('issue_count')} issue(s)'}"
+            f"{'ok' if issue_count == 0 else f'{issue_count} issue(s)'}"
         )
         top_roadmap = roadmap_completion.get("top_issue") if isinstance(roadmap_completion.get("top_issue"), dict) else None
         if top_roadmap:
@@ -5710,7 +5716,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     repo_fleet = payload.get("repo_fleet") if isinstance(payload.get("repo_fleet"), dict) else {}
     if repo_fleet:
         print(f"repo_fleet_config: {repo_fleet.get('config_path')}")
-        print(f"repo_fleet: {'ok' if repo_fleet.get('issue_count') == 0 else f'{repo_fleet.get('issue_count')} issue(s)'}")
+        issue_count = repo_fleet.get("issue_count")
+        print(f"repo_fleet: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_repo = repo_fleet.get("top_issue") if isinstance(repo_fleet.get("top_issue"), dict) else None
         if top_repo:
             print(f"repo_fleet_top_issue: {top_repo.get('name')} {_short(str(top_repo.get('detail', '')))}")
@@ -5725,7 +5732,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
 
     project_consolidation = payload.get("project_consolidation") if isinstance(payload.get("project_consolidation"), dict) else {}
     if project_consolidation:
-        print(f"project_consolidation: {'ok' if project_consolidation.get('issue_count') == 0 else f'{project_consolidation.get('issue_count')} issue(s)'}")
+        issue_count = project_consolidation.get("issue_count")
+        print(f"project_consolidation: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_project = project_consolidation.get("top_issue") if isinstance(project_consolidation.get("top_issue"), dict) else None
         if top_project:
             print(f"project_consolidation_top_issue: {top_project.get('name')} {_short(str(top_project.get('detail', '')))}")
@@ -5742,7 +5750,8 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
         latest_report = operator_report.get("latest") if isinstance(operator_report.get("latest"), dict) else None
         if latest_report:
             print(f"operator_report_latest: {latest_report.get('report_id')} {latest_report.get('created_at')}")
-        print(f"operator_report: {'ok' if operator_report.get('issue_count') == 0 else f'{operator_report.get('issue_count')} issue(s)'}")
+        issue_count = operator_report.get("issue_count")
+        print(f"operator_report: {'ok' if issue_count == 0 else f'{issue_count} issue(s)'}")
         top_report = operator_report.get("top_issue") if isinstance(operator_report.get("top_issue"), dict) else None
         if top_report:
             print(f"operator_report_top_issue: {top_report.get('name')} {_short(str(top_report.get('detail', '')))}")
