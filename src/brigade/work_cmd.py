@@ -4982,15 +4982,16 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "audit": roadmap_health["audit"],
             "patterns": roadmap_health["patterns"],
         },
-        "repo_fleet": {
-            "config_path": repo_health["config_path"],
-            "repo_count": repo_health["repo_count"],
-            "issue_count": repo_health["issue_count"],
-            "top_issue": repo_health["top_issue"],
-            "report": repo_health.get("report"),
-            "actions": repo_health.get("actions"),
-            "sweep": repo_health.get("sweep"),
-        },
+            "repo_fleet": {
+                "config_path": repo_health["config_path"],
+                "repo_count": repo_health["repo_count"],
+                "issue_count": repo_health["issue_count"],
+                "top_issue": repo_health["top_issue"],
+                "report": repo_health.get("report"),
+                "actions": repo_health.get("actions"),
+                "sweep": repo_health.get("sweep"),
+                "release_train": repo_health.get("release_train"),
+            },
         "context_packs": {
             "pack_count": context_health["pack_count"],
             "issue_count": context_health["issue_count"],
@@ -9954,6 +9955,10 @@ def doctor(*, target: Path) -> int:
     sweep_bucket = repo_health.get("sweep")
     if isinstance(sweep_bucket, dict):
         for check in sweep_bucket.get("checks", []):
+            _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+    release_bucket = repo_health.get("release_train")
+    if isinstance(release_bucket, dict):
+        for check in release_bucket.get("checks", []):
             _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
 
     context_health = context_cmd.health(effective_target)

@@ -36,6 +36,13 @@ brigade repos actions dispatch --all-reviewed
 brigade repos actions reconcile [fleet-action-id]
 brigade repos actions context plan <fleet-action-id>
 brigade repos actions context build <fleet-action-id>
+brigade repos release plan
+brigade repos release build
+brigade repos release list
+brigade repos release show <train-id>
+brigade repos release compare <train-id|latest>
+brigade repos release closeout <train-id|latest>
+brigade repos release archive <train-id>
 ```
 
 Fleet reports are written under:
@@ -54,6 +61,12 @@ Fleet sweep receipts are written under:
 
 ```text
 .brigade/repos/sweeps/
+```
+
+Fleet release train bundles are written under:
+
+```text
+.brigade/repos/releases/
 ```
 
 Fleet reports include safe repo ids, safe labels, status counts, blocker and warning counts, top pending action summaries, receipt labels, and suggested next commands. Fleet actions store local metadata only: repo id, safe label, source subsystem, source local id, status, priority or severity, safe summary, suggested command, timestamps, and source fingerprint.
@@ -83,10 +96,17 @@ Dispatch is idempotent by fleet action id and source fingerprint. Repeated dispa
 
 `brigade repos actions reconcile` reads target repo work imports, promoted tasks, completed tasks, closeouts, release readiness receipts, and operator reports, then updates local fleet action metadata. Reconciliation states include `dispatched`, `in-progress`, `completed`, `dismissed`, `superseded`, `stale`, and `broken-reference`. Completed target tasks mark the fleet action done. Repo fleet health also warns when safe target evidence changes after dispatch. No suggested command is executed.
 
+`brigade repos release plan/build/list/show/compare/closeout/archive` coordinates release readiness across configured repos without publishing anything. A release train collects safe per-repo evidence from fleet sweeps, fleet reports, fleet action reconciliation, target repo operator reports, work closeouts, verification receipts, review closeouts, security closeouts, release readiness receipts, release candidates, dirty tracked counts, and ahead or behind labels when available.
+
+Each repo is classified as `ready`, `blocked`, `needs-review`, `needs-dispatch`, `in-progress`, `stale-evidence`, `no-release-candidate`, or `deferred`. `build` writes `FLEET_RELEASE_TRAIN.md`, `FLEET_RELEASE_EVIDENCE.json`, and `MANUAL_PUBLISH_PLAN.md`. The publish plan contains placeholders and manual-only checklist steps for verification, release doctor, candidate compare, tags, pushes, and release creation. Brigade does not execute any publish step.
+
+`brigade repos release compare <train-id|latest>` checks whether captured repo HEAD labels changed, newer release readiness or candidate receipts exist, fleet action reconciliation changed, referenced safe receipt ids disappeared, or unresolved fleet action state changed. `closeout` records `reviewed`, `deferred`, `superseded`, or `archived` status. Repo doctor, center status, center reviews, work brief, work doctor, and release doctor surface blocked, stale, or unclosed release train state.
+
 Privacy boundaries:
 
 - No cloning.
 - No remote mutation.
+- No push, tag, release, PR, visibility, transfer, or archive mutation.
 - No automatic action execution.
 - No automatic promotion or dismissal.
 - No automatic target task promotion, work run, or code fix.

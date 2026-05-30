@@ -305,6 +305,28 @@ def _build_parser() -> argparse.ArgumentParser:
     p_repos_sweep_closeout.add_argument("--status", choices=["reviewed", "deferred", "superseded", "archived"], default="reviewed")
     p_repos_sweep_closeout.add_argument("--reason", default=None, help="Review reason.")
     p_repos_sweep_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_release = repos_sub.add_parser("release", help="Plan and close out local repo fleet release trains.")
+    repos_release_sub = p_repos_release.add_subparsers(dest="repos_release_command", metavar="<repos-release-command>")
+    repos_release_sub.required = True
+    for name in ("plan", "build"):
+        p_repos_release_cmd = repos_release_sub.add_parser(name, help=f"{name.title()} a repo fleet release train.")
+        p_repos_release_cmd.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        p_repos_release_cmd.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_release_list = repos_release_sub.add_parser("list", help="List repo fleet release trains.")
+    p_repos_release_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_release_list.add_argument("--limit", type=int, default=20, help="Maximum trains to list.")
+    p_repos_release_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    for name in ("show", "compare", "archive"):
+        p_repos_release_item = repos_release_sub.add_parser(name, help=f"{name.title()} a repo fleet release train.")
+        p_repos_release_item.add_argument("train_id", help="Train id, unique prefix, or latest.")
+        p_repos_release_item.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        p_repos_release_item.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_release_closeout = repos_release_sub.add_parser("closeout", help="Close out one repo fleet release train.")
+    p_repos_release_closeout.add_argument("train_id", nargs="?", default="latest", help="Train id, unique prefix, or latest.")
+    p_repos_release_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_release_closeout.add_argument("--status", choices=["reviewed", "deferred", "superseded", "archived"], default="reviewed")
+    p_repos_release_closeout.add_argument("--reason", default=None, help="Review reason.")
+    p_repos_release_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     # handoff
     p_handoff = sub.add_parser("handoff", help="Inspect memory handoff inbox health.")
@@ -1703,6 +1725,23 @@ def main(argv=None) -> int:
             if args.repos_sweep_command == "closeout":
                 return repos_cmd.sweep_closeout(target=args.target, sweep_id=args.sweep_id, status=args.status, reason=args.reason, json_output=args.json)
             parser.error(f"unknown repos sweep command: {args.repos_sweep_command}")
+            return 2
+        if args.repos_command == "release":
+            if args.repos_release_command == "plan":
+                return repos_cmd.release_plan(target=args.target, json_output=args.json)
+            if args.repos_release_command == "build":
+                return repos_cmd.release_build(target=args.target, json_output=args.json)
+            if args.repos_release_command == "list":
+                return repos_cmd.release_list(target=args.target, limit=args.limit, json_output=args.json)
+            if args.repos_release_command == "show":
+                return repos_cmd.release_show(target=args.target, train_id=args.train_id, json_output=args.json)
+            if args.repos_release_command == "compare":
+                return repos_cmd.release_compare(target=args.target, train_id=args.train_id, json_output=args.json)
+            if args.repos_release_command == "closeout":
+                return repos_cmd.release_closeout(target=args.target, train_id=args.train_id, status=args.status, reason=args.reason, json_output=args.json)
+            if args.repos_release_command == "archive":
+                return repos_cmd.release_archive(target=args.target, train_id=args.train_id, json_output=args.json)
+            parser.error(f"unknown repos release command: {args.repos_release_command}")
             return 2
         parser.error(f"unknown repos command: {args.repos_command}")
         return 2

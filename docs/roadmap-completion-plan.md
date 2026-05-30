@@ -152,6 +152,7 @@ Implementation scope:
 - Import issues into the scanner inbox as `source: repo-fleet`.
 - Refresh safe local evidence explicitly through fleet sweeps that run configured read/report commands, write local receipts, and feed reports and action queues without cloning, fixing, promoting, or mutating remotes.
 - Route reviewed fleet actions into target repo work imports and reconcile target repo progress back into the fleet queue without automatic promotion, work execution, fixes, cloning, or remote mutation.
+- Coordinate local fleet release trains from safe per-repo release readiness, candidate, verification, review, security, operator, and fleet action evidence without pushing, tagging, publishing, or mutating remotes.
 
 Acceptance:
 
@@ -162,6 +163,7 @@ Acceptance:
 - Tests cover fleet sweep plan/run/runs/show/closeout text and JSON, filtering, stale-only selection, failed-repo isolation, safe log labels, and daily-loop integration.
 - Tests cover fleet report plan/build/list/show/archive and fleet action plan/build/list/show/start/done/defer/archive text and JSON.
 - Tests cover fleet action dispatch, idempotency, dismissed-until-changed behavior, changed-fingerprint superseding, action context packs, reconciliation states, and daily-loop integration.
+- Tests cover fleet release train plan/build/list/show/compare/closeout/archive text and JSON, per-repo classifications, bundle evidence, manual-only publish plans, compare warnings, closeout states, daily-loop integration, and release-doctor integration.
 - Tests prove private repo names, owner names, org names, local paths, and raw evidence are not copied into public docs, fixtures, imports, handoffs, release evidence, or committed diffs.
 
 Phase 35 status:
@@ -190,6 +192,14 @@ Phase 42 status:
 - Reviewed fleet actions can be dispatched into target repo `repo-fleet` work imports with acceptance criteria, source fingerprints, and fleet provenance. Dispatch is idempotent, respects dismissed imports until material change, and supersedes older dispatch imports when the source fingerprint changes.
 - Action-scoped context packs are written in the target repo under `.brigade/context/packs/` with safe summaries, guidance presence, receipt labels, dispatch state, and explicit private-evidence exclusions.
 - Reconciliation reads target repo imports, tasks, work closeouts, release readiness, and operator reports, then records `dispatched`, `in-progress`, `completed`, `dismissed`, `superseded`, `stale`, or `broken-reference` state on the fleet action.
+
+Phase 43 status:
+
+- Implemented command surface: `brigade repos release plan/build/list/show/compare/closeout/archive`.
+- Fleet release trains write local `FLEET_RELEASE_TRAIN.md`, `FLEET_RELEASE_EVIDENCE.json`, and `MANUAL_PUBLISH_PLAN.md` bundles under `.brigade/repos/releases/`.
+- Release train evidence classifies configured repos as `ready`, `blocked`, `needs-review`, `needs-dispatch`, `in-progress`, `stale-evidence`, `no-release-candidate`, or `deferred`, using safe repo ids, labels, counts, fingerprints, receipt labels, and suggested next commands only.
+- Compare detects changed repo HEAD labels, newer release readiness, newer release candidates, changed fleet action reconciliation, missing safe receipt ids, and unresolved state changes.
+- Closeout records `reviewed`, `deferred`, `superseded`, or `archived` state. Repo doctor, center status, center reviews, work brief, work doctor, and release doctor surface blocked, stale, or unclosed release train health.
 
 ### 3. Inspiration Pattern Registry
 

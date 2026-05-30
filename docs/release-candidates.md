@@ -44,6 +44,14 @@ These are warnings because candidate bundles are review artifacts. They do not r
 
 Release readiness, candidate bundles, and candidate compare include operator report health so an operator can tell whether the local daily review packet is fresh and closed out before publishing manually.
 
+## Fleet Release Trains
+
+`brigade repos release plan/build/list/show/compare/closeout/archive` coordinates release readiness across configured local repos. Fleet release train bundles live under `.brigade/repos/releases/` and include `FLEET_RELEASE_TRAIN.md`, `FLEET_RELEASE_EVIDENCE.json`, and `MANUAL_PUBLISH_PLAN.md`.
+
+The train evidence uses safe repo ids, safe labels, local ids, statuses, counts, fingerprints, receipt labels, and suggested next commands only. It collects per-repo release readiness, release candidates, fleet action reconciliation, verification, review, security, and operator evidence, then classifies each repo as ready, blocked, needing review or dispatch, in progress, stale, missing a release candidate, or deferred.
+
+The fleet publish plan is manual-only. It can include checklist labels for verification, release doctor, candidate compare, tagging, pushing, and release creation, but Brigade does not run those commands or mutate remotes.
+
 ## Boundary
 
-Release candidate commands are local and explicit. Brigade does not push, tag, create GitHub releases, mutate pull requests, edit changelogs outside the candidate bundle, upload artifacts, approve content-guard findings, start daemons, install schedulers, or store secrets.
+Release candidate and fleet release train commands are local and explicit. Brigade does not push, tag, create releases, mutate pull requests, edit changelogs outside generated local bundles, upload artifacts, approve content-guard findings, start daemons, install schedulers, or store secrets.

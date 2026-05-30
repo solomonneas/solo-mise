@@ -407,7 +407,8 @@ def _reviews(target: Path) -> list[dict[str, Any]]:
     repo_report = repo_health.get("report") if isinstance(repo_health.get("report"), dict) else {}
     repo_actions = repo_health.get("actions") if isinstance(repo_health.get("actions"), dict) else {}
     repo_sweep = repo_health.get("sweep") if isinstance(repo_health.get("sweep"), dict) else {}
-    for bucket, command in ((repo_report, "brigade repos report build"), (repo_actions, "brigade repos actions list"), (repo_sweep, "brigade repos sweep run")):
+    repo_release = repo_health.get("release_train") if isinstance(repo_health.get("release_train"), dict) else {}
+    for bucket, command in ((repo_report, "brigade repos report build"), (repo_actions, "brigade repos actions list"), (repo_sweep, "brigade repos sweep run"), (repo_release, "brigade repos release build")):
         top = bucket.get("top_issue") if isinstance(bucket.get("top_issue"), dict) else None
         if top:
             items.append(_item("repo-fleet", str(top.get("name") or "repo-fleet"), str(top.get("status") or "warn"), str(top.get("detail") or "repo fleet issue"), str(top.get("suggested_next_command") or command)))

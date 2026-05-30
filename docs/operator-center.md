@@ -115,6 +115,8 @@ Each action stores:
 
 `brigade repos actions dispatch plan/apply`, `dispatch --all-reviewed`, `reconcile`, and `context plan/build` connect those local fleet actions to each target repo's existing work import and context pack paths. Dispatch writes only gitignored target repo Brigade state, never promotes the import, never runs work, and never executes suggested commands. Reconciliation reads target repo imports, tasks, closeouts, release receipts, and operator reports, then updates local fleet action metadata.
 
-Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, fleet action queue, dispatch, and reconciliation health.
+`brigade repos release plan/build/list/show/compare/closeout/archive` creates local fleet release train bundles under `.brigade/repos/releases/`. Release trains aggregate per-repo readiness, candidates, fleet action reconciliation, verification, review, security, operator reports, and dirty-state counts into a manual-only publish plan. They classify repos as ready, blocked, needing review or dispatch, in progress, stale, missing a release candidate, or deferred. Compare and closeout keep the train reviewable without pushing, tagging, publishing, or mutating remotes.
+
+Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, fleet action queue, dispatch, reconciliation, and fleet release train health.
 
 The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, and `center actions build/start/done/defer/archive` write local gitignored center files.
