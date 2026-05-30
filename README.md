@@ -163,6 +163,7 @@ brigade release doctor
 brigade release run
 brigade release runs
 brigade release show <run-id>
+brigade release schema
 brigade release candidate plan
 brigade release candidate build
 brigade release candidate list
@@ -655,6 +656,7 @@ Release readiness commands:
 - `brigade release candidate plan` previews a local release candidate bundle.
 - `brigade release candidate build` writes a local bundle under `.brigade/release/candidates/`.
 - `brigade release candidate list`, `show`, and `archive` inspect or archive local candidate bundles.
+- `brigade release schema` prints a wrapper-friendly manifest for release readiness receipts, candidate evidence, fleet release trains, waivers, and manual release evidence records, plus checks for missing latest or referenced receipts.
 
 Release readiness is a local publish gate. It reviews latest work closeout, verification, code review closeout, scanner sweep state, security health, handoff draft health, content-guard results, git state, and docs/changelog/roadmap touch warnings. It never pushes, tags, creates releases, comments remotely, or mutates remotes.
 

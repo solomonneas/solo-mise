@@ -339,6 +339,10 @@ def test_release_cli(tmp_path, monkeypatch):
         seen.append(("show", kwargs))
         return 0
 
+    def fake_schema(**kwargs):
+        seen.append(("schema", kwargs))
+        return 0
+
     def fake_candidate_plan(**kwargs):
         seen.append(("candidate_plan", kwargs))
         return 0
@@ -364,6 +368,7 @@ def test_release_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(release_cmd, "run", fake_run)
     monkeypatch.setattr(release_cmd, "runs", fake_runs)
     monkeypatch.setattr(release_cmd, "show", fake_show)
+    monkeypatch.setattr(release_cmd, "schema", fake_schema)
     monkeypatch.setattr(release_cmd, "candidate_plan", fake_candidate_plan)
     monkeypatch.setattr(release_cmd, "candidate_build", fake_candidate_build)
     monkeypatch.setattr(release_cmd, "candidate_list", fake_candidate_list)
@@ -375,6 +380,7 @@ def test_release_cli(tmp_path, monkeypatch):
     assert cli.main(["release", "run", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
     assert cli.main(["release", "runs", "--target", str(tmp_path), "--limit", "3", "--json"]) == 0
     assert cli.main(["release", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    assert cli.main(["release", "schema", "--target", str(tmp_path), "--json"]) == 0
     assert cli.main(["release", "candidate", "plan", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
     assert cli.main(["release", "candidate", "build", "--target", str(tmp_path), "--base-ref", "main", "--json"]) == 0
     assert cli.main(["release", "candidate", "list", "--target", str(tmp_path), "--limit", "4", "--json"]) == 0
@@ -386,6 +392,7 @@ def test_release_cli(tmp_path, monkeypatch):
         ("run", {"target": tmp_path, "base_ref": "main", "json_output": True}),
         ("runs", {"target": tmp_path, "limit": 3, "json_output": True}),
         ("show", {"target": tmp_path, "run_id": "latest", "json_output": True}),
+        ("schema", {"target": tmp_path, "json_output": True}),
         ("candidate_plan", {"target": tmp_path, "base_ref": "main", "json_output": True}),
         ("candidate_build", {"target": tmp_path, "base_ref": "main", "json_output": True}),
         ("candidate_list", {"target": tmp_path, "limit": 4, "json_output": True}),
@@ -434,6 +441,56 @@ def test_release_candidate_plan_build_list_show_archive(tmp_path, monkeypatch, c
     archive = json.loads(capsys.readouterr().out)
     assert Path(archive["archive_path"], "EVIDENCE.json").is_file()
     assert not candidate_dir.exists()
+
+
+def test_release_schema_manifest_reports_contracts_and_latest_receipts(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch)
+    assert release_cmd.run(target=tmp_path, base_ref=None, json_output=True) == 0
+    release_receipt = json.loads(capsys.readouterr().out)
+    assert release_cmd.candidate_build(target=tmp_path, base_ref=None, json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+
+    assert release_cmd.schema(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    schema_ids = {item["id"] for item in payload["schemas"]}
+    assert {
+        "release-readiness-receipt",
+        "release-candidate-evidence",
+        "fleet-release-train-evidence",
+        "fleet-release-waiver",
+        "fleet-release-manual-evidence",
+    } <= schema_ids
+    checks = {check["name"]: check for check in payload["checks"]}
+    assert checks["release_readiness_latest"]["status"] == "ok"
+    assert checks["release_candidate_latest"]["status"] == "ok"
+    assert payload["latest"]["release_readiness"]["id"] == release_receipt["run_id"]
+    assert payload["latest"]["release_candidate"]["id"] == candidate["candidate_id"]
+
+    assert release_cmd.schema(target=tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "release schema manifest:" in out
+    assert "release-candidate-evidence" in out
+
+
+def test_release_schema_manifest_detects_missing_receipts(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch)
+    assert release_cmd.run(target=tmp_path, base_ref=None, json_output=True) == 0
+    capsys.readouterr()
+    assert release_cmd.candidate_build(target=tmp_path, base_ref=None, json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    shutil.rmtree(candidate["verification"]["path"])
+
+    assert release_cmd.schema(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    checks = {check["name"]: check for check in payload["checks"]}
+    assert checks["release_candidate_missing_verification"]["status"] == "warn"
+    assert payload["issue_count"] >= 1
 
 
 def test_release_candidate_notes_and_publish_plan(tmp_path, monkeypatch, capsys):

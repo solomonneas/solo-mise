@@ -134,6 +134,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_release_show.add_argument("run_id", help="Run id, unique prefix, or latest.")
     p_release_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_release_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_schema = release_sub.add_parser("schema", help="Show local release evidence schema manifest.")
+    p_release_schema.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_schema.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_release_candidate = release_sub.add_parser("candidate", help="Build and inspect local release candidate bundles.")
     release_candidate_sub = p_release_candidate.add_subparsers(dest="release_candidate_command", metavar="<candidate-command>")
     release_candidate_sub.required = True
@@ -1795,6 +1798,8 @@ def main(argv=None) -> int:
             return release_cmd.runs(target=args.target, limit=args.limit, json_output=args.json)
         if args.release_command == "show":
             return release_cmd.show(target=args.target, run_id=args.run_id, json_output=args.json)
+        if args.release_command == "schema":
+            return release_cmd.schema(target=args.target, json_output=args.json)
         if args.release_command == "candidate":
             if args.release_candidate_command == "plan":
                 return release_cmd.candidate_plan(target=args.target, base_ref=args.base_ref, json_output=args.json)

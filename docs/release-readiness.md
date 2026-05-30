@@ -10,6 +10,7 @@ brigade release doctor
 brigade release run
 brigade release runs
 brigade release show <run-id>
+brigade release schema
 brigade release candidate plan
 brigade release candidate build
 brigade release candidate list
@@ -32,6 +33,8 @@ brigade release candidate archive <candidate-id>
 `runs` and `show` inspect those receipts.
 
 `release candidate` commands turn readiness receipts into local candidate bundles under `.brigade/release/candidates/`. They do not push, tag, create releases, or mutate remotes. See [`release-candidates.md`](release-candidates.md).
+
+`brigade release schema` is read-only and emits the local release evidence schema manifest for wrappers. It documents the release readiness, candidate, fleet train, waiver, and manual evidence record shapes, then reports missing latest or referenced receipts.
 
 Use `brigade release candidate compare` before publishing from an older candidate. It reports changed HEAD, missing referenced receipts, newer local verification, review, scanner, or security evidence, and docs changed after candidate build. Use `brigade release candidate closeout` to mark a candidate draft, reviewed, superseded, or archived without moving the bundle.
 

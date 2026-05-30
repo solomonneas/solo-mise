@@ -42,6 +42,10 @@ Each candidate contains:
 
 These are warnings because candidate bundles are review artifacts. They do not replace release readiness checks, verification, code review closeout, or content guard.
 
+## Schema Manifest
+
+`brigade release schema` prints a read-only manifest for wrapper-facing release records. The manifest documents required and optional fields for release readiness receipts, release candidate evidence, fleet release train evidence, fleet release waivers, and manual fleet release evidence records. It also reports whether the latest local readiness receipt, candidate packet, and fleet train evidence exist, and it reuses candidate health checks for missing referenced receipts.
+
 Release readiness, candidate bundles, and candidate compare include operator report health so an operator can tell whether the local daily review packet is fresh and closed out before publishing manually.
 
 ## Fleet Release Trains

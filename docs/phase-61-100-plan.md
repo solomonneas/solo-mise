@@ -191,6 +191,8 @@ Goal: add a machine-readable schema manifest for release readiness, candidates, 
 
 Acceptance: tests cover schema manifest generation, missing receipt detection, and wrapper-friendly JSON.
 
+Status: implemented with `brigade release schema`, manifest entries for readiness receipts, candidate evidence, fleet trains, waivers, and manual evidence records, missing receipt checks, docs, and focused tests.
+
 ### Phase 87: Release Candidate Provenance Audit
 Goal: audit release candidate bundles for stale receipts, missing evidence, changed HEAD, changed docs, changed command contracts, and privacy boundaries.
 

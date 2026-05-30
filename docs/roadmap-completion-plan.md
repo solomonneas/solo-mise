@@ -682,6 +682,7 @@ Deliverable: turn all local evidence into a complete publish review packet, stil
 Implementation scope:
 
 - Extend release readiness and candidates to include roadmap audit, repo-fleet, project-consolidation state, context pack freshness, backup review, tool parity, security closeout, task acceptance rollup, and memory-care closeout.
+- Add a wrapper-friendly release evidence schema manifest. Status: implemented with `brigade release schema` for readiness receipts, candidates, fleet trains, waivers, and manual evidence records.
 - Add release candidate compare between latest candidate and current HEAD.
 - Add publish checklist templates for tag, push, GitHub release, package publish, and docs publish as manual-only steps.
 - Add release candidate closeout status: draft, reviewed, superseded, archived.
