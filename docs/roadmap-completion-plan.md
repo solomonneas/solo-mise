@@ -554,6 +554,7 @@ Implementation scope:
   - memory-care refresh candidates
 - Add `brigade learn plan` and `brigade learn doctor` as read-only summary commands.
 - Add `brigade learn import-issues` to route stale or blocked learning candidates into the scanner inbox.
+- Add `brigade learn closeout/closeouts/closeout-show` for accepted-risk, dismissed, archived, and deferred learning outcomes.
 - Add durable-memory inspired eval replay receipts for learning changes:
   - export a safe local learning scenario
   - replay after code or rule changes
@@ -570,6 +571,7 @@ Implementation scope:
 Acceptance:
 
 - Tests cover learning candidate aggregation from fixtures across scanners, review, security, tools, handoffs, and memory-care.
+- Tests cover source-aware learning closeout quieting and changed-fingerprint resurfacing across scanner, security, review, tool, handoff, memory-care, backup, and release candidates.
 - Tests cover safe eval replay receipts without private raw evidence.
 - Tests cover JSON output and inbox imports.
 - Tests cover dismissal and accepted-risk quieting.
@@ -578,6 +580,7 @@ Acceptance:
 Phase 36 status:
 
 - Implemented command surface: `brigade learn plan`, `brigade learn doctor`, and `brigade learn import-issues`.
+- Added `brigade learn closeout/closeouts/closeout-show` so accepted-risk, dismissed, archived, and deferred candidates are quieted until their source fingerprint changes.
 - Learning candidates aggregate from pending scanner imports, failed review receipts, and failed portable tool run receipts.
 - Added safe local replay receipt support for before/after summaries.
 - Deferred: rich accepted-risk quieting across every source subsystem. Reason: candidate import routing exists first, while source-specific closeout policies remain subsystem-owned.

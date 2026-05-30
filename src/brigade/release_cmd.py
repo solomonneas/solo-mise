@@ -431,8 +431,12 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         },
         "learning": {
             "candidate_count": learning_health.get("candidate_count"),
+            "raw_candidate_count": learning_health.get("raw_candidate_count"),
+            "quieted_candidate_count": learning_health.get("quieted_candidate_count"),
+            "changed_fingerprint_count": learning_health.get("changed_fingerprint_count"),
             "issue_count": learning_health.get("issue_count"),
             "top_issue": learning_health.get("top_issue"),
+            "latest_closeout": learning_health.get("latest_closeout"),
         },
         "repo_fleet": {
             "repo_count": repo_health.get("repo_count"),

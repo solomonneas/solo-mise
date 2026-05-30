@@ -12,7 +12,7 @@ from .prompt import prompt_for_selection  # imported here so tests can monkeypat
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    from . import projects_cmd, repos_cmd
+    from . import learn_cmd, projects_cmd, repos_cmd
 
     parser = argparse.ArgumentParser(
         prog="brigade",
@@ -1080,6 +1080,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_learn_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_learn_import.add_argument("--dry-run", action="store_true", help="Report without writing imports.")
     p_learn_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_learn_closeout = learn_sub.add_parser("closeout", help="Close out a learning candidate as accepted, dismissed, archived, or deferred.")
+    p_learn_closeout.add_argument("candidate_id", help="Learning candidate id.")
+    p_learn_closeout.add_argument("--subsystem", default=None, help="Disambiguate by subsystem.")
+    p_learn_closeout.add_argument("--status", choices=sorted(learn_cmd.LEARNING_CLOSEOUT_STATUSES), required=True, help="Closeout status.")
+    p_learn_closeout.add_argument("--reason", required=True, help="Review reason.")
+    p_learn_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_learn_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_learn_closeouts = learn_sub.add_parser("closeouts", help="List learning closeout receipts.")
+    p_learn_closeouts.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_learn_closeouts.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_learn_closeout_show = learn_sub.add_parser("closeout-show", help="Show a learning closeout receipt.")
+    p_learn_closeout_show.add_argument("closeout_id", help="Closeout id or latest.")
+    p_learn_closeout_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_learn_closeout_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     # center
     p_center = sub.add_parser("center", help="Read local operator-center summaries.")
@@ -2159,6 +2173,12 @@ def main(argv=None) -> int:
             return learn_cmd.doctor(target=args.target, json_output=args.json)
         if args.learn_command == "import-issues":
             return learn_cmd.import_issues(target=args.target, dry_run=args.dry_run, json_output=args.json)
+        if args.learn_command == "closeout":
+            return learn_cmd.closeout(target=args.target, candidate_id=args.candidate_id, subsystem=args.subsystem, status=args.status, reason=args.reason, json_output=args.json)
+        if args.learn_command == "closeouts":
+            return learn_cmd.closeouts(target=args.target, json_output=args.json)
+        if args.learn_command == "closeout-show":
+            return learn_cmd.closeout_show(target=args.target, closeout_id=args.closeout_id, json_output=args.json)
         parser.error(f"unknown learn command: {args.learn_command}")
         return 2
     if cmd == "center":

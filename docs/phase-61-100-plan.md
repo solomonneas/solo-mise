@@ -107,6 +107,8 @@ Goal: add source-aware quieting for learning candidates that become accepted ris
 
 Acceptance: tests cover scanner, security, review, tool, handoff, memory-care, backup, and release learning candidates.
 
+Status: implemented with `brigade learn closeout/closeouts/closeout-show`, source-aware candidate fingerprints, quieting for accepted-risk, dismissed, archived, and deferred outcomes, changed-fingerprint resurfacing, and import routing through active learning candidates only.
+
 ### Phase 75: Learning Replay Compare Receipts
 Goal: compare learning replay receipts before and after code, rule, or policy changes without editing memory or source automatically.
 

@@ -11,6 +11,17 @@ from . import work_cmd
 
 OK = "ok"
 WARN = "warn"
+LEARNING_CLOSEOUT_STATUSES = {"accepted-risk", "dismissed", "archived", "deferred"}
+LEARNING_IMPORT_SOURCES = {
+    "backup-health",
+    "code-review",
+    "handoff-ingest",
+    "memory-care",
+    "repo-fleet-release",
+    "scanner-health",
+    "security-scan",
+    "tool-catalog",
+}
 
 
 def _now() -> datetime:
@@ -23,6 +34,10 @@ def _learning_root(target: Path) -> Path:
 
 def _replays_root(target: Path) -> Path:
     return _learning_root(target) / "replays"
+
+
+def _closeouts_root(target: Path) -> Path:
+    return _learning_root(target) / "closeouts"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -39,7 +54,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _candidate(candidate_id: str, subsystem: str, status: str, summary: str, command: str, *, severity: str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
+    candidate = {
         "id": candidate_id,
         "subsystem": subsystem,
         "status": status,
@@ -48,6 +63,44 @@ def _candidate(candidate_id: str, subsystem: str, status: str, summary: str, com
         "suggested_next_command": command,
         "metadata": metadata or {},
     }
+    candidate["source_fingerprint"] = _candidate_fingerprint(candidate)
+    return candidate
+
+
+def _candidate_fingerprint(candidate: dict[str, Any]) -> str:
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    explicit = metadata.get("source_fingerprint")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    return work_cmd._stable_hash({"id": candidate.get("id"), "subsystem": candidate.get("subsystem"), "summary": candidate.get("safe_summary"), "status": candidate.get("status")})
+
+
+def _read_closeouts(target: Path) -> list[dict[str, Any]]:
+    root = _closeouts_root(target.expanduser().resolve())
+    receipts: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return receipts
+    for path in sorted(root.glob("*/closeout.json")):
+        payload = _read_json(path)
+        if payload is None:
+            continue
+        payload.setdefault("closeout_id", path.parent.name)
+        payload["path"] = str(path.parent)
+        receipts.append(payload)
+    return sorted(receipts, key=lambda item: str(item.get("created_at") or item.get("closeout_id") or ""), reverse=True)
+
+
+def _closeout_key(candidate: dict[str, Any]) -> str:
+    return f"{candidate.get('subsystem')}:{candidate.get('id')}"
+
+
+def _latest_closeout_by_candidate(target: Path) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for closeout in _read_closeouts(target):
+        key = str(closeout.get("candidate_key") or f"{closeout.get('subsystem')}:{closeout.get('candidate_id')}")
+        if key and key not in latest:
+            latest[key] = closeout
+    return latest
 
 
 def _import_learning_summary(item: dict[str, Any]) -> str:
@@ -61,15 +114,16 @@ def _import_learning_summary(item: dict[str, Any]) -> str:
     return f"{source} {kind} import requires review"
 
 
-def candidates(target: Path) -> list[dict[str, Any]]:
+def _raw_candidates(target: Path) -> list[dict[str, Any]]:
     target = target.expanduser().resolve()
     results: list[dict[str, Any]] = []
     for item in work_cmd._read_imports(target):
         if item.get("status", "pending") != "pending":
             continue
         source = str(item.get("source") or "manual")
-        if source in {"code-review", "security-scan", "memory-care", "backup-health", "scanner-health"}:
+        if source in LEARNING_IMPORT_SOURCES:
             import_id = str(item.get("id") or "")
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
             results.append(
                 _candidate(
                     import_id,
@@ -78,7 +132,7 @@ def candidates(target: Path) -> list[dict[str, Any]]:
                     _import_learning_summary(item),
                     f"brigade work import plan {import_id}",
                     severity=item.get("priority") if isinstance(item.get("priority"), str) else None,
-                    metadata={"import_id": import_id, "source": source},
+                    metadata={"import_id": import_id, "source": source, "source_fingerprint": metadata.get("source_fingerprint")},
                 )
             )
     for receipt in work_cmd._review_receipts(target):
@@ -95,9 +149,32 @@ def candidates(target: Path) -> list[dict[str, Any]]:
     return results
 
 
+def candidates(target: Path, *, include_quieted: bool = False) -> list[dict[str, Any]]:
+    target = target.expanduser().resolve()
+    closeout_by_candidate = _latest_closeout_by_candidate(target)
+    results: list[dict[str, Any]] = []
+    for item in _raw_candidates(target):
+        closeout = closeout_by_candidate.get(_closeout_key(item))
+        if closeout and closeout.get("source_fingerprint") == item.get("source_fingerprint") and closeout.get("status") in LEARNING_CLOSEOUT_STATUSES:
+            if include_quieted:
+                item = {**item, "quieted_by": closeout.get("closeout_id"), "closeout_status": closeout.get("status")}
+                results.append(item)
+            continue
+        if closeout and closeout.get("source_fingerprint") != item.get("source_fingerprint"):
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            item["metadata"] = {**metadata, "changed_closeout_id": closeout.get("closeout_id"), "previous_fingerprint": closeout.get("source_fingerprint")}
+            item["closeout_status"] = "changed-fingerprint"
+        results.append(item)
+    return results
+
+
 def plan_payload(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     items = candidates(target)
+    raw = _raw_candidates(target)
+    quieted = candidates(target, include_quieted=True)
+    quieted_count = len([item for item in quieted if item.get("quieted_by")])
+    changed_count = len([item for item in items if item.get("closeout_status") == "changed-fingerprint"])
     checks = [
         {
             "status": WARN if items else OK,
@@ -108,6 +185,9 @@ def plan_payload(target: Path) -> dict[str, Any]:
     return {
         "target": str(target),
         "candidate_count": len(items),
+        "raw_candidate_count": len(raw),
+        "quieted_candidate_count": quieted_count,
+        "changed_fingerprint_count": changed_count,
         "candidates": items,
         "checks": checks,
         "issues": [check for check in checks if check["status"] != OK],
@@ -144,7 +224,7 @@ def import_issues(*, target: Path, dry_run: bool = False, json_output: bool = Fa
     payload = plan_payload(target)
     records: list[dict[str, Any]] = []
     for item in payload["candidates"]:
-        fingerprint = work_cmd._stable_hash({"id": item["id"], "subsystem": item["subsystem"], "summary": item["safe_summary"]})
+        fingerprint = str(item.get("source_fingerprint") or work_cmd._stable_hash({"id": item["id"], "subsystem": item["subsystem"], "summary": item["safe_summary"]}))
         records.append(
             {
                 "text": f"Review learning candidate: {item['safe_summary']}",
@@ -178,6 +258,90 @@ def import_issues(*, target: Path, dry_run: bool = False, json_output: bool = Fa
     return 0
 
 
+def closeout(*, target: Path, candidate_id: str, status: str, reason: str, subsystem: str | None = None, json_output: bool = False) -> int:
+    if status not in LEARNING_CLOSEOUT_STATUSES:
+        print(f"error: status must be one of: {', '.join(sorted(LEARNING_CLOSEOUT_STATUSES))}", file=sys.stderr)
+        return 1
+    target = target.expanduser().resolve()
+    matches = [
+        item
+        for item in _raw_candidates(target)
+        if str(item.get("id") or "") == candidate_id and (subsystem is None or item.get("subsystem") == subsystem)
+    ]
+    if not matches:
+        print(f"error: learning candidate not found: {candidate_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: learning candidate id is ambiguous: {candidate_id}", file=sys.stderr)
+        return 1
+    candidate = matches[0]
+    closeout_id = f"{_now().strftime('%Y%m%d-%H%M%S-%f')}-learning-closeout"
+    payload = {
+        "target": str(target),
+        "closeout_id": closeout_id,
+        "candidate_id": candidate.get("id"),
+        "candidate_key": _closeout_key(candidate),
+        "subsystem": candidate.get("subsystem"),
+        "status": status,
+        "reason": reason,
+        "safe_summary": candidate.get("safe_summary"),
+        "source_fingerprint": candidate.get("source_fingerprint"),
+        "created_at": _now().isoformat(),
+        "manual_only": True,
+        "remote_mutation": False,
+        "receipt_fingerprint": work_cmd._stable_hash({"candidate_key": _closeout_key(candidate), "status": status, "reason": reason, "source_fingerprint": candidate.get("source_fingerprint")}),
+    }
+    root = _closeouts_root(target) / closeout_id
+    _write_json(root / "closeout.json", payload)
+    payload["path"] = str(root)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"learning_closeout: {closeout_id}")
+    print(f"candidate: {candidate.get('id')}")
+    print(f"subsystem: {candidate.get('subsystem')}")
+    print(f"status: {status}")
+    print(f"path: {root}")
+    return 0
+
+
+def closeouts(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    receipts = _read_closeouts(target)
+    payload = {"target": str(target), "closeouts": receipts, "closeout_count": len(receipts)}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"learning_closeouts: {target}")
+    print(f"closeouts: {len(receipts)}")
+    for receipt in receipts:
+        print(f"- {receipt.get('closeout_id')} status={receipt.get('status')} candidate={receipt.get('candidate_key')}")
+    return 0
+
+
+def closeout_show(*, target: Path, closeout_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    receipts = _read_closeouts(target)
+    if closeout_id == "latest":
+        matches = receipts[:1]
+    else:
+        matches = [receipt for receipt in receipts if str(receipt.get("closeout_id") or "").startswith(closeout_id)]
+    if not matches:
+        print(f"error: learning closeout not found: {closeout_id}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"error: learning closeout id is ambiguous: {closeout_id}", file=sys.stderr)
+        return 1
+    payload = {"target": str(target), "closeout": matches[0]}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"learning_closeout: {matches[0].get('closeout_id')}")
+    print(f"status: {matches[0].get('status')}")
+    print(f"candidate: {matches[0].get('candidate_key')}")
+    return 0
+
+
 def write_replay(target: Path, *, scenario_id: str, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     target = target.expanduser().resolve()
     replay_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-learning-replay-{scenario_id}"
@@ -198,7 +362,11 @@ def health(target: Path) -> dict[str, Any]:
     return {
         "target": payload["target"],
         "candidate_count": payload["candidate_count"],
+        "raw_candidate_count": payload["raw_candidate_count"],
+        "quieted_candidate_count": payload["quieted_candidate_count"],
+        "changed_fingerprint_count": payload["changed_fingerprint_count"],
         "issue_count": payload["issue_count"],
         "top_issue": payload["top_issue"],
         "candidates": payload["candidates"],
+        "latest_closeout": _read_closeouts(target)[0] if _read_closeouts(target) else None,
     }

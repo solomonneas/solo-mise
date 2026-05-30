@@ -60,6 +60,9 @@ Commands:
 brigade learn plan
 brigade learn doctor
 brigade learn import-issues
+brigade learn closeout <candidate-id> --status accepted-risk --reason "reviewed"
+brigade learn closeouts
+brigade learn closeout-show latest
 ```
 
 Every candidate should end in one reviewed path:
@@ -68,5 +71,7 @@ Every candidate should end in one reviewed path:
 - Memory Handoff draft
 - suppression or accepted risk
 - archive or dismissal
+
+Learning closeouts support `accepted-risk`, `dismissed`, `archived`, and `deferred`. Unchanged closed-out candidates stop making the learning queue noisy, while changed source fingerprints reappear in `learn plan`, `learn doctor`, and `learn import-issues`.
 
 Learning receipts store safe summaries only. Brigade does not edit canonical memory, source files, tool configs, or policies automatically.

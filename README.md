@@ -331,6 +331,9 @@ brigade projects import-issues
 brigade learn plan
 brigade learn doctor
 brigade learn import-issues
+brigade learn closeout <candidate-id>
+brigade learn closeouts
+brigade learn closeout-show <closeout-id|latest>
 brigade security closeout
 brigade center status
 brigade center activity

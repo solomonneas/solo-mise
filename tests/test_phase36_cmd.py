@@ -357,6 +357,87 @@ ownership_ready = true
     assert release["evidence"]["projects"]["closeout"]["quieted_count"] == 1
 
 
+def test_learning_closeouts_quiet_sources_and_changed_fingerprints(tmp_path, capsys):
+    imports = tmp_path / ".brigade" / "work" / "imports" / "inbox.jsonl"
+    imports.parent.mkdir(parents=True)
+    sources = [
+        "scanner-health",
+        "security-scan",
+        "code-review",
+        "tool-catalog",
+        "handoff-ingest",
+        "memory-care",
+        "backup-health",
+        "repo-fleet-release",
+    ]
+    records = []
+    for source in sources:
+        records.append(
+            {
+                "id": f"{source}-one",
+                "text": f"Review {source}",
+                "kind": "task",
+                "source": source,
+                "status": "pending",
+                "priority": "normal",
+                "metadata": {
+                    "safe_summary": f"{source} learning signal",
+                    "source_fingerprint": f"{source}-fp-one",
+                    "source_item_key": f"{source}:one",
+                },
+                "created_at": "2026-05-29T12:01:00+00:00",
+            }
+        )
+    imports.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
+
+    tool_receipt = tmp_path / ".brigade" / "tools" / "runs" / "tool-run-one" / "receipt.json"
+    _write_json(tool_receipt, {"run_id": "tool-run-one", "status": "failed", "safe_summary": "tool failed"})
+
+    assert learn_cmd.plan(target=tmp_path, json_output=True) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["candidate_count"] == 9
+    assert set(sources) <= {candidate["subsystem"] for candidate in plan["candidates"]}
+    assert any(candidate["subsystem"] == "tool-run" for candidate in plan["candidates"])
+
+    status_by_id = {
+        "scanner-health-one": "accepted-risk",
+        "security-scan-one": "dismissed",
+        "code-review-one": "archived",
+        "tool-catalog-one": "deferred",
+    }
+    for candidate_id, status in status_by_id.items():
+        assert learn_cmd.closeout(target=tmp_path, candidate_id=candidate_id, status=status, reason="reviewed", json_output=True) == 0
+        closeout = json.loads(capsys.readouterr().out)
+        assert closeout["status"] == status
+        assert closeout["remote_mutation"] is False
+    assert cli.main(["learn", "closeouts", "--target", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["closeout_count"] == 4
+    assert cli.main(["learn", "closeout-show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["closeout"]["status"] in set(status_by_id.values())
+
+    assert learn_cmd.plan(target=tmp_path, json_output=True) == 0
+    quieted = json.loads(capsys.readouterr().out)
+    assert quieted["candidate_count"] == 5
+    assert quieted["quieted_candidate_count"] == 4
+    assert learn_cmd.import_issues(target=tmp_path, dry_run=True, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["created"] == 5
+
+    records[0]["metadata"]["source_fingerprint"] = "scanner-health-fp-two"
+    imports.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
+    assert learn_cmd.plan(target=tmp_path, json_output=True) == 0
+    changed = json.loads(capsys.readouterr().out)
+    assert changed["candidate_count"] == 6
+    assert changed["changed_fingerprint_count"] == 1
+    scanner = next(candidate for candidate in changed["candidates"] if candidate["id"] == "scanner-health-one")
+    assert scanner["closeout_status"] == "changed-fingerprint"
+    assert learn_cmd.import_issues(target=tmp_path, dry_run=True, json_output=True) == 0
+    assert json.loads(capsys.readouterr().out)["created"] == 6
+    assert release_cmd.plan(target=tmp_path, base_ref=None, json_output=True) in {0, 1}
+    release = json.loads(capsys.readouterr().out)
+    assert release["evidence"]["learning"]["quieted_candidate_count"] == 3
+    assert release["evidence"]["learning"]["changed_fingerprint_count"] == 1
+
+
 def test_tool_pack_and_sync_plan(tmp_path, capsys):
     assert tools_cmd.init(target=tmp_path, update_gitignore=False) == 0
     capsys.readouterr()
