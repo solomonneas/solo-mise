@@ -135,6 +135,7 @@ Implementation scope:
 - Add `brigade repos sweep plan/run/runs/show/closeout`.
 - Add `brigade repos report plan/build/list/show/archive/closeout`.
 - Add `brigade repos actions plan/build/list/show/start/done/defer/archive`.
+- Add `brigade repos actions dispatch plan/apply`, `dispatch --all-reviewed`, `reconcile`, and `context plan/build`.
 - Discover repos under configured roots such as `~/repos`.
 - Record safe repo metadata only: repo path label, branch, dirty counts, presence of `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`, README, CHANGELOG, test hints, handoff inboxes, publish-guard hooks, Brigade config, latest release readiness receipt, latest release candidate, and latest work closeout.
 - Record safe per-repo Brigade state for local rollups: latest operator report, action queue health, pending task and import counts, review finding counts, handoff draft counts, security issue counts, scanner sweep status, release readiness, release candidates, work closeouts, and dirty tracked counts.
@@ -150,6 +151,7 @@ Implementation scope:
   - missing Brigade bootstrap where opted in
 - Import issues into the scanner inbox as `source: repo-fleet`.
 - Refresh safe local evidence explicitly through fleet sweeps that run configured read/report commands, write local receipts, and feed reports and action queues without cloning, fixing, promoting, or mutating remotes.
+- Route reviewed fleet actions into target repo work imports and reconcile target repo progress back into the fleet queue without automatic promotion, work execution, fixes, cloning, or remote mutation.
 
 Acceptance:
 
@@ -159,6 +161,7 @@ Acceptance:
 - Tests cover repo-fleet imports, dedupe, and dismissed-until-changed behavior.
 - Tests cover fleet sweep plan/run/runs/show/closeout text and JSON, filtering, stale-only selection, failed-repo isolation, safe log labels, and daily-loop integration.
 - Tests cover fleet report plan/build/list/show/archive and fleet action plan/build/list/show/start/done/defer/archive text and JSON.
+- Tests cover fleet action dispatch, idempotency, dismissed-until-changed behavior, changed-fingerprint superseding, action context packs, reconciliation states, and daily-loop integration.
 - Tests prove private repo names, owner names, org names, local paths, and raw evidence are not copied into public docs, fixtures, imports, handoffs, release evidence, or committed diffs.
 
 Phase 35 status:
@@ -180,6 +183,13 @@ Phase 41 status:
 - Implemented command surface: `brigade repos sweep plan/run/runs/show/closeout`.
 - Fleet sweeps run explicit local read/report commands in configured repos, write gitignored receipts under `.brigade/repos/sweeps/`, store raw logs locally, and expose safe repo ids, labels, command labels, status counts, log labels, and receipt labels only.
 - Fleet reports, center status, center reviews, work brief, work doctor, and release doctor surface stale, failed, or unclosed fleet sweep health.
+
+Phase 42 status:
+
+- Implemented command surface: `brigade repos actions dispatch plan/apply`, `dispatch --all-reviewed`, `reconcile`, and `context plan/build`.
+- Reviewed fleet actions can be dispatched into target repo `repo-fleet` work imports with acceptance criteria, source fingerprints, and fleet provenance. Dispatch is idempotent, respects dismissed imports until material change, and supersedes older dispatch imports when the source fingerprint changes.
+- Action-scoped context packs are written in the target repo under `.brigade/context/packs/` with safe summaries, guidance presence, receipt labels, dispatch state, and explicit private-evidence exclusions.
+- Reconciliation reads target repo imports, tasks, work closeouts, release readiness, and operator reports, then records `dispatched`, `in-progress`, `completed`, `dismissed`, `superseded`, `stale`, or `broken-reference` state on the fleet action.
 
 ### 3. Inspiration Pattern Registry
 

@@ -30,6 +30,12 @@ brigade repos actions start <fleet-action-id>
 brigade repos actions done <fleet-action-id>
 brigade repos actions defer <fleet-action-id> --reason "not today"
 brigade repos actions archive --completed
+brigade repos actions dispatch plan <fleet-action-id>
+brigade repos actions dispatch apply <fleet-action-id>
+brigade repos actions dispatch --all-reviewed
+brigade repos actions reconcile [fleet-action-id]
+brigade repos actions context plan <fleet-action-id>
+brigade repos actions context build <fleet-action-id>
 ```
 
 Fleet reports are written under:
@@ -69,11 +75,20 @@ Sweep filters include `--repo <repo-id>`, `--all`, `--stale-only`, `--include-di
 
 `brigade repos actions build` requires the source fleet report to be closed out as `reviewed` or `deferred` unless `--allow-unreviewed` is passed. Repeated builds dedupe by repo id, report fingerprint, and source item fingerprint, including archived actions from the same report.
 
+`brigade repos actions dispatch` bridges fleet-level review into the target repo's local work loop. `dispatch plan` previews the task import that would be written. `dispatch apply` writes a `source: repo-fleet` task import into the target repo's existing `.brigade/work/imports/inbox.jsonl`, with acceptance criteria and fleet provenance. `dispatch --all-reviewed` applies the same path to reviewed pending or active actions. `--dry-run` writes nothing.
+
+Dispatch is idempotent by fleet action id and source fingerprint. Repeated dispatch of the same action skips equivalent pending or promoted imports. Dismissed target imports stay dismissed until the source fingerprint changes. When the fingerprint changes, Brigade creates a new target import and marks prior dispatch imports superseded.
+
+`brigade repos actions context plan/build` creates an action-scoped context pack in the target repo under `.brigade/context/packs/`. These packs include safe action summary, acceptance criteria, guidance presence, local receipt labels, and explicit private-evidence exclusions. They do not copy raw guidance contents, raw logs, raw scanner output, private paths, exact private repo names, owner names, org names, hostnames, or secrets.
+
+`brigade repos actions reconcile` reads target repo work imports, promoted tasks, completed tasks, closeouts, release readiness receipts, and operator reports, then updates local fleet action metadata. Reconciliation states include `dispatched`, `in-progress`, `completed`, `dismissed`, `superseded`, `stale`, and `broken-reference`. Completed target tasks mark the fleet action done. Repo fleet health also warns when safe target evidence changes after dispatch. No suggested command is executed.
+
 Privacy boundaries:
 
 - No cloning.
 - No remote mutation.
 - No automatic action execution.
 - No automatic promotion or dismissal.
+- No automatic target task promotion, work run, or code fix.
 - No exact private repo names, owner names, org names, hostnames, local paths, raw logs, scanner output, private config contents, secrets, or raw evidence in public files.
 - Gitignored local config may store local paths and safe labels.

@@ -113,6 +113,8 @@ Each action stores:
 
 `brigade repos actions plan/build/list/show/start/done/defer/archive` turns a reviewed or deferred fleet report into a local fleet action queue under `.brigade/repos/actions/`. Fleet actions are metadata records only. They point to the safe repo label, source subsystem, source local id, safe summary, and suggested command, but do not execute the command.
 
-Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, and fleet action queue health.
+`brigade repos actions dispatch plan/apply`, `dispatch --all-reviewed`, `reconcile`, and `context plan/build` connect those local fleet actions to each target repo's existing work import and context pack paths. Dispatch writes only gitignored target repo Brigade state, never promotes the import, never runs work, and never executes suggested commands. Reconciliation reads target repo imports, tasks, closeouts, release receipts, and operator reports, then updates local fleet action metadata.
+
+Center status, center reviews, work brief, work doctor, release doctor, and release evidence include fleet sweep, fleet report, fleet action queue, dispatch, and reconciliation health.
 
 The operator center never invokes scanners, tools, reviewers, handoff ingestion, release publishing, git commands that mutate state, or remote APIs. Only `center report build`, `center report archive`, and `center actions build/start/done/defer/archive` write local gitignored center files.

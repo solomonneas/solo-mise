@@ -263,6 +263,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_repos_actions_archive.add_argument("--completed", action="store_true", required=True, help="Archive completed actions.")
     p_repos_actions_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_repos_actions_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_dispatch = repos_actions_sub.add_parser("dispatch", help="Dispatch reviewed fleet actions into target repo work imports.")
+    p_repos_actions_dispatch.add_argument("dispatch_args", nargs="*", help="Use `plan <action-id>` or `apply <action-id>`. Omit with --all-reviewed.")
+    p_repos_actions_dispatch.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_actions_dispatch.add_argument("--all-reviewed", action="store_true", help="Dispatch all reviewed pending or active fleet actions.")
+    p_repos_actions_dispatch.add_argument("--include-deferred", action="store_true", help="Allow dispatching deferred actions.")
+    p_repos_actions_dispatch.add_argument("--dry-run", action="store_true", help="Plan without writing target imports or action metadata.")
+    p_repos_actions_dispatch.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_reconcile = repos_actions_sub.add_parser("reconcile", help="Reconcile fleet actions against target repo evidence.")
+    p_repos_actions_reconcile.add_argument("action_id", nargs="?", default=None, help="Fleet action id or unique prefix. Defaults to all actions.")
+    p_repos_actions_reconcile.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_repos_actions_reconcile.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_repos_actions_context = repos_actions_sub.add_parser("context", help="Plan or build a target repo context pack for one fleet action.")
+    p_repos_actions_context.add_argument("context_command", choices=["plan", "build"], help="Plan or build the context pack.")
+    p_repos_actions_context.add_argument("action_id", help="Fleet action id or unique prefix.")
+    p_repos_actions_context.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_repos_actions_context.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_repos_sweep = repos_sub.add_parser("sweep", help="Plan, run, and close out explicit repo fleet evidence sweeps.")
     repos_sweep_sub = p_repos_sweep.add_subparsers(dest="repos_sweep_command", metavar="<repos-sweep-command>")
     repos_sweep_sub.required = True
@@ -1625,6 +1641,38 @@ def main(argv=None) -> int:
                 return repos_cmd.actions_defer(target=args.target, action_id=args.action_id, reason=args.reason, json_output=args.json)
             if args.repos_actions_command == "archive":
                 return repos_cmd.actions_archive_completed(target=args.target, json_output=args.json)
+            if args.repos_actions_command == "dispatch":
+                dispatch_args = list(args.dispatch_args or [])
+                dispatch_mode = "apply"
+                action_id = None
+                if dispatch_args and dispatch_args[0] in {"plan", "apply"}:
+                    dispatch_mode = dispatch_args.pop(0)
+                if dispatch_args:
+                    action_id = dispatch_args.pop(0)
+                if dispatch_args:
+                    parser.error("too many repos actions dispatch arguments")
+                if dispatch_mode == "plan":
+                    return repos_cmd.actions_dispatch_plan(
+                        target=args.target,
+                        action_id=action_id,
+                        all_reviewed=args.all_reviewed,
+                        include_deferred=args.include_deferred,
+                        json_output=args.json,
+                    )
+                return repos_cmd.actions_dispatch_apply(
+                    target=args.target,
+                    action_id=action_id,
+                    all_reviewed=args.all_reviewed,
+                    include_deferred=args.include_deferred,
+                    dry_run=args.dry_run,
+                    json_output=args.json,
+                )
+            if args.repos_actions_command == "reconcile":
+                return repos_cmd.actions_reconcile(target=args.target, action_id=args.action_id, json_output=args.json)
+            if args.repos_actions_command == "context":
+                if args.context_command == "plan":
+                    return repos_cmd.actions_context_plan(target=args.target, action_id=args.action_id, json_output=args.json)
+                return repos_cmd.actions_context_build(target=args.target, action_id=args.action_id, json_output=args.json)
             parser.error(f"unknown repos actions command: {args.repos_actions_command}")
             return 2
         if args.repos_command == "sweep":

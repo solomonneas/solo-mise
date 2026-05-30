@@ -23,6 +23,7 @@ FAIL = "fail"
 CONFIG_REL_PATH = ".brigade/repos.toml"
 REPORT_STALE_HOURS = 24
 ACTION_STATUSES = {"pending", "active", "done", "deferred", "archived"}
+DISPATCH_STALE_HOURS = 24
 
 
 @dataclass(frozen=True)
@@ -1330,6 +1331,550 @@ def _read_action_archive(target: Path) -> list[dict[str, Any]]:
     return _read_jsonl(_actions_archive_path(target))
 
 
+def _action_target_entry(target: Path, action: dict[str, Any]) -> tuple[RepoEntry | None, str | None]:
+    repo_id = str(action.get("repo_id") or "")
+    entries, errors, config_loaded = _load_config(target)
+    if not config_loaded:
+        return None, "repo fleet config is missing"
+    if errors:
+        return None, "; ".join(_safe_text(error, target, "repo-fleet", "repo fleet") for error in errors)
+    for entry in entries:
+        if entry.repo_id == repo_id:
+            if not entry.path.is_dir():
+                return None, f"target repo is not reachable: {repo_id}"
+            return entry, None
+    return None, f"repo not found: {repo_id}"
+
+
+def _action_acceptance(action: dict[str, Any]) -> list[str]:
+    summary = str(action.get("safe_summary") or "repo fleet action")
+    return [
+        "The target repo issue is resolved or explicitly deferred with rationale.",
+        "Relevant local verification, review, or closeout evidence is captured in the target repo when applicable.",
+        "No private repo names, paths, raw logs, scanner output, secrets, or guidance file contents are copied into public artifacts.",
+        f"Fleet action remains traceable from {action.get('fleet_action_id')}: {work_cmd._short(summary, 120)}",
+    ]
+
+
+def _action_task_fields(action: dict[str, Any]) -> tuple[str, str, str]:
+    subsystem = str(action.get("source_subsystem") or "")
+    if subsystem in {"security", "security-scan"}:
+        return "security", "high", "security-follow-up"
+    if subsystem in {"code-review", "review-finding"}:
+        return "bug", "high", "bugfix"
+    if subsystem in {"handoff", "memory-care", "context"}:
+        return "docs", "normal", "docs"
+    return "docs", "normal", "docs"
+
+
+def _action_import_record(action: dict[str, Any]) -> dict[str, Any]:
+    task_type, priority, template = _action_task_fields(action)
+    action_id = str(action.get("fleet_action_id") or "fleet-action")
+    source_fingerprint = str(action.get("source_fingerprint") or _fingerprint_payload(action))
+    metadata = {
+        "fleet_action_id": action_id,
+        "source_item_key": action_id,
+        "repo_id": action.get("repo_id"),
+        "repo_label": action.get("repo_label"),
+        "source_report_id": action.get("source_report_id"),
+        "source_report_fingerprint": action.get("source_report_fingerprint"),
+        "source_sweep_id": action.get("source_sweep_id"),
+        "source_subsystem": action.get("source_subsystem"),
+        "source_local_id": action.get("source_local_id"),
+        "source_fingerprint": source_fingerprint,
+        "suggested_command": action.get("suggested_command"),
+        "safe_summary": action.get("safe_summary"),
+    }
+    metadata = {key: value for key, value in metadata.items() if value not in (None, "")}
+    return {
+        "text": f"Resolve repo fleet action {action_id}: {work_cmd._short(str(action.get('safe_summary') or action_id), 180)}",
+        "kind": "task",
+        "source": "repo-fleet",
+        "type": task_type,
+        "priority": priority,
+        "template": template,
+        "acceptance": _action_acceptance(action),
+        "metadata": metadata,
+    }
+
+
+def _target_imports_for_action(repo_path: Path, action: dict[str, Any]) -> list[dict[str, Any]]:
+    action_id = str(action.get("fleet_action_id") or "")
+    matches: list[dict[str, Any]] = []
+    for item in work_cmd._read_imports(repo_path):
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if metadata.get("fleet_action_id") == action_id:
+            matches.append(item)
+    matches.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or item.get("id") or ""), reverse=True)
+    return matches
+
+
+def _supersede_prior_dispatch_imports(repo_path: Path, action: dict[str, Any], current_import_ids: set[str]) -> list[str]:
+    source_fingerprint = str(action.get("source_fingerprint") or _fingerprint_payload(action))
+    imports = work_cmd._read_imports(repo_path)
+    superseded: list[str] = []
+    changed = False
+    now = _now().isoformat()
+    for item in imports:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if metadata.get("fleet_action_id") != action.get("fleet_action_id"):
+            continue
+        if item.get("id") in current_import_ids:
+            continue
+        if metadata.get("source_fingerprint") == source_fingerprint:
+            continue
+        if item.get("status") == "superseded":
+            continue
+        item["status"] = "superseded"
+        item["updated_at"] = now
+        item["superseded_at"] = now
+        item["superseded_by"] = sorted(current_import_ids)[0] if current_import_ids else None
+        superseded.append(str(item.get("id")))
+        changed = True
+    if changed:
+        work_cmd._write_imports(repo_path, imports)
+    return superseded
+
+
+def _dispatch_state(action: dict[str, Any], repo_path: Path | None = None) -> dict[str, Any]:
+    dispatch = action.get("dispatch") if isinstance(action.get("dispatch"), dict) else {}
+    return {
+        "status": action.get("resolution_status") or dispatch.get("status"),
+        "target_import_id": dispatch.get("target_import_id") or action.get("target_import_id"),
+        "target_task_id": dispatch.get("target_task_id") or action.get("target_task_id"),
+        "dispatched_at": dispatch.get("dispatched_at"),
+        "reconciled_at": action.get("reconciled_at"),
+        "repo_label": action.get("repo_label"),
+        "repo_id": action.get("repo_id"),
+        "repo_path_label": f"{action.get('repo_id')}:.brigade",
+    }
+
+
+def _actions_for_dispatch(target: Path, *, action_id: str | None = None, all_reviewed: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    actions = _read_actions(target)
+    if action_id:
+        matches = [action for action in actions if str(action.get("fleet_action_id") or "").startswith(action_id)]
+        if not matches:
+            return actions, [], f"fleet action not found: {action_id}"
+        if len(matches) > 1:
+            return actions, [], f"fleet action id is ambiguous: {action_id}"
+        return actions, [matches[0]], None
+    if all_reviewed:
+        selected = [
+            action
+            for action in actions
+            if action.get("reviewed_at") and action.get("status") in {"pending", "active"}
+        ]
+        return actions, selected, None
+    return actions, [], "fleet action id is required unless --all-reviewed is passed"
+
+
+def _dispatch_plan_for_action(target: Path, action: dict[str, Any], *, include_deferred: bool = False) -> dict[str, Any]:
+    entry, error = _action_target_entry(target, action)
+    blockers: list[str] = []
+    if error:
+        blockers.append(error)
+    status = str(action.get("status") or "")
+    if status == "deferred" and not include_deferred:
+        blockers.append("deferred actions require --include-deferred")
+    elif status not in {"reviewed", "pending", "active", "deferred"}:
+        blockers.append(f"action status is not dispatchable: {status or 'unknown'}")
+    record = _action_import_record(action)
+    if entry is not None:
+        record["text"] = _safe_text(record.get("text"), entry.path, entry.repo_id, entry.label)
+        record["acceptance"] = [_safe_text(item, entry.path, entry.repo_id, entry.label) for item in record.get("acceptance", [])]
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        for key in ("safe_summary", "suggested_command"):
+            if key in metadata:
+                metadata[key] = _safe_text(metadata[key], entry.path, entry.repo_id, entry.label)
+    existing_imports = _target_imports_for_action(entry.path, action) if entry is not None else []
+    same_fingerprint = []
+    changed_fingerprint = []
+    dismissed_same_fingerprint = []
+    wanted_fingerprint = record["metadata"].get("source_fingerprint")
+    for item in existing_imports:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if metadata.get("source_fingerprint") == wanted_fingerprint:
+            if item.get("status") == "dismissed":
+                dismissed_same_fingerprint.append(item.get("id"))
+            else:
+                same_fingerprint.append(item.get("id"))
+        else:
+            changed_fingerprint.append(item.get("id"))
+    return {
+        "fleet_action_id": action.get("fleet_action_id"),
+        "repo_id": action.get("repo_id"),
+        "repo_label": action.get("repo_label"),
+        "target_repo_label": action.get("repo_label"),
+        "target_repo_id": action.get("repo_id"),
+        "target_inbox_label": f"{action.get('repo_id')}:.brigade/work/imports/inbox.jsonl",
+        "action_status": action.get("status"),
+        "dispatchable": not blockers,
+        "blockers": blockers,
+        "record": record,
+        "existing_same_fingerprint_import_ids": same_fingerprint,
+        "existing_changed_fingerprint_import_ids": changed_fingerprint,
+        "dismissed_same_fingerprint_import_ids": dismissed_same_fingerprint,
+        "suggested_next_command": f"brigade work import plan <import-id>",
+    }
+
+
+def actions_dispatch_plan(
+    *,
+    target: Path,
+    action_id: str | None = None,
+    all_reviewed: bool = False,
+    include_deferred: bool = False,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    _, selected, error = _actions_for_dispatch(target, action_id=action_id, all_reviewed=all_reviewed)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if "not found" in error else 2
+    plans = [_dispatch_plan_for_action(target, action, include_deferred=include_deferred) for action in selected]
+    payload = {"target": str(target), "plans": plans, "plan_count": len(plans), "blocker_count": sum(len(plan["blockers"]) for plan in plans)}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["blocker_count"] == 0 else 2
+    print("repo fleet action dispatch plan")
+    print(f"actions: {len(plans)}")
+    for plan in plans:
+        print(f"- {plan.get('fleet_action_id')} {plan.get('repo_id')} dispatchable={plan.get('dispatchable')}")
+    return 0 if payload["blocker_count"] == 0 else 2
+
+
+def actions_dispatch_apply(
+    *,
+    target: Path,
+    action_id: str | None = None,
+    all_reviewed: bool = False,
+    include_deferred: bool = False,
+    dry_run: bool = False,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    actions, selected, error = _actions_for_dispatch(target, action_id=action_id, all_reviewed=all_reviewed)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if "not found" in error else 2
+    results: list[dict[str, Any]] = []
+    now = _now().isoformat()
+    changed = False
+    for action in selected:
+        plan = _dispatch_plan_for_action(target, action, include_deferred=include_deferred)
+        if plan["blockers"]:
+            results.append({"fleet_action_id": action.get("fleet_action_id"), "status": "blocked", "blockers": plan["blockers"]})
+            continue
+        entry, _ = _action_target_entry(target, action)
+        assert entry is not None
+        imported, skipped, skipped_dismissed = work_cmd._append_import_records(entry.path, [plan["record"]], dry_run=dry_run)
+        imported_ids = {str(item.get("id")) for item in imported if item.get("id")}
+        skipped_ids = {str(item_id) for item_id in plan.get("existing_same_fingerprint_import_ids", []) if item_id}
+        dismissed_ids = {str(item_id) for item_id in plan.get("dismissed_same_fingerprint_import_ids", []) if item_id}
+        superseded_ids = [] if dry_run else _supersede_prior_dispatch_imports(entry.path, action, imported_ids)
+        target_import_id = next(iter(imported_ids or skipped_ids or dismissed_ids), None)
+        status = "dry-run" if dry_run else ("created" if imported else ("dismissed" if skipped_dismissed else "skipped"))
+        if not dry_run:
+            action["dispatch"] = {
+                "status": "dispatched" if imported or skipped else "dismissed" if skipped_dismissed else "dispatched",
+                "target_import_id": target_import_id,
+                "target_inbox_label": f"{action.get('repo_id')}:.brigade/work/imports/inbox.jsonl",
+                "dispatched_at": now,
+                "source_fingerprint": action.get("source_fingerprint"),
+                "superseded_import_ids": superseded_ids,
+                "target_evidence_fingerprint": _fingerprint_payload(_latest_safe_receipts(entry.path, entry.repo_id, entry.label)),
+            }
+            action["resolution_status"] = "dispatched" if imported or skipped else "dismissed" if skipped_dismissed else "dispatched"
+            action["updated_at"] = now
+            changed = True
+        results.append(
+            {
+                "fleet_action_id": action.get("fleet_action_id"),
+                "repo_id": action.get("repo_id"),
+                "repo_label": action.get("repo_label"),
+                "status": status,
+                "imported_count": len(imported),
+                "skipped_count": len(skipped),
+                "dismissed_count": len(skipped_dismissed),
+                "target_import_id": target_import_id,
+                "superseded_import_ids": superseded_ids,
+            }
+        )
+    if changed:
+        _write_actions(target, actions)
+    payload = {
+        "target": str(target),
+        "dry_run": dry_run,
+        "result_count": len(results),
+        "created_count": sum(1 for item in results if item.get("status") == "created"),
+        "skipped_count": sum(1 for item in results if item.get("status") == "skipped"),
+        "dismissed_count": sum(1 for item in results if item.get("status") == "dismissed"),
+        "blocked_count": sum(1 for item in results if item.get("status") == "blocked"),
+        "results": results,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["blocked_count"] == 0 else 2
+    print("repo fleet action dispatch apply")
+    print(f"results: {len(results)}")
+    print(f"created: {payload['created_count']}")
+    print(f"blocked: {payload['blocked_count']}")
+    return 0 if payload["blocked_count"] == 0 else 2
+
+
+def _latest_safe_receipts(repo_path: Path, repo_id: str, label: str) -> list[dict[str, Any]]:
+    receipts: list[dict[str, Any]] = []
+    for root, filename, kind in (
+        (repo_path / ".brigade" / "center" / "reports", "CENTER_EVIDENCE.json", "operator-report"),
+        (repo_path / ".brigade" / "work" / "closeouts", "closeout.json", "work-closeout"),
+        (repo_path / ".brigade" / "release" / "runs", "release.json", "release-readiness"),
+    ):
+        receipt = _safe_receipt(_latest_json(root, filename), repo_id, label)
+        if receipt:
+            receipt["kind"] = kind
+            receipts.append(receipt)
+    return receipts
+
+
+def _action_context_payload(target: Path, action: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    entry, error = _action_target_entry(target, action)
+    if error or entry is None:
+        return None, error
+    guidance = {
+        "has_agents": (entry.path / "AGENTS.md").is_file(),
+        "has_claude": (entry.path / "CLAUDE.md").is_file() or (entry.path / ".claude" / "CLAUDE.md").is_file(),
+        "source_labels": [
+            name
+            for name in ("AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md")
+            if (entry.path / name).is_file()
+        ],
+    }
+    payload = {
+        "kind": "repo-fleet-action",
+        "fleet_action_id": action.get("fleet_action_id"),
+        "repo_id": action.get("repo_id"),
+        "repo_label": action.get("repo_label"),
+        "safe_summary": _safe_text(action.get("safe_summary"), entry.path, entry.repo_id, entry.label),
+        "suggested_command": _safe_text(action.get("suggested_command"), entry.path, entry.repo_id, entry.label),
+        "acceptance": [_safe_text(item, entry.path, entry.repo_id, entry.label) for item in _action_acceptance(action)],
+        "guidance_presence": guidance,
+        "latest_receipts": _latest_safe_receipts(entry.path, entry.repo_id, entry.label),
+        "dispatch": _dispatch_state(action, entry.path),
+        "excluded_private_evidence": [
+            "raw guidance file contents",
+            "raw scanner output",
+            "raw local logs",
+            "private absolute paths",
+            "exact private repo names",
+            "owner names and organization names",
+            "hostnames and secrets",
+        ],
+        "source_references": [
+            {"label": f"{entry.repo_id}:AGENTS.md", "exists": guidance["has_agents"]},
+            {"label": f"{entry.repo_id}:.brigade/work/imports/inbox.jsonl", "exists": work_cmd._imports_path(entry.path).is_file()},
+        ],
+        "checks": [{"status": OK, "name": "repo_fleet_action_context", "detail": "ready"}],
+    }
+    return payload, None
+
+
+def actions_context_plan(*, target: Path, action_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _, action, error = _find_action(target, action_id)
+    if action is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if error and "not found" in error else 2
+    payload, context_error = _action_context_payload(target, action)
+    if context_error or payload is None:
+        print(f"error: {context_error}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"repo fleet action context plan: {payload.get('fleet_action_id')}")
+    print(f"repo: {payload.get('repo_id')} {payload.get('repo_label')}")
+    print("writes: 0")
+    return 0
+
+
+def actions_context_build(*, target: Path, action_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    actions, action, error = _find_action(target, action_id)
+    if action is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1 if error and "not found" in error else 2
+    entry, entry_error = _action_target_entry(target, action)
+    payload, context_error = _action_context_payload(target, action)
+    if entry_error or context_error or entry is None or payload is None:
+        print(f"error: {entry_error or context_error}", file=sys.stderr)
+        return 2
+    now = _now()
+    pack_id = f"{now.strftime('%Y%m%d-%H%M%S')}-fleet-action-context-{uuid4().hex[:6]}"
+    payload.update({"pack_id": pack_id, "status": "built", "created_at": now.isoformat(), "path_label": f"{entry.repo_id}:.brigade/context/packs/{pack_id}"})
+    pack_dir = entry.path / ".brigade" / "context" / "packs" / pack_id
+    _write_json(pack_dir / "context.json", payload)
+    markdown = [
+        f"# Fleet Action Context {pack_id}",
+        "",
+        f"- repo: {payload.get('repo_id')} {payload.get('repo_label')}",
+        f"- action: {payload.get('fleet_action_id')}",
+        f"- summary: {payload.get('safe_summary')}",
+        "",
+        "## Acceptance",
+        *[f"- {item}" for item in payload["acceptance"]],
+        "",
+        "## Excluded Private Evidence",
+        *[f"- {item}" for item in payload["excluded_private_evidence"]],
+        "",
+    ]
+    (pack_dir / "CONTEXT.md").write_text("\n".join(markdown))
+    action["context_pack"] = {"pack_id": pack_id, "path_label": payload["path_label"], "created_at": payload["created_at"]}
+    action["updated_at"] = payload["created_at"]
+    _write_actions(target, actions)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"repo fleet action context: {pack_id}")
+    print(f"path_label: {payload['path_label']}")
+    return 0
+
+
+def _task_by_id(repo_path: Path, task_id: str | None) -> dict[str, Any] | None:
+    if not task_id:
+        return None
+    for task in work_cmd._read_task_ledger(repo_path).get("tasks", []):
+        if isinstance(task, dict) and task.get("id") == task_id:
+            return task
+    return None
+
+
+def _reconcile_one(target: Path, action: dict[str, Any]) -> dict[str, Any]:
+    entry, error = _action_target_entry(target, action)
+    now = _now().isoformat()
+    if error or entry is None:
+        action["resolution_status"] = "broken-reference"
+        action["reconciled_at"] = now
+        action["updated_at"] = now
+        return {"fleet_action_id": action.get("fleet_action_id"), "status": "broken-reference", "detail": error or "target repo missing"}
+    dispatch = action.get("dispatch") if isinstance(action.get("dispatch"), dict) else {}
+    imports = _target_imports_for_action(entry.path, action)
+    target_import = None
+    target_import_id = dispatch.get("target_import_id")
+    if target_import_id:
+        target_import = next((item for item in imports if item.get("id") == target_import_id), None)
+    if target_import is None and imports:
+        target_import = imports[0]
+    if target_import is None:
+        status = "broken-reference" if dispatch else "stale"
+        action["resolution_status"] = status
+        action["reconciled_at"] = now
+        action["updated_at"] = now
+        return {"fleet_action_id": action.get("fleet_action_id"), "status": status, "detail": "target import not found"}
+    task = _task_by_id(entry.path, target_import.get("task_id") if isinstance(target_import.get("task_id"), str) else None)
+    if target_import.get("status") == "superseded":
+        status = "superseded"
+    elif target_import.get("status") == "dismissed":
+        status = "dismissed"
+    elif task and task.get("status") == "done":
+        status = "completed"
+    elif target_import.get("status") == "promoted":
+        status = "in-progress"
+    elif target_import.get("status") == "pending":
+        created = _parse_time(str(target_import.get("created_at") or ""))
+        if created and (_now() - created).total_seconds() / 3600 > DISPATCH_STALE_HOURS:
+            status = "stale"
+        else:
+            status = "dispatched"
+    else:
+        status = str(target_import.get("status") or "dispatched")
+    latest_closeout = _safe_receipt(_latest_json(entry.path / ".brigade" / "work" / "closeouts", "closeout.json"), entry.repo_id, entry.label)
+    latest_release = _safe_receipt(_latest_json(entry.path / ".brigade" / "release" / "runs", "release.json"), entry.repo_id, entry.label)
+    result = {
+        "fleet_action_id": action.get("fleet_action_id"),
+        "status": status,
+        "target_import_id": target_import.get("id"),
+        "target_import_status": target_import.get("status"),
+        "target_task_id": target_import.get("task_id"),
+        "target_task_status": task.get("status") if isinstance(task, dict) else None,
+        "completion": task.get("completion") if isinstance(task, dict) and isinstance(task.get("completion"), dict) else None,
+        "closeout": latest_closeout,
+        "release": latest_release,
+        "reconciled_at": now,
+    }
+    action["resolution_status"] = status
+    action["reconciled_at"] = now
+    action["target_import_id"] = target_import.get("id")
+    if target_import.get("task_id"):
+        action["target_task_id"] = target_import.get("task_id")
+    if latest_closeout:
+        action["target_closeout"] = latest_closeout
+    if latest_release:
+        action["target_release"] = latest_release
+    if isinstance(task, dict) and isinstance(task.get("completion"), dict):
+        action["completion"] = task.get("completion")
+    if status == "completed":
+        action["status"] = "done"
+        action["completed_at"] = now
+    action["updated_at"] = now
+    return result
+
+
+def actions_reconcile(*, target: Path, action_id: str | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    actions = _read_actions(target)
+    selected = actions
+    if action_id:
+        selected = [action for action in actions if str(action.get("fleet_action_id") or "").startswith(action_id)]
+        if not selected:
+            print(f"error: fleet action not found: {action_id}", file=sys.stderr)
+            return 1
+        if len(selected) > 1:
+            print(f"error: fleet action id is ambiguous: {action_id}", file=sys.stderr)
+            return 2
+    results = [_reconcile_one(target, action) for action in selected]
+    _write_actions(target, actions)
+    payload = {"target": str(target), "results": results, "result_count": len(results)}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print("repo fleet actions reconcile")
+    for result in results:
+        print(f"- {result.get('fleet_action_id')} [{result.get('status')}]")
+    return 0
+
+
+def _dispatch_health_checks(target: Path, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for action in actions:
+        status = action.get("resolution_status")
+        if status in {"broken-reference", "stale"}:
+            checks.append(
+                {
+                    "status": WARN,
+                    "name": f"repo_fleet_action_{status}",
+                    "detail": f"{action.get('fleet_action_id')} is {status}",
+                    "suggested_next_command": f"brigade repos actions reconcile {action.get('fleet_action_id')}",
+                }
+            )
+            continue
+        if action.get("dispatch") and status in {None, "dispatched"}:
+            dispatch = action.get("dispatch") if isinstance(action.get("dispatch"), dict) else {}
+            entry, error = _action_target_entry(target, action)
+            if error or entry is None:
+                checks.append({"status": WARN, "name": "repo_fleet_action_broken_reference", "detail": f"{action.get('fleet_action_id')} target repo is missing", "suggested_next_command": f"brigade repos actions reconcile {action.get('fleet_action_id')}"})
+                continue
+            old_evidence = dispatch.get("target_evidence_fingerprint")
+            new_evidence = _fingerprint_payload(_latest_safe_receipts(entry.path, entry.repo_id, entry.label))
+            if old_evidence and old_evidence != new_evidence:
+                checks.append({"status": WARN, "name": "repo_fleet_action_evidence_changed", "detail": f"{action.get('fleet_action_id')} target repo evidence changed after dispatch", "suggested_next_command": f"brigade repos actions reconcile {action.get('fleet_action_id')}"})
+            imports = _target_imports_for_action(entry.path, action)
+            if not imports:
+                checks.append({"status": WARN, "name": "repo_fleet_action_missing_import", "detail": f"{action.get('fleet_action_id')} target import is missing", "suggested_next_command": f"brigade repos actions reconcile {action.get('fleet_action_id')}"})
+    return checks
+
+
+
 def _append_action_archive(target: Path, actions: list[dict[str, Any]]) -> None:
     if not actions:
         return
@@ -1422,6 +1967,7 @@ def actions_health(target: Path) -> dict[str, Any]:
     if open_actions:
         top = open_actions[0]
         checks.append({"status": WARN, "name": "repo_fleet_actions_open", "detail": f"{len(open_actions)} open fleet action(s)", "suggested_next_command": f"brigade repos actions show {top.get('fleet_action_id')}"})
+    checks.extend(_dispatch_health_checks(target, actions))
     return {
         "actions_path": str(_actions_path(target)),
         "action_count": len(actions),

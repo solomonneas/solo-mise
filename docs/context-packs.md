@@ -30,3 +30,12 @@ Pack contents include:
 Default exclusions include raw chat exports, secret-looking values, private infrastructure values, full local logs, private absolute paths, and raw scanner output.
 
 `brigade context archive` moves a local pack into `.brigade/context/archive/`. It does not delete source files, write harness context files, edit memory, or run tools.
+
+Repo-fleet actions can also build action-scoped context packs:
+
+```bash
+brigade repos actions context plan <fleet-action-id>
+brigade repos actions context build <fleet-action-id>
+```
+
+These packs are written in the target repo under `.brigade/context/packs/`. They include the fleet action id, safe repo label, safe action summary, acceptance criteria, guidance-file presence, local receipt labels, dispatch state, and explicit private-evidence exclusions. They do not copy raw guidance contents, raw logs, raw scanner output, private paths, exact private repo names, owner names, org names, hostnames, or secrets.
