@@ -13,6 +13,11 @@ brigade release show <run-id>
 brigade release schema
 brigade release ci doctor
 brigade release ci import-issues
+brigade release smoke plan
+brigade release smoke record
+brigade release smoke list
+brigade release smoke show <receipt-id>
+brigade release smoke doctor
 brigade release candidate plan
 brigade release candidate build
 brigade release candidate list
@@ -42,6 +47,8 @@ brigade release candidate archive <candidate-id>
 
 `brigade release ci doctor` reads local GitHub Actions workflow files plus saved CI summaries or logs and reports platform deprecation warnings with redacted safe excerpts. `brigade release ci import-issues` routes those warnings into the local work inbox as `source: ci-platform-deprecation`. Brigade does not call GitHub, edit workflows, rerun CI, or mutate remotes.
 
+`brigade release smoke plan` shows the supported install smoke matrix for depth and harness combinations. `record` stores a local receipt or parses a local receipt JSON file, while `list`, `show`, and `doctor` inspect missing, failed, blocked, or stale smoke evidence. These commands record local evidence only; they do not run installs.
+
 Use `brigade release candidate audit` and `compare` before publishing from an older candidate. Audit reports stale evidence, missing references, changed HEAD/docs/command contracts, and privacy-boundary issues. Compare reports changed HEAD, missing referenced receipts, newer local verification, review, scanner, or security evidence, and docs changed after candidate build. Use `brigade release candidate import-issues` to route audit findings into local work, and use `brigade release candidate closeout` to mark a candidate draft, reviewed, superseded, or archived without moving the bundle.
 
 ## Evidence
@@ -54,6 +61,7 @@ Release readiness includes:
 - latest scanner sweep review state
 - latest security health and evidence state
 - local GitHub Actions platform deprecation warnings when workflow files or saved CI summaries are present
+- local install smoke matrix receipts for supported depth and harness combinations
 - handoff draft and ingest health
 - local closeout state for backup, handoff, memory-care, security, and release candidates when available
 - context pack freshness, project consolidation state, learning candidates, operator-center pending review summaries, and operator report freshness where configured

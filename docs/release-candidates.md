@@ -52,6 +52,8 @@ These are warnings because candidate bundles are review artifacts. They do not r
 
 `brigade release ci doctor` inspects local GitHub Actions workflow files and saved CI summary or log files for platform deprecation warnings such as older Node action runtimes. `brigade release ci import-issues` routes those findings into the work inbox as `source: ci-platform-deprecation`. Findings carry redacted safe excerpts, local path labels, action labels, fingerprints, and no network calls or workflow mutations.
 
+`brigade release smoke plan/record/list/show/doctor` stores and inspects local install smoke matrix receipts for supported repo/workspace and harness combinations. Release readiness and candidate evidence include the smoke matrix summary so stale or missing install coverage is visible before manual publishing.
+
 Release readiness, candidate bundles, and candidate compare include operator report health so an operator can tell whether the local daily review packet is fresh and closed out before publishing manually.
 
 ## Fleet Release Trains

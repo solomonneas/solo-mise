@@ -166,6 +166,11 @@ brigade release show <run-id>
 brigade release schema
 brigade release ci doctor
 brigade release ci import-issues
+brigade release smoke plan
+brigade release smoke record
+brigade release smoke list
+brigade release smoke show <receipt-id>
+brigade release smoke doctor
 brigade release candidate plan
 brigade release candidate build
 brigade release candidate list
@@ -664,6 +669,7 @@ Release readiness commands:
 - `brigade release run` writes a release-readiness receipt under `.brigade/release/runs/`.
 - `brigade release runs` and `brigade release show <run-id>` inspect local release receipts.
 - `brigade release ci doctor` and `import-issues` inspect local GitHub Actions workflow files or saved CI summaries for platform deprecation warnings, keep excerpts redacted, and route follow-up into the work inbox.
+- `brigade release smoke plan/record/list/show/doctor` stores local install smoke matrix receipts for supported depth and harness combinations, then surfaces missing or stale smoke evidence in release readiness.
 - `brigade release candidate plan` previews a local release candidate bundle.
 - `brigade release candidate build` writes a local bundle under `.brigade/release/candidates/`.
 - `brigade release candidate list`, `show`, and `archive` inspect or archive local candidate bundles.
@@ -671,7 +677,7 @@ Release readiness commands:
 - `brigade release candidate audit` checks a candidate for stale evidence, missing references, changed HEAD/docs/command contracts, and privacy-boundary issues.
 - `brigade release candidate import-issues` routes candidate audit findings into the local work inbox as source `release-candidate` without promoting or fixing anything.
 
-Release readiness is a local publish gate. It reviews latest work closeout, verification, code review closeout, scanner sweep state, security health, handoff draft health, content-guard results, git state, and docs/changelog/roadmap touch warnings. It never pushes, tags, creates releases, comments remotely, or mutates remotes.
+Release readiness is a local publish gate. It reviews latest work closeout, verification, code review closeout, scanner sweep state, security health, handoff draft health, content-guard results, install smoke receipts, git state, and docs/changelog/roadmap touch warnings. It never pushes, tags, creates releases, comments remotely, or mutates remotes.
 
 See [`docs/release-readiness.md`](docs/release-readiness.md) for the receipt contract and local-only boundary.
 See [`docs/release-candidates.md`](docs/release-candidates.md) for the candidate bundle files and manual-only publish plan.

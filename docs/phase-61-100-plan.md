@@ -268,6 +268,8 @@ Goal: store local install smoke-test matrix receipts matching supported harness 
 
 Acceptance: tests cover receipt parsing, stale smoke warnings, release candidate evidence, and center activity.
 
+Status: implemented with `brigade release smoke plan/record/list/show/doctor`, local JSONL smoke receipts, stale and missing matrix warnings, release readiness and candidate evidence, center activity rows, docs, and focused tests.
+
 ### Phase 98: Public Template Privacy Audit
 Goal: add a focused audit for public templates to prove they contain placeholders, not private operator state.
 

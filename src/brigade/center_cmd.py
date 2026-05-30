@@ -550,6 +550,9 @@ def _activity(target: Path) -> list[dict[str, Any]]:
     if candidate:
         candidate_id = str(candidate.get("candidate_id") or "latest")
         items.append(_item("release-candidate", candidate_id, str(candidate.get("status") or "draft"), "release candidate", f"brigade release candidate show {candidate_id}", created_at=candidate.get("created_at") if isinstance(candidate.get("created_at"), str) else None, updated_at=candidate.get("created_at") if isinstance(candidate.get("created_at"), str) else None, receipt_path=str(Path(str(candidate.get("path") or "")) / "EVIDENCE.json") if candidate.get("path") else None, path=candidate.get("path") if isinstance(candidate.get("path"), str) else None))
+    for receipt in release_cmd._read_install_smoke_receipts(target)[:20]:
+        receipt_id = str(receipt.get("receipt_id") or "")
+        items.append(_item("install-smoke", receipt_id, str(receipt.get("status") or "unknown"), str(receipt.get("matrix_id") or "install smoke"), f"brigade release smoke show {receipt_id}", created_at=receipt.get("created_at") if isinstance(receipt.get("created_at"), str) else None, updated_at=receipt.get("completed_at") or receipt.get("created_at"), receipt_path=str(release_cmd._install_smoke_receipts_path(target))))
     for action in _read_actions(target)[:20]:
         action_id = str(action.get("action_id") or "")
         items.append(

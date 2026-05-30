@@ -39,7 +39,7 @@ brigade center actions archive --completed
 
 `status` summarizes active work, pending tasks, pending imports, scanner sweep health, review health, handoff drafts, tool catalog health, learning candidates, context packs, release readiness, release candidates, repo fleet, roadmap health, project consolidation, and security health.
 
-`activity` reads local receipts and pack metadata across work sessions, scanner runs, scanner sweeps, review runs, context packs, release readiness receipts, and release candidates.
+`activity` reads local receipts and pack metadata across work sessions, scanner runs, scanner sweeps, review runs, context packs, release readiness receipts, release candidates, and install smoke receipts.
 
 `reviews` returns one pending local review queue across work imports, learning candidates, project consolidation issues, and context pack health. Each row includes:
 

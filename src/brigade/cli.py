@@ -12,7 +12,7 @@ from .prompt import prompt_for_selection  # imported here so tests can monkeypat
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    from . import learn_cmd, projects_cmd, repos_cmd
+    from . import learn_cmd, projects_cmd, release_cmd, repos_cmd
 
     parser = argparse.ArgumentParser(
         prog="brigade",
@@ -149,6 +149,32 @@ def _build_parser() -> argparse.ArgumentParser:
     p_release_ci_import.add_argument("--summary-path", type=Path, default=None, help="Optional local GitHub Actions summary or log file.")
     p_release_ci_import.add_argument("--dry-run", action="store_true", help="Validate without writing imports.")
     p_release_ci_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_smoke = release_sub.add_parser("smoke", help="Record and inspect local install smoke matrix receipts.")
+    release_smoke_sub = p_release_smoke.add_subparsers(dest="release_smoke_command", metavar="<release-smoke-command>")
+    release_smoke_sub.required = True
+    p_release_smoke_plan = release_smoke_sub.add_parser("plan", help="Show the supported install smoke matrix.")
+    p_release_smoke_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_smoke_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_smoke_record = release_smoke_sub.add_parser("record", help="Record one install smoke result.")
+    p_release_smoke_record.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_release_smoke_record.add_argument("--depth", choices=["repo", "workspace"], default="repo", help="Install depth.")
+    p_release_smoke_record.add_argument("--harnesses", default="none", help="Comma-separated harnesses or none.")
+    p_release_smoke_record.add_argument("--status", choices=sorted(release_cmd.INSTALL_SMOKE_STATUSES), default="passed", help="Smoke result status.")
+    p_release_smoke_record.add_argument("--command-label", default=None, help="Safe command label.")
+    p_release_smoke_record.add_argument("--summary", default=None, help="Safe result summary.")
+    p_release_smoke_record.add_argument("--receipt-json", type=Path, default=None, help="Parse an existing local smoke receipt JSON file.")
+    p_release_smoke_record.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_smoke_list = release_smoke_sub.add_parser("list", help="List install smoke receipts.")
+    p_release_smoke_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_smoke_list.add_argument("--limit", type=int, default=20, help="Maximum receipts to list.")
+    p_release_smoke_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_smoke_show = release_smoke_sub.add_parser("show", help="Show one install smoke receipt.")
+    p_release_smoke_show.add_argument("receipt_id", help="Receipt id, unique prefix, or latest.")
+    p_release_smoke_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_smoke_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_release_smoke_doctor = release_smoke_sub.add_parser("doctor", help="Check install smoke matrix health.")
+    p_release_smoke_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_release_smoke_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_release_candidate = release_sub.add_parser("candidate", help="Build and inspect local release candidate bundles.")
     release_candidate_sub = p_release_candidate.add_subparsers(dest="release_candidate_command", metavar="<candidate-command>")
     release_candidate_sub.required = True
@@ -1858,6 +1884,19 @@ def main(argv=None) -> int:
             if args.release_ci_command == "import-issues":
                 return release_cmd.ci_import_issues(target=args.target, summary_path=args.summary_path, dry_run=args.dry_run, json_output=args.json)
             parser.error(f"unknown release ci command: {args.release_ci_command}")
+            return 2
+        if args.release_command == "smoke":
+            if args.release_smoke_command == "plan":
+                return release_cmd.install_smoke_plan(target=args.target, json_output=args.json)
+            if args.release_smoke_command == "record":
+                return release_cmd.install_smoke_record(target=args.target, depth=args.depth, harnesses=args.harnesses, status=args.status, command_label=args.command_label, summary=args.summary, receipt_json=args.receipt_json, json_output=args.json)
+            if args.release_smoke_command == "list":
+                return release_cmd.install_smoke_list(target=args.target, limit=args.limit, json_output=args.json)
+            if args.release_smoke_command == "show":
+                return release_cmd.install_smoke_show(target=args.target, receipt_id=args.receipt_id, json_output=args.json)
+            if args.release_smoke_command == "doctor":
+                return release_cmd.install_smoke_doctor(target=args.target, json_output=args.json)
+            parser.error(f"unknown release smoke command: {args.release_smoke_command}")
             return 2
         if args.release_command == "candidate":
             if args.release_candidate_command == "plan":
