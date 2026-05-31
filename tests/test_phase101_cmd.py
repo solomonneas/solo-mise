@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from brigade import center_cmd, cli, daily_cmd, handoff_cmd, release_cmd, repos_cmd, work_cmd
+from brigade import center_cmd, cli, daily_cmd, handoff_cmd, phases_cmd, release_cmd, repos_cmd, work_cmd
 
 
 def _write_command_inventory(path, capsys=None):
@@ -199,6 +199,39 @@ def test_daily_plan_ranks_tasks_imports_center_actions_and_readiness(tmp_path, c
     assert daily_cmd.plan(target=blocked, json_output=True) == 0
     blocked_payload = json.loads(capsys.readouterr().out)
     assert blocked_payload["selected_action"]["source_subsystem"] == "center-readiness"
+
+
+def test_daily_plan_and_run_handle_phase_ledger_actions(tmp_path, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-270", title="Daily phase", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-270", summary="No evidence", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.actions_build(target=tmp_path, json_output=True) == 0
+    build_payload = json.loads(capsys.readouterr().out)
+    action_id = build_payload["created"][0]["action_id"]
+
+    assert daily_cmd.plan(target=tmp_path, json_output=True) == 0
+    plan_payload = json.loads(capsys.readouterr().out)
+    subsystems = {item["source_subsystem"] for item in plan_payload["candidate_actions"]}
+    assert "phase-ledger-action" in subsystems
+    assert "phase-ledger" in subsystems
+    assert plan_payload["selected_action"]["source_subsystem"] == "phase-ledger-action"
+
+    assert daily_cmd.review(target=tmp_path, json_output=True) == 0
+    review_payload = json.loads(capsys.readouterr().out)
+    assert review_payload["selected_adapter"] == "brigade work phases actions start"
+    assert review_payload["source_local_id"] == action_id
+
+    assert daily_cmd.run(target=tmp_path, json_output=True) == 0
+    run_payload = json.loads(capsys.readouterr().out)
+    assert run_payload["selected_action"]["source_subsystem"] == "phase-ledger-action"
+    assert len(run_payload["adapter_result"]["commands_invoked"]) == 1
+    assert run_payload["adapter_result"]["commands_invoked"][0]["command"].startswith("brigade work phases actions start")
+
+    assert phases_cmd.actions_show(target=tmp_path, action_id=action_id, json_output=True) == 0
+    action_payload = json.loads(capsys.readouterr().out)
+    assert action_payload["status"] == "active"
 
 
 def test_daily_plan_records_and_review_previews_action(tmp_path, capsys):

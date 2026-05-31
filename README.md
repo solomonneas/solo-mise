@@ -60,6 +60,7 @@ Long unattended phase work is audited through the local phase execution ledger d
 Phase ledger closeouts let an operator mark completed phase evidence as reviewed, deferred, blocked, or archived, and stale unreviewed completed phases surface in doctor output.
 Phase ledger compare checks make it clear when local HEAD, referenced files, reports, or doctor issue counts drift after a phase is recorded.
 Phase ledger action queues turn those ledger issues into local metadata-only next steps without executing commands.
+The daily driver can select those phase-ledger actions when they block AFK or release completion, then start one action or build one phase report as a bounded local step.
 The current AFK ledger hardening tranche is described in [`docs/phase-166-200-plan.md`](docs/phase-166-200-plan.md).
 See [`docs/workflow-rules.md`](docs/workflow-rules.md) for the public-safe repo workflow rule templates installed under `rules/`.
 

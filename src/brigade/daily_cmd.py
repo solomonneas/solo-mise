@@ -608,6 +608,69 @@ def _report_candidate(target: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _phase_ledger_action_candidates(target: Path) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for action in phases_cmd._read_actions(target):
+        if action.get("status") not in {"pending", "active"}:
+            continue
+        action_id = str(action.get("action_id") or "")
+        issue_type = str(action.get("issue_type") or "")
+        blocking_issue = any(token in issue_type for token in ("missing", "pushed", "committed", "blocked", "stale_unreviewed", "complete_without"))
+        score = 185 if blocking_issue else 95
+        candidates.append(
+            _candidate(
+                target=target,
+                action_type="start-phase-action" if action.get("status") == "pending" else "review-phase-action",
+                source_subsystem="phase-ledger-action",
+                source_local_id=action_id,
+                safe_summary=str(action.get("safe_summary") or "phase ledger action"),
+                suggested_next_command=f"brigade work phases actions show {action_id}",
+                score=score,
+                ranking_reasons=[
+                    "phase ledger action",
+                    "blocks AFK or release completion" if blocking_issue else "phase ledger follow-up",
+                    f"status={action.get('status')}",
+                ],
+                approval_required=False,
+                risk_level="low",
+                evidence_refs=[str(phases_cmd._actions_root(target))],
+                source_fingerprint=str(action.get("source_fingerprint") or _fingerprint(action)),
+                metadata={"action_id": action_id, "phase_id": action.get("phase_id"), "issue_type": issue_type},
+            )
+        )
+    return candidates
+
+
+def _phase_ledger_issue_candidates(target: Path) -> list[dict[str, Any]]:
+    health = phases_cmd.health(target)
+    top = health.get("top_issue") if isinstance(health.get("top_issue"), dict) else None
+    if not top:
+        return []
+    issue_type = str(top.get("name") or "phase-ledger-issue")
+    blocking_issue = any(token in issue_type for token in ("missing", "pushed", "committed", "blocked", "stale_unreviewed", "complete_without"))
+    score = 170 if blocking_issue else 80
+    return [
+        _candidate(
+            target=target,
+            action_type="build-phase-report",
+            source_subsystem="phase-ledger",
+            source_local_id=issue_type,
+            safe_summary=str(top.get("detail") or "phase ledger issue"),
+            suggested_next_command="brigade work phases report build",
+            score=score,
+            ranking_reasons=[
+                "unresolved phase ledger issue",
+                "blocks AFK or release completion" if blocking_issue else "review after higher priority daily work",
+            ],
+            approval_required=False,
+            risk_level="low",
+            evidence_refs=[str(phases_cmd._records_root(target))],
+            source_fingerprint=_fingerprint(top),
+            metadata={"issue_type": issue_type, "phase_id": top.get("phase_id")},
+        )
+    ]
+
+
 def _all_candidates(target: Path) -> list[dict[str, Any]]:
     config, _ = _load_config(target)
     candidates = [
@@ -615,6 +678,8 @@ def _all_candidates(target: Path) -> list[dict[str, Any]]:
         *_pending_import_candidates(target),
         *_center_action_candidates(target),
         *_readiness_candidates(target),
+        *_phase_ledger_action_candidates(target),
+        *_phase_ledger_issue_candidates(target),
         *_health_issue_candidates(target),
         *_report_candidate(target),
     ]
@@ -657,7 +722,10 @@ def _adapter_for(action: dict[str, Any] | None) -> str | None:
         "start-center-action": "brigade center actions start",
         "import-readiness-issues": "brigade center readiness import-issues",
         "build-operator-report": "brigade center report build",
+        "start-phase-action": "brigade work phases actions start",
+        "build-phase-report": "brigade work phases report build",
         "review-center-action": "review-only",
+        "review-phase-action": "review-only",
         "review-health-issue": "review-only",
     }.get(str(action.get("action_type")), "unsupported")
 
@@ -918,6 +986,10 @@ def _evidence_blockers(target: Path, action: dict[str, Any] | None) -> list[str]
         action_id = str(metadata.get("action_id") or source_id)
         if not any(str(item.get("action_id")) == action_id and item.get("status") in {"pending", "active"} for item in center_cmd._read_actions(target)):
             return [f"center action not found: {action_id}"]
+    if action_type == "start-phase-action":
+        action_id = str(metadata.get("action_id") or source_id)
+        if not any(str(item.get("action_id")) == action_id and item.get("status") in {"pending", "active"} for item in phases_cmd._read_actions(target)):
+            return [f"phase action not found: {action_id}"]
     return []
 
 
@@ -1429,6 +1501,17 @@ def run(
             rc = center_cmd.report_build(target=target)
         receipt["commands_invoked"].append({"command": "brigade center report build", "exit_code": rc})
         receipt["adapter_result"]["commands_invoked"].append({"command": "brigade center report build", "exit_code": rc})
+    elif action_type == "start-phase-action":
+        action_id = str((action.get("metadata") or {}).get("action_id") or action.get("source_local_id"))
+        with redirect_stdout(StringIO()):
+            rc = phases_cmd.actions_start(target=target, action_id=action_id)
+        receipt["commands_invoked"].append({"command": f"brigade work phases actions start {action_id}", "exit_code": rc})
+        receipt["adapter_result"]["commands_invoked"].append({"command": f"brigade work phases actions start {action_id}", "exit_code": rc})
+    elif action_type == "build-phase-report":
+        with redirect_stdout(StringIO()):
+            rc = phases_cmd.report_build(target=target)
+        receipt["commands_invoked"].append({"command": "brigade work phases report build", "exit_code": rc})
+        receipt["adapter_result"]["commands_invoked"].append({"command": "brigade work phases report build", "exit_code": rc})
     else:
         receipt["blockers"].append(f"selected action is review-only: {action_type}")
         rc = 1
