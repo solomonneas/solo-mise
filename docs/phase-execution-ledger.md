@@ -39,6 +39,7 @@ brigade work phases actions archive --completed
 brigade work phases report build --range 165-170
 brigade work phases report list
 brigade work phases report show latest
+brigade work phases report closeout latest --status reviewed --reason "checked report"
 ```
 
 Every command supports stable JSON output with `--json`.
@@ -133,6 +134,8 @@ Closeouts can be `reviewed`, `deferred`, `blocked`, or `archived`. Each record s
 ```
 
 Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range status, doctor checks, record summaries, and suggested next commands.
+
+`brigade work phases report closeout <report-id|latest>` writes `CLOSEOUT.json` into the local report bundle with `reviewed`, `deferred`, `superseded`, or `archived` status. Report closeouts are local review metadata only.
 
 `brigade work phases import-issues` routes unresolved ledger issues into the scanner-ready work inbox as `source: phase-ledger` task imports. Imports dedupe by a stable source fingerprint and keep promotion explicit.
 

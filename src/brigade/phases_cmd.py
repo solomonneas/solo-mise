@@ -15,6 +15,7 @@ SCHEMA_VERSION = 1
 PHASE_STATUSES = {"pending", "in-progress", "implemented", "verified", "committed", "pushed", "deferred", "blocked"}
 PHASE_CLOSEOUT_STATUSES = {"reviewed", "deferred", "blocked", "archived"}
 PHASE_ACTION_STATUSES = {"pending", "active", "done", "deferred", "archived"}
+PHASE_REPORT_CLOSEOUT_STATUSES = {"reviewed", "deferred", "superseded", "archived"}
 DONE_STATUSES = {"implemented", "verified", "committed", "pushed"}
 STALE_IN_PROGRESS_HOURS = 12
 REPORT_STALE_HOURS = 24
@@ -650,6 +651,21 @@ def _latest_report(target: Path) -> dict[str, Any] | None:
     if not reports:
         return None
     return sorted(reports, key=lambda item: str(item.get("created_at") or ""))[-1]
+
+
+def _resolve_report(target: Path, report_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    target = target.expanduser().resolve()
+    if report_id == "latest":
+        latest = _latest_report(target)
+        return (latest, None) if latest else (None, "phase report not found: latest")
+    candidates = sorted(_reports_root(target).glob(f"{report_id}*/PHASE_EVIDENCE.json"))
+    if len(candidates) != 1:
+        return None, f"phase report not found: {report_id}" if not candidates else f"phase report id is ambiguous: {report_id}"
+    payload = _read_json(candidates[0])
+    if payload is None:
+        return None, f"invalid phase report: {candidates[0]}"
+    payload.setdefault("path", str(candidates[0].parent))
+    return payload, None
 
 
 def _read_actions(target: Path) -> list[dict[str, Any]]:
@@ -1297,16 +1313,10 @@ def report_list(*, target: Path, limit: int = 20, json_output: bool = False) -> 
 
 def report_show(*, target: Path, report_id: str, json_output: bool = False) -> int:
     target = target.expanduser().resolve()
-    candidates = sorted(_reports_root(target).glob(f"{report_id}*/PHASE_EVIDENCE.json"))
-    if report_id == "latest":
-        candidates = sorted(_reports_root(target).glob("*/PHASE_EVIDENCE.json"), reverse=True)[:1]
-    if len(candidates) != 1:
-        print(f"error: phase report not found: {report_id}", file=sys.stderr)
-        return 1
-    payload = _read_json(candidates[0])
+    payload, error = _resolve_report(target, report_id)
     if payload is None:
-        print(f"error: invalid phase report: {candidates[0]}", file=sys.stderr)
-        return 2
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -1314,6 +1324,43 @@ def report_show(*, target: Path, report_id: str, json_output: bool = False) -> i
         print(f"records: {payload.get('record_count')}")
         doctor_data = payload.get("doctor") if isinstance(payload.get("doctor"), dict) else {}
         print(f"issues: {doctor_data.get('issue_count', 0)}")
+    return 0
+
+
+def report_closeout(*, target: Path, report_id: str, status: str = "reviewed", reason: str | None = None, json_output: bool = False) -> int:
+    if status not in PHASE_REPORT_CLOSEOUT_STATUSES:
+        print(f"error: --status must be one of {sorted(PHASE_REPORT_CLOSEOUT_STATUSES)}", file=sys.stderr)
+        return 2
+    target = target.expanduser().resolve()
+    report, error = _resolve_report(target, report_id)
+    if report is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    report_path = Path(str(report.get("path") or ""))
+    if not report_path.is_dir():
+        print(f"error: phase report path is missing: {report.get('path')}", file=sys.stderr)
+        return 1
+    closeout = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-report-closeout"),
+        "target": str(target),
+        "report_id": report.get("report_id"),
+        "report_path": str(report_path),
+        "status": status,
+        "reason": reason or f"phase report marked {status}",
+        "reviewed_at": _now().isoformat(),
+        "issue_count": (report.get("doctor") or {}).get("issue_count") if isinstance(report.get("doctor"), dict) else None,
+        "record_count": report.get("record_count"),
+        "source_fingerprint": _source_fingerprint(report.get("records") if isinstance(report.get("records"), list) else [], {"report_id": report.get("report_id"), "issue_count": (report.get("doctor") or {}).get("issue_count") if isinstance(report.get("doctor"), dict) else None}),
+        "suggested_next_command": "brigade work phases report list",
+    }
+    _write_json(report_path / "CLOSEOUT.json", closeout)
+    if json_output:
+        print(json.dumps(closeout, indent=2, sort_keys=True))
+    else:
+        print(f"phase report closeout: {report.get('report_id')}")
+        print(f"status: {status}")
+        print(f"reason: {closeout['reason']}")
     return 0
 
 

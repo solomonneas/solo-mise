@@ -220,6 +220,13 @@ def test_phase_ledger_schema_status_next_report_and_imports(tmp_path, capsys):
     shown_report = json.loads(capsys.readouterr().out)
     assert shown_report["report_id"] == report_id
 
+    assert cli.main(["work", "phases", "report", "closeout", "latest", "--target", str(tmp_path), "--status", "reviewed", "--reason", "Report reviewed.", "--json"]) == 0
+    report_closeout = json.loads(capsys.readouterr().out)
+    assert report_closeout["report_id"] == report_id
+    assert report_closeout["status"] == "reviewed"
+    assert report_closeout["reason"] == "Report reviewed."
+    assert (tmp_path / ".brigade" / "work" / "phases" / "reports" / report_id / "CLOSEOUT.json").is_file()
+
     assert cli.main(["work", "phases", "import-issues", "--target", str(tmp_path), "--range", "220-223", "--json"]) == 0
     imports = json.loads(capsys.readouterr().out)
     assert imports["created_count"] >= 1
