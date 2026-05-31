@@ -2490,6 +2490,29 @@ def _privacy_findings_for_text(text: str, *, source: str) -> list[dict[str, Any]
     return findings
 
 
+def _git_added_text_for_file(target: Path, commit_hash: str, rel_path: str) -> str | None:
+    if not commit_hash:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "show", "--format=", "--unified=0", commit_hash, "--", rel_path],
+            cwd=target,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    added = []
+    for line in result.stdout.splitlines():
+        if line.startswith("+++") or not line.startswith("+"):
+            continue
+        added.append(line[1:])
+    return "\n".join(added)
+
+
 def privacy(*, target: Path, selector: str, json_output: bool = False) -> int:
     target = target.expanduser().resolve()
     records, missing, parsed_range = _selected_records(target, selector)
@@ -2499,15 +2522,19 @@ def privacy(*, target: Path, selector: str, json_output: bool = False) -> int:
     scan_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-phase-privacy-{uuid4().hex[:6]}"
     for record in records:
         phase_findings: list[dict[str, Any]] = []
+        commit_hash = str(record.get("commit_hash") or "")
         for rel_path in record.get("files_changed") or []:
-            path = target / str(rel_path)
-            if not path.is_file():
-                continue
-            try:
-                text = path.read_text(errors="replace")
-            except OSError:
-                continue
-            phase_findings.extend(_privacy_findings_for_text(text, source=str(rel_path)))
+            rendered_path = str(rel_path)
+            text = _git_added_text_for_file(target, commit_hash, rendered_path)
+            if text is None:
+                path = target / rendered_path
+                if not path.is_file():
+                    continue
+                try:
+                    text = path.read_text(errors="replace")
+                except OSError:
+                    continue
+            phase_findings.extend(_privacy_findings_for_text(text, source=rendered_path))
         if record.get("implementation_summary"):
             phase_findings.extend(_privacy_findings_for_text(str(record.get("implementation_summary")), source=f"{record.get('phase_id')}:summary"))
         findings.extend([{**finding, "phase_id": record.get("phase_id")} for finding in phase_findings])
