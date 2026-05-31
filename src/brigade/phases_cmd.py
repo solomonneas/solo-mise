@@ -68,6 +68,10 @@ def _session_checkpoints_root(target: Path) -> Path:
     return _root(target) / "session-checkpoints"
 
 
+def _session_checkpoints_archive_path(target: Path) -> Path:
+    return _session_checkpoints_root(target) / "archive.jsonl"
+
+
 def _session_recovery_notes_root(target: Path) -> Path:
     return _root(target) / "session-recovery-notes"
 
@@ -91,6 +95,12 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def _schema(name: str) -> dict[str, Any]:
@@ -2586,6 +2596,48 @@ def session_import_issues(*, target: Path, session_id: str, dry_run: bool = Fals
         print(f"phase session imports: {session.get('session_id')}")
         print(f"created: {len(created)}")
         print(f"skipped: {len(skipped)}")
+    return 0
+
+
+def session_checkpoint_archive(*, target: Path, checkpoint_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    checkpoint, error = _resolve_session_checkpoint(target, checkpoint_id)
+    if checkpoint is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    checkpoint_path = Path(str(checkpoint.get("path") or ""))
+    archive_record = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-checkpoint-archive"),
+        "archived_at": _now().isoformat(),
+        "checkpoint": checkpoint,
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "session_id": checkpoint.get("session_id"),
+        "phase_id": checkpoint.get("phase_id"),
+        "status": "archived",
+        "source_fingerprint": checkpoint.get("source_fingerprint"),
+    }
+    _append_jsonl(_session_checkpoints_archive_path(target), archive_record)
+    try:
+        if checkpoint_path.is_file() and checkpoint_path.parent == _session_checkpoints_root(target):
+            checkpoint_path.unlink()
+    except OSError:
+        pass
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-checkpoint-archive"),
+        "target": str(target),
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "session_id": checkpoint.get("session_id"),
+        "archived": True,
+        "archive_path": str(_session_checkpoints_archive_path(target)),
+        "suggested_next_command": "brigade work phases session checkpoints list",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session checkpoint archived: {checkpoint.get('checkpoint_id')}")
+        print(f"archive: {_session_checkpoints_archive_path(target)}")
     return 0
 
 

@@ -624,6 +624,15 @@ def test_phase_session_checkpoint_records_recovery_metadata(tmp_path, capsys):
     activity = json.loads(capsys.readouterr().out)
     assert any(event["event_type"] == "session-checkpoint" and event["local_id"] == checkpoint["checkpoint_id"] for event in activity["events"])
 
+    assert cli.main(["work", "phases", "session", "checkpoints", "archive", checkpoint["checkpoint_id"], "--target", str(tmp_path), "--json"]) == 0
+    archived = json.loads(capsys.readouterr().out)
+    assert archived["checkpoint_id"] == checkpoint["checkpoint_id"]
+    assert archived["archived"] is True
+    assert not (tmp_path / ".brigade" / "work" / "phases" / "session-checkpoints" / f"{checkpoint['checkpoint_id']}.json").exists()
+    assert (tmp_path / ".brigade" / "work" / "phases" / "session-checkpoints" / "archive.jsonl").is_file()
+    assert cli.main(["work", "phases", "session", "checkpoints", "show", checkpoint["checkpoint_id"], "--target", str(tmp_path), "--json"]) == 1
+    capsys.readouterr()
+
 
 def test_phase_session_recovery_notes_are_reviewable(tmp_path, capsys):
     assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "231-232", "--title", "Recovery", "--goal", "afk", "--json"]) == 0

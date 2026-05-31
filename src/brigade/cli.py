@@ -1136,6 +1136,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_session_checkpoints_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_work_phases_session_checkpoints_import.add_argument("--dry-run", action="store_true", help="Preview imports without writing them.")
     p_work_phases_session_checkpoints_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session_checkpoints_archive = phases_session_checkpoints_sub.add_parser("archive", help="Archive one phase session checkpoint.")
+    p_work_phases_session_checkpoints_archive.add_argument("checkpoint_id", help="Checkpoint id, unique prefix, or latest.")
+    p_work_phases_session_checkpoints_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_session_checkpoints_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_session_recovery_note = phases_session_sub.add_parser("recovery-note", help="Record a local phase session recovery note.")
     p_work_phases_session_recovery_note.add_argument("session_id", nargs="?", default="latest", help="Session id, unique prefix, or latest.")
     p_work_phases_session_recovery_note.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
@@ -3323,6 +3327,8 @@ def main(argv=None) -> int:
                         return phases_cmd.session_checkpoint_compare(target=args.target, checkpoint_id=args.checkpoint_id, json_output=args.json)
                     if args.phases_session_checkpoints_command == "import-issues":
                         return phases_cmd.session_checkpoint_import_issues(target=args.target, checkpoint_id=args.checkpoint_id, dry_run=args.dry_run, json_output=args.json)
+                    if args.phases_session_checkpoints_command == "archive":
+                        return phases_cmd.session_checkpoint_archive(target=args.target, checkpoint_id=args.checkpoint_id, json_output=args.json)
                     parser.error(f"unknown phases session checkpoints command: {args.phases_session_checkpoints_command}")
                 if args.phases_session_command == "recovery-note":
                     return phases_cmd.session_recovery_note(target=args.target, session_id=args.session_id, phase_id=args.phase_id, summary=args.summary, notes=args.notes, evidence=args.evidence, json_output=args.json)
