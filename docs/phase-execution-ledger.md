@@ -177,6 +177,8 @@ Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range stat
 
 `brigade work phases session recovery-note <session-id|latest>` records safe AFK resume context under `.brigade/work/phases/session-recovery-notes/`. Recovery notes store a summary, optional safe notes, optional evidence labels, the current next-step snapshot, and a source fingerprint. `brigade work phases session recovery-notes list/show` inspect those records, and `brigade work phases session recovery-notes closeout <note-id|latest>` marks a note reviewed, deferred, blocked, or archived with local metadata. Session activity includes `session-recovery-note` events. Recovery notes do not change phase status, execute commands, or promote work.
 
+`brigade daily plan` treats unresolved checkpoint state as a `phase-session-checkpoint` candidate. The candidate points at `brigade work phases session checkpoints import-issues` so the agent can route checkpoint drift into reviewed work instead of silently continuing from stale recovery metadata.
+
 `brigade work phases session activity <session-id|latest>` produces a chronological read-only activity ledger from phase starts, completions, tests, commits, reports, compare summaries, actions, imports, closeouts, handoff drafts, and session resume events.
 
 `brigade work phases session progress <session-id|latest>` summarizes percent complete, status counts, blockers, current phase, next command, test coverage, commit and push coverage, and estimated remaining local steps. It is read-only.

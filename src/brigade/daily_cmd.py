@@ -683,9 +683,36 @@ def _phase_session_candidates(target: Path) -> list[dict[str, Any]]:
     if step_type == "session_reviewed":
         return []
     session_id = str(session.get("session_id") or "latest")
+    candidates: list[dict[str, Any]] = []
+    checkpoint = next_payload.get("checkpoint") if isinstance(next_payload.get("checkpoint"), dict) else None
+    if checkpoint and int(checkpoint.get("issue_count") or 0) > 0:
+        latest = checkpoint.get("latest_checkpoint") if isinstance(checkpoint.get("latest_checkpoint"), dict) else {}
+        checkpoint_id = str(latest.get("checkpoint_id") or "latest")
+        top_issue = checkpoint.get("top_issue") if isinstance(checkpoint.get("top_issue"), dict) else {}
+        candidates.append(
+            _candidate(
+                target=target,
+                action_type="import-phase-checkpoint-issues",
+                source_subsystem="phase-session-checkpoint",
+                source_local_id=checkpoint_id,
+                safe_summary=str((top_issue or {}).get("detail") or latest.get("summary") or "phase session checkpoint needs review"),
+                suggested_next_command=str(checkpoint.get("suggested_next_command") or f"brigade work phases session checkpoints import-issues {checkpoint_id}"),
+                score=190,
+                ranking_reasons=[
+                    "phase session checkpoint issue",
+                    f"issue_count={checkpoint.get('issue_count')}",
+                    "route through work inbox before continuing AFK session",
+                ],
+                approval_required=False,
+                risk_level="low",
+                evidence_refs=[str(latest.get("path") or phases_cmd._session_checkpoints_root(target))],
+                source_fingerprint=str(latest.get("source_fingerprint") or _fingerprint(checkpoint)),
+                metadata={"checkpoint_id": checkpoint_id, "session_id": session_id, "issue_count": checkpoint.get("issue_count"), "top_issue": top_issue},
+            )
+        )
     action_type = "closeout-phase-session" if step_type == "session_closeout_needed" else "build-phase-session-report"
     score = 260 if step_type in {"missing_record", "pending_phase", "blocked_phase", "stale_in_progress_phase", "session_closeout_needed"} else 125
-    return [
+    candidates.append(
         _candidate(
             target=target,
             action_type=action_type,
@@ -705,7 +732,8 @@ def _phase_session_candidates(target: Path) -> list[dict[str, Any]]:
             source_fingerprint=_fingerprint({"session_id": session_id, "next_step": step}),
             metadata={"session_id": session_id, "step_type": step_type},
         )
-    ]
+    )
+    return candidates
 
 
 def _all_candidates(target: Path) -> list[dict[str, Any]]:

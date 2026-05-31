@@ -234,6 +234,29 @@ def test_daily_plan_and_run_handle_phase_ledger_actions(tmp_path, capsys):
     assert action_payload["status"] == "active"
 
 
+def test_daily_plan_includes_phase_checkpoint_candidates(tmp_path, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+    assert phases_cmd.plan(target=tmp_path, phase_range="233-234", title="Checkpoint Daily", source_goal="afk", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.session_start(target=tmp_path, phase_range="233-234", source_goal="checkpoint daily", json_output=True) == 0
+    session = json.loads(capsys.readouterr().out)
+    assert phases_cmd.session_checkpoint(target=tmp_path, session_id=session["session_id"], status="blocked", summary="Checkpoint needs review.", json_output=True) == 0
+    checkpoint = json.loads(capsys.readouterr().out)
+
+    assert daily_cmd.plan(target=tmp_path, json_output=True) == 0
+    plan_payload = json.loads(capsys.readouterr().out)
+    checkpoint_candidates = [
+        item for item in plan_payload["candidate_actions"]
+        if item["source_subsystem"] == "phase-session-checkpoint"
+    ]
+    assert checkpoint_candidates
+    candidate = checkpoint_candidates[0]
+    assert candidate["source_local_id"] == checkpoint["checkpoint_id"]
+    assert candidate["action_type"] == "import-phase-checkpoint-issues"
+    assert candidate["suggested_next_command"] == "brigade work phases session checkpoints import-issues latest"
+    assert "phase session checkpoint issue" in candidate["ranking_reasons"]
+
+
 def test_daily_plan_records_and_review_previews_action(tmp_path, capsys):
     _seed_ready_repo(tmp_path, capsys)
     task, _ = work_cmd._add_task(

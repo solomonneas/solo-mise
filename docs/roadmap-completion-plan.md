@@ -114,6 +114,7 @@ Implementation scope:
 - Keep `session next` and `session resume` checkpoint-aware so wrappers see recovery metadata and stale checkpoint issue counts in the normal AFK resume path.
 - Add session recovery notes so AFK work can preserve safe resume context, evidence labels, and activity timeline entries without changing phase status.
 - Add recovery note closeout so resume notes can be reviewed, deferred, blocked, or archived without hiding the underlying phase record state.
+- Surface checkpoint issues in the daily driver as local planning candidates before adding any daily-run behavior.
 - Add `brigade work phases session report build/list/show` for local session evidence bundles.
 - Add `brigade work phases session activity` for read-only chronological AFK session timelines.
 - Add `brigade work phases session progress` for read-only session completion, blocker, test, commit, push, and remaining-step summaries.
