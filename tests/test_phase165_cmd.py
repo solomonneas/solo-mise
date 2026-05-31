@@ -655,13 +655,19 @@ def test_phase_session_recovery_notes_are_reviewable(tmp_path, capsys):
     assert shown["note_id"] == note["note_id"]
     assert shown["next_step"]["step_type"] == "pending_phase"
 
+    assert cli.main(["work", "phases", "session", "recovery-notes", "closeout", note["note_id"], "--target", str(tmp_path), "--status", "reviewed", "--reason", "Recovery context reviewed.", "--json"]) == 0
+    closeout = json.loads(capsys.readouterr().out)
+    assert closeout["note"]["status"] == "reviewed"
+    assert closeout["closeout"]["reason"] == "Recovery context reviewed."
+
     assert cli.main(["work", "phases", "session", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
     session_shown = json.loads(capsys.readouterr().out)
     assert session_shown["latest_recovery_note"]["note_id"] == note["note_id"]
+    assert session_shown["latest_recovery_note"]["status"] == "reviewed"
 
     assert cli.main(["work", "phases", "session", "activity", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
     activity = json.loads(capsys.readouterr().out)
-    assert any(event["event_type"] == "session-recovery-note" and event["local_id"] == note["note_id"] for event in activity["events"])
+    assert any(event["event_type"] == "session-recovery-note" and event["local_id"] == note["note_id"] and event["status"] == "reviewed" for event in activity["events"])
 
 
 def test_phase_session_report_bundle(tmp_path, capsys):

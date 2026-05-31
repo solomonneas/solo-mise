@@ -1440,6 +1440,57 @@ def session_recovery_note_show(*, target: Path, note_id: str, json_output: bool 
     return 0
 
 
+def session_recovery_note_closeout(*, target: Path, note_id: str, status: str = "reviewed", reason: str | None = None, json_output: bool = False) -> int:
+    if status not in {"reviewed", "deferred", "blocked", "archived"}:
+        print("error: --status must be one of ['archived', 'blocked', 'deferred', 'reviewed']", file=sys.stderr)
+        return 2
+    target = target.expanduser().resolve()
+    note, error = _resolve_session_recovery_note(target, note_id)
+    if note is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    path = Path(str(note.get("path") or (_session_recovery_notes_root(target) / f"{note.get('note_id')}.json")))
+    closed_at = _now().isoformat()
+    closeout = {
+        "status": status,
+        "reason": reason or f"phase session recovery note marked {status}",
+        "reviewed_at": closed_at,
+        "source_fingerprint": note.get("source_fingerprint"),
+    }
+    note["status"] = status
+    note["closeout"] = closeout
+    note["updated_at"] = closed_at
+    _write_json(path, note)
+    session_id = str(note.get("session_id") or "")
+    session_path, session, _error = _resolve_session(target, session_id) if session_id else (None, None, None)
+    if session is not None and session_path is not None:
+        references = session.get("recovery_note_references") if isinstance(session.get("recovery_note_references"), list) else []
+        updated_summary = _recovery_note_summary(note)
+        session["recovery_note_references"] = [
+            updated_summary if item.get("note_id") == note.get("note_id") else item
+            for item in references
+            if isinstance(item, dict)
+        ]
+        session["latest_recovery_note"] = updated_summary
+        session["updated_at"] = closed_at
+        _write_json(session_path, session)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-recovery-note-closeout"),
+        "target": str(target),
+        "note": note,
+        "closeout": closeout,
+        "suggested_next_command": "brigade work phases session recovery-notes list",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session recovery note closeout: {note.get('note_id')}")
+        print(f"status: {status}")
+        print(f"reason: {closeout['reason']}")
+    return 0
+
+
 def _checkpoint_state_for_session_next(target: Path, session: dict[str, Any], step: dict[str, Any]) -> dict[str, Any] | None:
     checkpoint = _latest_checkpoint_for_session(target, session.get("session_id"))
     if checkpoint is None:
