@@ -683,3 +683,40 @@ def test_phase_privacy_scans_evidence_and_records_summary(tmp_path, capsys):
     assert cli.main(["work", "phases", "show", "phase-219", "--target", str(tmp_path), "--json"]) == 0
     record = json.loads(capsys.readouterr().out)
     assert record["privacy_checks"][-1]["status"] == "blocked"
+
+
+def test_phase_handoff_drafts_and_lints_memory_handoff(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "220-221", "--title", "Handoff", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(
+        [
+            "work",
+            "phases",
+            "complete",
+            "phase-220",
+            "--target",
+            str(tmp_path),
+            "--summary",
+            "Added a reusable phase handoff helper.",
+            "--file",
+            "src/brigade/phases_cmd.py",
+            "--test",
+            "pytest tests/test_phase165_cmd.py -q",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert cli.main(["work", "phases", "handoff", "phase-220", "--target", str(tmp_path), "--lint", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["lint"]["status"] == "passed"
+    handoff_path = tmp_path / payload["path"]
+    assert handoff_path.is_file()
+    content = handoff_path.read_text()
+    assert "## Recommended memory action\nno-card" in content
+    assert "## Target document\n.learnings/LEARNINGS.md" in content
+
+    assert cli.main(["work", "phases", "show", "phase-220", "--target", str(tmp_path), "--json"]) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["phase_handoffs"][-1]["lint"]["status"] == "passed"
+    assert record["evidence_attachments"][-1]["handoff_paths"] == [payload["path"]]

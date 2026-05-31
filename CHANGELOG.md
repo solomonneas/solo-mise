@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `brigade work phases verify plan/record` for local phase verification matrices that show expected commands and record operator-supplied outcomes without executing tests.
 - `brigade work phases reconcile <phase-id|range|latest>` for read-only local git reconciliation of phase commit hashes, push refs, branch containment, and dirty worktree state.
 - `brigade work phases privacy <phase-id|range|latest>` for local phase evidence privacy scans with redacted findings and recorded clean or blocked summaries.
+- `brigade work phases handoff <phase-id|range|latest>` for drafting and optionally linting a Memory Handoff from selected phase evidence without editing canonical memory.
 - `brigade work phases closeout <phase-id|range|latest>` for local reviewed, deferred, blocked, or archived phase ledger closeouts, plus stale unreviewed completed-phase doctor warnings.
 - `brigade work phases compare <phase-id|range|latest>` for read-only phase evidence freshness checks against local HEAD, referenced files, report age, test evidence, and doctor issue counts.
 - `brigade work phases actions plan/build/list/show/start/done/defer/archive` for metadata-only phase-ledger action queues sourced from doctor issues and closeout blockers.

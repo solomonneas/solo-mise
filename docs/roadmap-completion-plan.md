@@ -116,6 +116,7 @@ Implementation scope:
 - Add `brigade work phases verify plan/record` for expected verification matrices and operator-recorded outcomes.
 - Add `brigade work phases reconcile` for read-only local commit, push ref, and dirty worktree checks.
 - Add `brigade work phases privacy` for redacted phase evidence privacy checks and recorded clean or blocked summaries.
+- Add `brigade work phases handoff` for reviewed Memory Handoff drafts from selected phase evidence without canonical memory edits.
 - Add `brigade work phases actions plan/build/list/show/start/done/defer/archive`.
 - Make `brigade daily plan`, `daily review`, and `daily run` understand phase-ledger actions and unresolved phase issues as bounded local daily steps.
 - Include latest phase closeout and phase report references in release readiness and release candidate evidence, with release doctor and candidate compare warnings for unresolved or stale phase evidence.

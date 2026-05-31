@@ -81,6 +81,7 @@ brigade work phases complete <phase-id>
 brigade work phases defer <phase-id> --reason "not in this tranche"
 brigade work phases closeout <phase-id|range|latest>
 brigade work phases compare <phase-id|range|latest>
+brigade work phases handoff <phase-id|range|latest>
 brigade work phases doctor
 brigade work phases import-issues
 brigade work phases actions plan
@@ -177,6 +178,8 @@ Release and operator surfaces include compact phase session state. Work brief, w
 `brigade work phases reconcile` is a read-only git evidence check. It compares recorded commit hashes and push refs with local git history and reports dirty worktree state after claimed completion.
 
 `brigade work phases privacy` scans phase evidence for protected private or reference values and stores only category-level clean or blocked summaries in phase records.
+
+`brigade work phases handoff` drafts a standard no-card Memory Handoff for selected phase evidence, can lint it on request, and attaches the draft path and lint summary back to the selected phase records without editing canonical memory.
 
 The phase ledger is surfaced in `brigade daily status`, `brigade daily doctor`, `brigade work brief`, `brigade work doctor`, and `brigade center status`. Future AFK multi-phase work is not complete unless the ledger shows evidence or explicit deferrals.
 

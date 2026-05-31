@@ -28,6 +28,7 @@ brigade work phases closeout <phase-id|range|latest> --status reviewed --reason 
 brigade work phases compare <phase-id|range|latest>
 brigade work phases reconcile <phase-id|range|latest>
 brigade work phases privacy <phase-id|range|latest>
+brigade work phases handoff <phase-id|range|latest> --lint
 brigade work phases doctor --range 165-170
 brigade work phases import-issues --range 165-170
 brigade work phases evidence add <phase-id> --file src/file.py --test "pytest ..."
@@ -170,6 +171,8 @@ Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range stat
 `brigade work phases reconcile <phase-id|range|latest>` compares phase commit and push metadata against local git state. It reports missing commits, commits not on a local branch, pushed phases without push refs, and dirty worktree state after claimed completion. It never mutates git.
 
 `brigade work phases privacy <phase-id|range|latest>` scans referenced public files and phase summaries for protected private or reference values, then records a compact clean or blocked summary in each selected phase record. Findings report pattern categories and source labels, not the matched private value.
+
+`brigade work phases handoff <phase-id|range|latest>` drafts a standard no-card Memory Handoff into the local handoff inbox from selected phase evidence. `--lint` validates the draft before returning. The command records the handoff path and lint summary on each selected phase record as local evidence, but it does not edit canonical memory.
 
 Release readiness and release candidate evidence include a compact phase-ledger summary so publish review can see whether long unattended work still has open ledger issues.
 Release doctor and release candidate compare also warn when pushed phases are unreviewed, phase reports are missing or stale, closeouts have unresolved issues, report compare has open issues, or newer phase closeout/report evidence exists after a candidate was built.

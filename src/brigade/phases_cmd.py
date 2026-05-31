@@ -232,6 +232,7 @@ def schema(*, target: Path, json_output: bool = False) -> int:
             _schema("phase-ledger-closeout"),
             _schema("phase-ledger-action"),
             _schema("phase-ledger-session"),
+            _schema("phase-ledger-handoff"),
             _schema("phase-ledger-doctor"),
         ],
         "status_values": sorted(PHASE_STATUSES),
@@ -1932,6 +1933,136 @@ def privacy(*, target: Path, selector: str, json_output: bool = False) -> int:
         for finding in findings:
             print(f"[{finding['status']}] {finding['name']}: {finding['source']}")
     return 1 if findings else 0
+
+
+def _handoff_root(target: Path) -> Path:
+    return target / ".claude" / "memory-handoffs"
+
+
+def _safe_handoff_text(value: object) -> str:
+    rendered = str(value or "").strip()
+    for pattern in PRIVACY_PATTERNS.values():
+        rendered = pattern.sub("[redacted]", rendered)
+    rendered = rendered.replace("##", "section")
+    return rendered[:500] if rendered else "not recorded"
+
+
+def _phase_handoff_content(records: list[dict[str, Any]], *, selector: str, handoff_id: str) -> str:
+    phase_ids = [str(record.get("phase_id")) for record in records if record.get("phase_id")]
+    lines = [
+        "# Memory Handoff",
+        "",
+        "## Type",
+        "workflow",
+        "",
+        "## Title",
+        "Brigade phase execution ledger closeout",
+        "",
+        "## Summary",
+        f"Brigade drafted a phase handoff for `{selector}` so durable AFK execution lessons can be reviewed without editing canonical memory directly.",
+        "",
+        "## Durable facts",
+        f"- Handoff id: `{handoff_id}`",
+        f"- Phase selector: `{selector}`",
+        f"- Phase ids: `{', '.join(phase_ids) if phase_ids else 'none'}`",
+        "- Source: local phase execution ledger",
+        "",
+        "## Evidence",
+        "- Phase records are stored in the local phase execution ledger.",
+        "- This draft omits raw logs, private paths, scanner output, and private evidence.",
+        "",
+        "## Recommended memory action",
+        "no-card",
+        "",
+        "## Target document",
+        ".learnings/LEARNINGS.md",
+        "",
+        "## Suggested document content",
+        "### Brigade phase execution ledger closeout",
+        "",
+        f"Phase selector `{selector}` produced a reviewed handoff draft `{handoff_id}`. Preserve the useful AFK execution lesson after checking the local phase ledger evidence.",
+        "",
+        "Phase summaries:",
+    ]
+    for record in records:
+        summary = _safe_handoff_text(record.get("implementation_summary") or record.get("title") or record.get("status"))
+        lines.append(f"- `{record.get('phase_id')}` `{record.get('status')}`: {summary}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def handoff(*, target: Path, selector: str, lint: bool = False, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    records, missing, parsed_range = _selected_records(target, selector)
+    if missing or not records:
+        print(f"error: phase selector has missing records: {', '.join(missing or [selector])}", file=sys.stderr)
+        return 1
+    handoff_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-phase-handoff-{uuid4().hex[:6]}"
+    path = _handoff_root(target) / f"{handoff_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_phase_handoff_content(records, selector=selector, handoff_id=handoff_id))
+    lint_payload: dict[str, Any] = {"requested": lint, "status": "not-run", "errors": [], "warnings": []}
+    if lint:
+        from . import handoff_cmd
+
+        result = handoff_cmd.lint_file(path)
+        lint_payload = {
+            "requested": True,
+            "status": "passed" if result.valid else "failed",
+            "errors": list(result.errors),
+            "warnings": list(result.warnings),
+        }
+    attachment = {
+        "handoff_id": handoff_id,
+        "path": str(path),
+        "selector": selector,
+        "phase_range": parsed_range,
+        "created_at": _now().isoformat(),
+        "lint": lint_payload,
+        "target_document": ".learnings/LEARNINGS.md",
+        "source_fingerprint": _source_fingerprint(records, {"handoff_id": handoff_id}),
+    }
+    for record in records:
+        record_path, current = _find_record(target, str(record.get("phase_id")))
+        if current is None:
+            continue
+        handoffs = current.get("phase_handoffs") if isinstance(current.get("phase_handoffs"), list) else []
+        handoffs.append(attachment)
+        current["phase_handoffs"] = handoffs[-20:]
+        attachments = current.get("evidence_attachments") if isinstance(current.get("evidence_attachments"), list) else []
+        attachments.append(
+            {
+                "attached_at": _now().isoformat(),
+                "files_changed": [],
+                "tests_run": [],
+                "test_result_summary": "",
+                "report_ids": [],
+                "handoff_paths": [str(path)],
+                "notes": [f"phase handoff draft {handoff_id}"],
+            }
+        )
+        current["evidence_attachments"] = attachments[-50:]
+        current["updated_at"] = _now().isoformat()
+        current["path"] = str(record_path)
+        _write_json(record_path, current)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-handoff"),
+        "target": str(target),
+        "selector": selector,
+        "phase_range": parsed_range,
+        "phase_ids": [record.get("phase_id") for record in records],
+        "handoff_id": handoff_id,
+        "path": str(path),
+        "lint": lint_payload,
+        "suggested_next_command": f"brigade handoff lint --target . {path}",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase handoff: {handoff_id}")
+        print(f"path: {path}")
+        print(f"lint: {lint_payload['status']}")
+    return 1 if lint_payload["status"] == "failed" else 0
 
 
 def compare(*, target: Path, selector: str, json_output: bool = False) -> int:
