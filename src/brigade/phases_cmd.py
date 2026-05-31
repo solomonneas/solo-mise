@@ -22,6 +22,11 @@ DONE_STATUSES = {"implemented", "verified", "committed", "pushed"}
 STALE_IN_PROGRESS_HOURS = 12
 REPORT_STALE_HOURS = 24
 STALE_UNREVIEWED_COMPLETED_HOURS = 24
+PRIVACY_PATTERNS = {
+    "private_path": re.compile(r"/(?:home|Users|private|mnt|Volumes)/[^\s`\"'<>]+"),
+    "token_like": re.compile(r"(?i)(token|secret|password|api[_-]?key)\s*[=:]\s*[^\s`\"'<>]+"),
+    "private_url": re.compile(r"https?://[^\s`\"'<>]+"),
+}
 
 
 def _now() -> datetime:
@@ -1848,6 +1853,85 @@ def reconcile(*, target: Path, selector: str, json_output: bool = False) -> int:
         for check in checks:
             print(f"[{check['status']}] {check['name']}: {check['detail']}")
     return 0
+
+
+def _privacy_findings_for_text(text: str, *, source: str) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for name, pattern in PRIVACY_PATTERNS.items():
+        for match in pattern.finditer(text):
+            line_number = text.count("\n", 0, match.start()) + 1
+            findings.append(
+                {
+                    "status": "warn",
+                    "name": f"phase_privacy_{name}",
+                    "source": source,
+                    "line": line_number,
+                    "detail": f"{name} pattern found in phase evidence",
+                }
+            )
+            break
+    return findings
+
+
+def privacy(*, target: Path, selector: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    records, missing, parsed_range = _selected_records(target, selector)
+    findings: list[dict[str, Any]] = []
+    if missing:
+        findings.append({"status": "warn", "name": "phase_privacy_missing_records", "source": selector, "line": None, "detail": f"missing phase record(s): {', '.join(missing)}"})
+    scan_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-phase-privacy-{uuid4().hex[:6]}"
+    for record in records:
+        phase_findings: list[dict[str, Any]] = []
+        for rel_path in record.get("files_changed") or []:
+            path = target / str(rel_path)
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            phase_findings.extend(_privacy_findings_for_text(text, source=str(rel_path)))
+        if record.get("implementation_summary"):
+            phase_findings.extend(_privacy_findings_for_text(str(record.get("implementation_summary")), source=f"{record.get('phase_id')}:summary"))
+        findings.extend([{**finding, "phase_id": record.get("phase_id")} for finding in phase_findings])
+        path, current = _find_record(target, str(record.get("phase_id")))
+        if current is not None:
+            checks = current.get("privacy_checks") if isinstance(current.get("privacy_checks"), list) else []
+            checks.append(
+                {
+                    "scan_id": scan_id,
+                    "scanned_at": _now().isoformat(),
+                    "selector": selector,
+                    "finding_count": len(phase_findings),
+                    "status": "blocked" if phase_findings else "clean",
+                }
+            )
+            current["privacy_checks"] = checks[-20:]
+            current["updated_at"] = _now().isoformat()
+            current["path"] = str(path)
+            _write_json(path, current)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-privacy"),
+        "target": str(target),
+        "selector": selector,
+        "phase_range": parsed_range,
+        "scan_id": scan_id,
+        "record_count": len(records),
+        "findings": findings,
+        "finding_count": len(findings),
+        "status": "blocked" if findings else "clean",
+        "suggested_next_command": "brigade work phases privacy " + selector,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase privacy: {selector}")
+        print(f"status: {payload['status']}")
+        print(f"findings: {len(findings)}")
+        for finding in findings:
+            print(f"[{finding['status']}] {finding['name']}: {finding['source']}")
+    return 1 if findings else 0
 
 
 def compare(*, target: Path, selector: str, json_output: bool = False) -> int:

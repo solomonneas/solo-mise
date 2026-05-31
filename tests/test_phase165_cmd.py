@@ -663,3 +663,23 @@ def test_phase_reconcile_reports_git_evidence_warnings(tmp_path, capsys, monkeyp
     assert "phase_reconcile_dirty_worktree" in names
     assert "phase_reconcile_commit_missing" in names
     assert "phase_reconcile_pushed_without_ref" in names
+
+
+def test_phase_privacy_scans_evidence_and_records_summary(tmp_path, capsys):
+    public_file = tmp_path / "public.txt"
+    public_file.write_text("api_" + "key=example\n")
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--phase-id", "phase-219", "--title", "Privacy", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "evidence", "add", "phase-219", "--target", str(tmp_path), "--file", "public.txt", "--json"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["work", "phases", "privacy", "phase-219", "--target", str(tmp_path), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "blocked"
+    assert payload["finding_count"] == 1
+    assert payload["findings"][0]["name"] == "phase_privacy_token_like"
+    assert "example" not in payload["findings"][0]["detail"]
+
+    assert cli.main(["work", "phases", "show", "phase-219", "--target", str(tmp_path), "--json"]) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["privacy_checks"][-1]["status"] == "blocked"

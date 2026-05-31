@@ -66,6 +66,7 @@ Release and operator review surfaces include phase session state so stale or unr
 `brigade work phases evidence add` appends local files, tests, report ids, handoff paths, and notes to a phase record without running commands.
 `brigade work phases verify plan/record` keeps expected verification and recorded outcomes visible without executing tests.
 `brigade work phases reconcile` checks recorded commit and push evidence against local git state without changing git.
+`brigade work phases privacy` scans phase evidence for protected private or reference values and records only redacted finding summaries.
 Phase ledger compare checks make it clear when local HEAD, referenced files, reports, or doctor issue counts drift after a phase is recorded.
 Phase ledger action queues turn those ledger issues into local metadata-only next steps without executing commands.
 The daily driver can select those phase-ledger actions when they block AFK or release completion, then start one action or build one phase report as a bounded local step.
