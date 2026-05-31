@@ -1059,6 +1059,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_actions_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_work_phases_actions_import.add_argument("--dry-run", action="store_true", help="Report imports without writing them.")
     p_work_phases_actions_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_goal = phases_sub.add_parser("goal", help="Draft reviewed phase goal prompts.")
+    phases_goal_sub = p_work_phases_goal.add_subparsers(dest="phases_goal_command", metavar="<phases-goal-command>")
+    phases_goal_sub.required = True
+    p_work_phases_goal_scaffold = phases_goal_sub.add_parser("scaffold", help="Draft a local goal prompt from phase ledger state.")
+    p_work_phases_goal_scaffold.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_goal_scaffold.add_argument("--range", dest="phase_range", required=True, help="Phase range, such as 211-225.")
+    p_work_phases_goal_scaffold.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_report = phases_sub.add_parser("report", help="Build and inspect phase ledger reports.")
     phases_report_sub = p_work_phases_report.add_subparsers(dest="phases_report_command", metavar="<phases-report-command>")
     phases_report_sub.required = True
@@ -3204,6 +3211,11 @@ def main(argv=None) -> int:
                 if args.phases_actions_command == "import-issues":
                     return phases_cmd.actions_import_issues(target=args.target, dry_run=args.dry_run, json_output=args.json)
                 parser.error(f"unknown phases actions command: {args.phases_actions_command}")
+                return 2
+            if args.phases_command == "goal":
+                if args.phases_goal_command == "scaffold":
+                    return phases_cmd.goal_scaffold(target=args.target, phase_range=args.phase_range, json_output=args.json)
+                parser.error(f"unknown phases goal command: {args.phases_goal_command}")
                 return 2
             if args.phases_command == "report":
                 if args.phases_report_command == "build":

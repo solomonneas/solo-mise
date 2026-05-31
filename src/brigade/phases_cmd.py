@@ -61,6 +61,10 @@ def _session_reports_root(target: Path) -> Path:
     return _root(target) / "session-reports"
 
 
+def _goals_root(target: Path) -> Path:
+    return _root(target) / "goals"
+
+
 def _index_path(target: Path) -> Path:
     return _root(target) / "index.json"
 
@@ -772,6 +776,13 @@ def _read_sessions(target: Path) -> list[dict[str, Any]]:
 def _latest_session(target: Path) -> dict[str, Any] | None:
     sessions = _read_sessions(target)
     return sessions[-1] if sessions else None
+
+
+def _latest_session_for_range(target: Path, phase_range: str) -> dict[str, Any] | None:
+    for session in reversed(_read_sessions(target)):
+        if str(session.get("phase_range") or "") == phase_range:
+            return session
+    return None
 
 
 def _read_session_reports(target: Path) -> list[dict[str, Any]]:
@@ -1660,6 +1671,105 @@ def session_import_issues(*, target: Path, session_id: str, dry_run: bool = Fals
         print(f"phase session imports: {session.get('session_id')}")
         print(f"created: {len(created)}")
         print(f"skipped: {len(skipped)}")
+    return 0
+
+
+def _goal_scaffold_markdown(payload: dict[str, Any]) -> str:
+    blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    records = payload.get("records") if isinstance(payload.get("records"), list) else []
+    lines = [
+        f"/goal Brigade phases {payload['phase_range']}: continue AFK phase execution from ledger state",
+        "",
+        "Use docs/phase-execution-ledger.md and docs/roadmap-completion-plan.md as the source of truth.",
+        "",
+        "Primary objective:",
+        "Continue the declared phase range without compression. Each phase needs its own ledger evidence, focused verification, commit evidence, and explicit deferral if it cannot be completed.",
+        "",
+        "Current ledger state:",
+        f"- Phase range: {payload['phase_range']}",
+        f"- Existing records: {payload['record_count']}",
+        f"- Missing records: {', '.join(payload['missing_phase_ids']) if payload['missing_phase_ids'] else 'none'}",
+        f"- Latest session: {payload.get('session_id') or 'none'}",
+        f"- Suggested next command: `{payload['suggested_next_command']}`",
+        "",
+        "Phase status:",
+    ]
+    for record in records:
+        lines.append(f"- `{record.get('phase_id')}` `{record.get('status')}`")
+    lines.extend(["", "Unresolved blockers:"])
+    if blockers:
+        for blocker in blockers[:20]:
+            lines.append(f"- `{blocker.get('name')}` `{blocker.get('phase_id') or 'session'}`: {_safe_handoff_text(blocker.get('detail'))}")
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "Execution rules:",
+            "- Start each phase before editing for it.",
+            "- Complete each phase only after implementation, focused tests, and commit evidence.",
+            "- Do not mark pushed until push evidence exists.",
+            "- Do not compress phases unless a grouped record already exists.",
+            "- If a phase is too large, defer it with a concrete reason and move on.",
+            "",
+            "Safety boundaries:",
+            "- No remote mutation except a final normal push when explicitly required by the phase goal.",
+            "- No daemon, scheduler, automatic promotion, automatic memory edits, or arbitrary command execution.",
+            "- Do not copy raw logs, private paths, raw scanner output, private evidence, tokens, hostnames, private repo names, owner names, or org names into public files.",
+            "",
+            "Acceptance:",
+            "- Every phase in the range is implemented or explicitly deferred.",
+            "- Tests and git diff checks pass.",
+            "- Privacy scan passes.",
+            "- Memory Handoff is written and linted or explicitly deferred.",
+            "- Ledger records contain implementation, verification, commit, and push evidence where applicable.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def goal_scaffold(*, target: Path, phase_range: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    try:
+        parsed = _parse_range(phase_range)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if parsed is None:
+        print("error: --range is required", file=sys.stderr)
+        return 2
+    rendered_range = f"{parsed[0]}-{parsed[1]}"
+    records, missing, _ = _selected_records(target, rendered_range)
+    doctor_data = doctor_payload(target, phase_range=rendered_range)
+    session = _latest_session_for_range(target, rendered_range)
+    next_command = f"brigade work phases session next {session.get('session_id')}" if session else f"brigade work phases next --range {rendered_range}"
+    goal_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-phase-goal-{uuid4().hex[:6]}"
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-goal-scaffold"),
+        "target": str(target),
+        "goal_id": goal_id,
+        "phase_range": rendered_range,
+        "session_id": session.get("session_id") if isinstance(session, dict) else None,
+        "records": [_record_summary(record) for record in records],
+        "record_count": len(records),
+        "missing_phase_ids": missing,
+        "blockers": [check for check in doctor_data["checks"] if check.get("status") != "ok"],
+        "blocker_count": doctor_data["issue_count"],
+        "suggested_next_command": next_command,
+        "source_fingerprint": _source_fingerprint(records, {"phase_range": rendered_range, "missing": missing, "issue_count": doctor_data["issue_count"]}),
+    }
+    path = _goals_root(target) / f"{goal_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_goal_scaffold_markdown(payload))
+    payload["path"] = str(path)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase goal scaffold: {goal_id}")
+        print(f"range: {rendered_range}")
+        print(f"path: {path}")
+        print(f"blockers: {payload['blocker_count']}")
     return 0
 
 

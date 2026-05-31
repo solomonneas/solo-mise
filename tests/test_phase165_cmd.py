@@ -660,6 +660,28 @@ def test_phase_session_import_issues_dedupes_blockers(tmp_path, capsys):
     assert dismissed_skip["skipped"][0]["status"] == "dismissed"
 
 
+def test_phase_goal_scaffold_builds_safe_goal_draft(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "224-225", "--title", "Goal", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "complete", "phase-224", "--target", str(tmp_path), "--summary", "Needs test evidence.", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "224-225", "--goal", "goal session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+
+    assert cli.main(["work", "phases", "goal", "scaffold", "--target", str(tmp_path), "--range", "224-225", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["phase_range"] == "224-225"
+    assert payload["session_id"] == session["session_id"]
+    assert payload["blocker_count"] >= 1
+    goal_path = tmp_path / payload["path"]
+    assert goal_path.is_file()
+    content = goal_path.read_text()
+    assert content.startswith("/goal Brigade phases 224-225")
+    assert "Use docs/phase-execution-ledger.md" in content
+    assert str(tmp_path) not in content
+    assert "raw logs" in content
+
+
 def test_daily_driver_surfaces_and_runs_phase_session_step(tmp_path, capsys):
     assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "214-215", "--title", "Daily", "--goal", "afk", "--json"]) == 0
     capsys.readouterr()

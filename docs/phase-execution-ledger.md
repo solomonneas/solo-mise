@@ -43,6 +43,7 @@ brigade work phases actions done <action-id>
 brigade work phases actions defer <action-id> --reason "..."
 brigade work phases actions archive --completed
 brigade work phases actions import-issues
+brigade work phases goal scaffold --range 211-225
 brigade work phases report build --range 165-170
 brigade work phases report list
 brigade work phases report show latest
@@ -148,6 +149,8 @@ Closeouts can be `reviewed`, `deferred`, `blocked`, or `archived`. Each record s
 `brigade work phases actions plan` previews local action records from phase doctor issues and closeout blockers. `actions build` writes deduped metadata-only actions under `.brigade/work/phases/actions/`. `start`, `done`, `defer`, and `archive` only update local action metadata. They never execute suggested commands.
 
 `brigade work phases actions import-issues` routes open phase action records into the work inbox as `source: phase-ledger-action` task imports. Imports preserve the action id, phase id, issue type, safe summary, suggested command, and source fingerprint, then dedupe through the normal import path.
+
+`brigade work phases goal scaffold --range <range>` writes a local editable `/goal` draft under `.brigade/work/phases/goals/`. The draft is generated from ledger records, matching session state, unresolved blockers, and roadmap references. It deliberately omits raw logs, private paths, private repo names, and private evidence.
 
 `brigade work phases report build` writes a local bundle under:
 
