@@ -5314,6 +5314,8 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "top_issue": phase_health["top_issue"],
             "latest": phase_health["latest"],
             "latest_session": phase_health.get("latest_session"),
+            "latest_session_checkpoint": phase_health.get("latest_session_checkpoint"),
+            "latest_session_checkpoint_compare": phase_health.get("latest_session_checkpoint_compare"),
             "latest_session_report": phase_health.get("latest_session_report"),
             "open_action_count": phase_health.get("open_action_count", 0),
             "top_action": phase_health.get("top_action"),
@@ -5989,6 +5991,11 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
         latest_phase_session = phase_ledger.get("latest_session") if isinstance(phase_ledger.get("latest_session"), dict) else None
         if latest_phase_session:
             print(f"phase_session: {latest_phase_session.get('session_id')} [{latest_phase_session.get('status')}]")
+        latest_checkpoint = phase_ledger.get("latest_session_checkpoint") if isinstance(phase_ledger.get("latest_session_checkpoint"), dict) else None
+        latest_checkpoint_compare = phase_ledger.get("latest_session_checkpoint_compare") if isinstance(phase_ledger.get("latest_session_checkpoint_compare"), dict) else None
+        if latest_checkpoint:
+            compare_count = latest_checkpoint_compare.get("issue_count") if isinstance(latest_checkpoint_compare, dict) else 0
+            print(f"phase_checkpoint: {latest_checkpoint.get('checkpoint_id')} [{latest_checkpoint.get('status')}] issues={compare_count}")
         top_phase = phase_ledger.get("top_issue") if isinstance(phase_ledger.get("top_issue"), dict) else None
         if top_phase:
             print(f"phase_top_issue: {top_phase.get('name')} {_short(str(top_phase.get('detail', '')))}")

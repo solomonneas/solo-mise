@@ -583,6 +583,10 @@ def test_phase_session_checkpoint_records_recovery_metadata(tmp_path, capsys):
     center_reviews = center_cmd._reviews(tmp_path)
     checkpoint_reviews = [item for item in center_reviews if item["subsystem"] == "phase-session-checkpoint"]
     assert any(item["local_id"] == checkpoint["checkpoint_id"] and item["status"] == "blocked" for item in checkpoint_reviews)
+    assert work_cmd.brief(target=tmp_path, json_output=True) == 0
+    brief_payload = json.loads(capsys.readouterr().out)
+    assert brief_payload["phase_ledger"]["latest_session_checkpoint"]["checkpoint_id"] == checkpoint["checkpoint_id"]
+    assert brief_payload["phase_ledger"]["latest_session_checkpoint_compare"]["issue_count"] >= 1
 
     assert cli.main(["work", "phases", "session", "resume", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
     resume_with_checkpoint = json.loads(capsys.readouterr().out)
