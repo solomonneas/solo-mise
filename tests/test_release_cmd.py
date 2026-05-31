@@ -7,6 +7,7 @@ from pathlib import Path
 
 from brigade import cli
 from brigade import handoff_cmd
+from brigade import phases_cmd
 from brigade import release_cmd
 from brigade import security_cmd
 from brigade import tools_cmd
@@ -459,6 +460,52 @@ def test_release_candidate_plan_build_list_show_archive(tmp_path, monkeypatch, c
     archive = json.loads(capsys.readouterr().out)
     assert Path(archive["archive_path"], "EVIDENCE.json").is_file()
     assert not candidate_dir.exists()
+
+
+def test_release_phase_ledger_closeout_and_report_evidence(tmp_path, monkeypatch, capsys):
+    _init_repo(tmp_path)
+    _seed_ready_evidence(tmp_path)
+    _patch_clean_health(monkeypatch)
+    _patch_content_guard(monkeypatch)
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-280", title="Release phase", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(
+        target=tmp_path,
+        phase_id="phase-280",
+        status="pushed",
+        summary="Release evidence",
+        files_changed=["README.md"],
+        tests_run=["pytest"],
+        commit_hash="abc123",
+        push_ref="main",
+        json_output=True,
+    ) == 0
+    capsys.readouterr()
+
+    assert release_cmd.doctor(target=tmp_path, base_ref=None, json_output=True) == 0
+    doctor = json.loads(capsys.readouterr().out)
+    check_names = {check["name"] for check in doctor["checks"]}
+    assert "phase_ledger_unreviewed_pushed_phase" in check_names
+    assert "phase_ledger_missing_report" in check_names
+
+    assert phases_cmd.closeout(target=tmp_path, selector="phase-280", status="reviewed", reason="Release reviewed.", json_output=True) == 0
+    closeout = json.loads(capsys.readouterr().out)
+    assert phases_cmd.report_build(target=tmp_path, json_output=True) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert release_cmd.candidate_build(target=tmp_path, base_ref=None, json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    assert candidate["phase_ledger"]["latest_closeout"]["closeout_id"] == closeout["closeout_id"]
+    assert candidate["phase_ledger"]["latest_report"]["report_id"] == report["report_id"]
+
+    assert phases_cmd.closeout(target=tmp_path, selector="phase-280", status="blocked", reason="Needs another look.", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.report_build(target=tmp_path, json_output=True) == 0
+    capsys.readouterr()
+    assert release_cmd.candidate_compare(target=tmp_path, candidate_id=candidate["candidate_id"], json_output=True) == 1
+    compare = json.loads(capsys.readouterr().out)
+    compare_names = {issue["name"] for issue in compare["issues"]}
+    assert "newer_phase_closeout" in compare_names
+    assert "newer_phase_report" in compare_names
 
 
 def test_release_schema_manifest_reports_contracts_and_latest_receipts(tmp_path, monkeypatch, capsys):

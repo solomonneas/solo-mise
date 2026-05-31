@@ -630,6 +630,7 @@ def _read_closeouts(target: Path) -> list[dict[str, Any]]:
             continue
         payload.setdefault("path", str(path))
         closeouts.append(payload)
+    closeouts.sort(key=lambda item: str(item.get("reviewed_at") or item.get("closeout_id") or ""))
     return closeouts
 
 
@@ -876,13 +877,23 @@ def health(target: Path) -> dict[str, Any]:
     payload = doctor_payload(target)
     records = _records(target)
     open_records = [record for record in records if record.get("status") in {"pending", "in-progress", "blocked"}]
-    closeouts = _read_closeouts(target.expanduser().resolve())
+    target = target.expanduser().resolve()
+    closeouts = _read_closeouts(target)
+    latest_report = _latest_report(target)
     return {
-        "records_path": str(_records_root(target.expanduser().resolve())),
+        "records_path": str(_records_root(target)),
         "record_count": len(records),
         "open_count": len(open_records),
         "latest": _record_summary(records[-1]) if records else None,
         "latest_closeout": closeouts[-1] if closeouts else None,
+        "latest_report": {
+            "report_id": latest_report.get("report_id"),
+            "created_at": latest_report.get("created_at"),
+            "path": latest_report.get("path"),
+            "issue_count": (latest_report.get("doctor") or {}).get("issue_count") if isinstance(latest_report.get("doctor"), dict) else None,
+        }
+        if latest_report
+        else None,
         "closeout_count": len(closeouts),
         "checks": payload["checks"],
         "issue_count": payload["issue_count"],
