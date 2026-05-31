@@ -540,3 +540,33 @@ def test_phase_session_report_bundle(tmp_path, capsys):
     assert cli.main(["work", "phases", "session", "report", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)
     assert shown["report_id"] == report_id
+
+
+def test_daily_driver_surfaces_and_runs_phase_session_step(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "214-215", "--title", "Daily", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "214-215", "--goal", "daily session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+
+    assert daily_cmd.status(target=tmp_path, json_output=True) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["phase_session"]["session_id"] == session["session_id"]
+
+    assert daily_cmd.plan(target=tmp_path, json_output=True) == 0
+    plan_payload = json.loads(capsys.readouterr().out)
+    assert plan_payload["selected_action"]["source_subsystem"] == "phase-session"
+    assert plan_payload["selected_action"]["action_type"] == "build-phase-session-report"
+
+    assert daily_cmd.review(target=tmp_path, json_output=True) == 0
+    review_payload = json.loads(capsys.readouterr().out)
+    assert review_payload["selected_adapter"] == "brigade work phases session report build"
+
+    assert daily_cmd.run(target=tmp_path, json_output=True) == 0
+    run_payload = json.loads(capsys.readouterr().out)
+    assert run_payload["status"] == "completed"
+    assert run_payload["adapter_result"]["action_type"] == "build-phase-session-report"
+    assert (tmp_path / ".brigade" / "work" / "phases" / "session-reports").is_dir()
+
+    assert daily_cmd.doctor(target=tmp_path, json_output=True) == 0
+    doctor_payload = json.loads(capsys.readouterr().out)
+    assert any(check["name"] == "phase_session_active" for check in doctor_payload["checks"])

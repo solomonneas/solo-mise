@@ -671,6 +671,44 @@ def _phase_ledger_issue_candidates(target: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _phase_session_candidates(target: Path) -> list[dict[str, Any]]:
+    session = phases_cmd._latest_session(target)
+    if not isinstance(session, dict) or session.get("status") in {"closed", "archived"}:
+        return []
+    try:
+        next_payload = phases_cmd._session_next_payload(target, session)
+    except ValueError:
+        return []
+    step = next_payload.get("next_step") if isinstance(next_payload.get("next_step"), dict) else {}
+    step_type = str(step.get("step_type") or "session")
+    if step_type == "session_reviewed":
+        return []
+    session_id = str(session.get("session_id") or "latest")
+    action_type = "closeout-phase-session" if step_type == "session_closeout_needed" else "build-phase-session-report"
+    score = 260 if step_type in {"missing_record", "pending_phase", "blocked_phase", "stale_in_progress_phase", "session_closeout_needed"} else 125
+    return [
+        _candidate(
+            target=target,
+            action_type=action_type,
+            source_subsystem="phase-session",
+            source_local_id=session_id,
+            safe_summary=str(step.get("detail") or "phase execution session needs review"),
+            suggested_next_command=str(next_payload.get("suggested_next_command") or "brigade work phases session next latest"),
+            score=score,
+            ranking_reasons=[
+                "active phase execution session",
+                f"next_step={step_type}",
+                "blocks AFK completion" if score >= 180 else "session follow-up",
+            ],
+            approval_required=False,
+            risk_level="low",
+            evidence_refs=[str(phases_cmd._sessions_root(target))],
+            source_fingerprint=_fingerprint({"session_id": session_id, "next_step": step}),
+            metadata={"session_id": session_id, "step_type": step_type},
+        )
+    ]
+
+
 def _all_candidates(target: Path) -> list[dict[str, Any]]:
     config, _ = _load_config(target)
     candidates = [
@@ -678,6 +716,7 @@ def _all_candidates(target: Path) -> list[dict[str, Any]]:
         *_pending_import_candidates(target),
         *_center_action_candidates(target),
         *_readiness_candidates(target),
+        *_phase_session_candidates(target),
         *_phase_ledger_action_candidates(target),
         *_phase_ledger_issue_candidates(target),
         *_health_issue_candidates(target),
@@ -724,6 +763,8 @@ def _adapter_for(action: dict[str, Any] | None) -> str | None:
         "build-operator-report": "brigade center report build",
         "start-phase-action": "brigade work phases actions start",
         "build-phase-report": "brigade work phases report build",
+        "build-phase-session-report": "brigade work phases session report build",
+        "closeout-phase-session": "brigade work phases session closeout",
         "review-center-action": "review-only",
         "review-phase-action": "review-only",
         "review-health-issue": "review-only",
@@ -990,6 +1031,11 @@ def _evidence_blockers(target: Path, action: dict[str, Any] | None) -> list[str]
         action_id = str(metadata.get("action_id") or source_id)
         if not any(str(item.get("action_id")) == action_id and item.get("status") in {"pending", "active"} for item in phases_cmd._read_actions(target)):
             return [f"phase action not found: {action_id}"]
+    if action_type in {"build-phase-session-report", "closeout-phase-session"}:
+        session_id = str(metadata.get("session_id") or source_id)
+        _path, session, _error = phases_cmd._resolve_session(target, session_id)
+        if session is None:
+            return [f"phase session not found: {session_id}"]
     return []
 
 
@@ -1033,6 +1079,7 @@ def status_payload(target: Path) -> dict[str, Any]:
     latest_report = center_cmd.latest_report(target)
     daily_health = health(target)
     phase_health = phases_cmd.health(target)
+    latest_phase_session = phases_cmd._latest_session(target)
     approvals = daily_health.get("approvals") if isinstance(daily_health.get("approvals"), dict) else {}
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1042,6 +1089,7 @@ def status_payload(target: Path) -> dict[str, Any]:
         "config_checks": config_checks,
         "daily_health": daily_health,
         "phase_ledger": phase_health,
+        "phase_session": phases_cmd._session_summary(latest_phase_session) if isinstance(latest_phase_session, dict) else None,
         "top_pending_approval": approvals.get("top_pending"),
         "telemetry": daily_health.get("telemetry"),
         "active_session": center.get("active_session"),
@@ -1080,6 +1128,9 @@ def status(*, target: Path, json_output: bool = False) -> int:
     if phase_ledger:
         print(f"phase_records: {phase_ledger.get('record_count', 0)}")
         print(f"phase_issues: {phase_ledger.get('issue_count', 0)}")
+    phase_session = payload.get("phase_session") if isinstance(payload.get("phase_session"), dict) else None
+    if phase_session:
+        print(f"phase_session: {phase_session.get('session_id')} [{phase_session.get('status')}]")
     blocker = payload.get("top_readiness_blocker")
     print(f"top_readiness_blocker: {blocker.get('safe_summary') if isinstance(blocker, dict) else 'none'}")
     print(f"next: {payload['next_recommended_command']}")
@@ -1512,6 +1563,18 @@ def run(
             rc = phases_cmd.report_build(target=target)
         receipt["commands_invoked"].append({"command": "brigade work phases report build", "exit_code": rc})
         receipt["adapter_result"]["commands_invoked"].append({"command": "brigade work phases report build", "exit_code": rc})
+    elif action_type == "build-phase-session-report":
+        session_id = str((action.get("metadata") or {}).get("session_id") or action.get("source_local_id") or "latest")
+        with redirect_stdout(StringIO()):
+            rc = phases_cmd.session_report_build(target=target, session_id=session_id)
+        receipt["commands_invoked"].append({"command": f"brigade work phases session report build {session_id}", "exit_code": rc})
+        receipt["adapter_result"]["commands_invoked"].append({"command": f"brigade work phases session report build {session_id}", "exit_code": rc})
+    elif action_type == "closeout-phase-session":
+        session_id = str((action.get("metadata") or {}).get("session_id") or action.get("source_local_id") or "latest")
+        with redirect_stdout(StringIO()):
+            rc = phases_cmd.session_closeout(target=target, session_id=session_id, status="reviewed", reason="Daily driver reviewed completed phase session.")
+        receipt["commands_invoked"].append({"command": f"brigade work phases session closeout {session_id}", "exit_code": rc})
+        receipt["adapter_result"]["commands_invoked"].append({"command": f"brigade work phases session closeout {session_id}", "exit_code": rc})
     else:
         receipt["blockers"].append(f"selected action is review-only: {action_type}")
         rc = 1
@@ -1797,6 +1860,7 @@ def health(target: Path) -> dict[str, Any]:
     approvals, approval_errors = _read_approvals(target)
     telemetry_events, telemetry_errors = _telemetry_events(target)
     phase_health = phases_cmd.health(target)
+    latest_phase_session = phases_cmd._latest_session(target)
     for error in [*run_errors, *plan_errors]:
         checks.append({"status": "fail", "name": "daily_receipt_parse", "detail": f"{error['path']}: {error['error']}"})
     for error in approval_errors:
@@ -1839,6 +1903,8 @@ def health(target: Path) -> dict[str, Any]:
     if phase_health.get("issue_count"):
         top_phase_issue = phase_health.get("top_issue") if isinstance(phase_health.get("top_issue"), dict) else {}
         checks.append({"status": "warn", "name": "phase_ledger_issue", "detail": top_phase_issue.get("detail") or "phase execution ledger needs review"})
+    if isinstance(latest_phase_session, dict) and latest_phase_session.get("status") not in {"closed", "archived"}:
+        checks.append({"status": "warn", "name": "phase_session_active", "detail": str(latest_phase_session.get("session_id"))})
     for approval in approvals:
         current = _current_action_for_approval(target, approval)
         if current is None and approval.get("status") in {"pending", "approved"}:
@@ -1871,6 +1937,7 @@ def health(target: Path) -> dict[str, Any]:
             "blocked_run_count": sum(1 for run in runs if run.get("status") == "blocked"),
         },
         "phase_ledger": phase_health,
+        "phase_session": phases_cmd._session_summary(latest_phase_session) if isinstance(latest_phase_session, dict) else None,
         "checks": checks,
         "issue_count": len(active_checks),
         "top_issue": top_issue,
