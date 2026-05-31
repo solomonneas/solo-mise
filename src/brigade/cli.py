@@ -1127,6 +1127,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_session_checkpoints_show.add_argument("checkpoint_id", help="Checkpoint id, unique prefix, or latest.")
     p_work_phases_session_checkpoints_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_phases_session_checkpoints_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session_checkpoints_compare = phases_session_checkpoints_sub.add_parser("compare", help="Compare one checkpoint against current session state.")
+    p_work_phases_session_checkpoints_compare.add_argument("checkpoint_id", help="Checkpoint id, unique prefix, or latest.")
+    p_work_phases_session_checkpoints_compare.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_session_checkpoints_compare.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_session_next = phases_session_sub.add_parser("next", help="Show the next required phase session step.")
     p_work_phases_session_next.add_argument("session_id", nargs="?", default="latest", help="Session id, unique prefix, or latest.")
     p_work_phases_session_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -3268,6 +3272,8 @@ def main(argv=None) -> int:
                         return phases_cmd.session_checkpoint_list(target=args.target, session_id=args.session_id, limit=args.limit, json_output=args.json)
                     if args.phases_session_checkpoints_command == "show":
                         return phases_cmd.session_checkpoint_show(target=args.target, checkpoint_id=args.checkpoint_id, json_output=args.json)
+                    if args.phases_session_checkpoints_command == "compare":
+                        return phases_cmd.session_checkpoint_compare(target=args.target, checkpoint_id=args.checkpoint_id, json_output=args.json)
                     parser.error(f"unknown phases session checkpoints command: {args.phases_session_checkpoints_command}")
                 if args.phases_session_command == "next":
                     return phases_cmd.session_next(target=args.target, session_id=args.session_id, json_output=args.json)

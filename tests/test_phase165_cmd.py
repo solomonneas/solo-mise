@@ -562,6 +562,19 @@ def test_phase_session_checkpoint_records_recovery_metadata(tmp_path, capsys):
     assert checkpoint_shown["checkpoint_id"] == checkpoint["checkpoint_id"]
     assert checkpoint_shown["next_step"]["step_type"] == "pending_phase"
 
+    assert cli.main(["work", "phases", "session", "checkpoints", "compare", "latest", "--target", str(tmp_path), "--json"]) == 0
+    current_compare = json.loads(capsys.readouterr().out)
+    assert current_compare["issue_count"] == 0
+    assert current_compare["checks"][0]["name"] == "phase_session_checkpoint_current"
+
+    assert cli.main(["work", "phases", "start", "phase-226", "--target", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "checkpoints", "compare", checkpoint["checkpoint_id"], "--target", str(tmp_path), "--json"]) == 0
+    stale_compare = json.loads(capsys.readouterr().out)
+    names = {check["name"] for check in stale_compare["checks"]}
+    assert "phase_session_checkpoint_step_changed" in names
+    assert "phase_session_checkpoint_fingerprint_changed" in names
+
     assert cli.main(["work", "phases", "session", "activity", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
     activity = json.loads(capsys.readouterr().out)
     assert any(event["event_type"] == "session-checkpoint" and event["local_id"] == checkpoint["checkpoint_id"] for event in activity["events"])

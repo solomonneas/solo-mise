@@ -1099,6 +1099,67 @@ def session_checkpoint_show(*, target: Path, checkpoint_id: str, json_output: bo
     return 0
 
 
+def _session_checkpoint_compare_payload(target: Path, checkpoint: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(checkpoint.get("session_id") or "")
+    _path, session, error = _resolve_session(target, session_id)
+    checks: list[dict[str, Any]] = []
+    current_next = None
+    if session is None:
+        checks.append(_check("block", "phase_session_checkpoint_missing_session", str(error or "checkpoint session is missing"), suggested="brigade work phases session list"))
+    else:
+        current_next = _session_next_payload(target, session)
+        saved_step = checkpoint.get("next_step") if isinstance(checkpoint.get("next_step"), dict) else {}
+        current_step = current_next.get("next_step") if isinstance(current_next.get("next_step"), dict) else {}
+        if saved_step.get("step_type") != current_step.get("step_type"):
+            checks.append(_check("warn", "phase_session_checkpoint_step_changed", f"{saved_step.get('step_type')} -> {current_step.get('step_type')}", phase_id=current_step.get("phase_id"), suggested="brigade work phases session checkpoint latest"))
+        if saved_step.get("phase_id") != current_step.get("phase_id"):
+            checks.append(_check("warn", "phase_session_checkpoint_phase_changed", f"{saved_step.get('phase_id')} -> {current_step.get('phase_id')}", phase_id=current_step.get("phase_id"), suggested="brigade work phases session checkpoint latest"))
+        if checkpoint.get("suggested_next_command") != current_next.get("suggested_next_command"):
+            checks.append(_check("warn", "phase_session_checkpoint_command_changed", "saved suggested command differs from current session next command", phase_id=current_step.get("phase_id"), suggested="brigade work phases session next latest"))
+        current_fingerprint = _source_fingerprint([], {"session_id": session.get("session_id"), "phase_id": checkpoint.get("phase_id"), "status": checkpoint.get("status"), "next_step": current_step})
+        if checkpoint.get("source_fingerprint") != current_fingerprint:
+            checks.append(_check("warn", "phase_session_checkpoint_fingerprint_changed", "checkpoint source fingerprint differs from current session state", phase_id=current_step.get("phase_id"), suggested="brigade work phases session checkpoint latest"))
+    if not checks:
+        checks.append(_check("ok", "phase_session_checkpoint_current", "checkpoint matches current session next state", phase_id=checkpoint.get("phase_id"), suggested="brigade work phases session checkpoints show latest"))
+    issues = [check for check in checks if check["status"] != "ok"]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-checkpoint-compare"),
+        "target": str(target),
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "session_id": checkpoint.get("session_id"),
+        "phase_id": checkpoint.get("phase_id"),
+        "checkpoint": _checkpoint_summary(checkpoint),
+        "current_next": current_next,
+        "checks": checks,
+        "issue_count": len(issues),
+        "top_issue": issues[0] if issues else None,
+        "suggested_next_command": issues[0]["suggested_next_command"] if issues else "brigade work phases session checkpoints show latest",
+    }
+
+
+def session_checkpoint_compare(*, target: Path, checkpoint_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    checkpoint, error = _resolve_session_checkpoint(target, checkpoint_id)
+    if checkpoint is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    try:
+        payload = _session_checkpoint_compare_payload(target, checkpoint)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session checkpoint compare: {payload['checkpoint_id']}")
+        print(f"issues: {payload['issue_count']}")
+        if payload.get("top_issue"):
+            print(f"top: {payload['top_issue']['name']}")
+        print(f"next: {payload['suggested_next_command']}")
+    return 0
+
+
 def session_closeout(*, target: Path, session_id: str, status: str = "reviewed", reason: str | None = None, json_output: bool = False) -> int:
     if status not in PHASE_SESSION_CLOSEOUT_STATUSES:
         print(f"error: --status must be one of {sorted(PHASE_SESSION_CLOSEOUT_STATUSES)}", file=sys.stderr)
