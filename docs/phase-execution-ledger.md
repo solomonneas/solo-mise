@@ -197,7 +197,7 @@ Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range stat
 
 `brigade work phases session gate <session-id|latest>` reports whether a session is safe to claim complete. The gate requires every phase to be implemented or deferred, tests recorded, commit and push evidence recorded, a clean privacy check, a linted handoff or handoff deferral, phase and session reports, clean report compare checks, and reviewed session closeout. Release doctor and release candidate evidence include the latest gate summary.
 
-`brigade work phases session report build <session-id|latest>` writes a local bundle under `.brigade/work/phases/session-reports/` with `SESSION_REPORT.md` and `SESSION_EVIDENCE.json`. The bundle includes phase records, doctor issues, report compare summary, phase actions, phase-related imports, commits, push refs, test counts, blockers, and suggested next commands.
+`brigade work phases session report build <session-id|latest>` writes a local bundle under `.brigade/work/phases/session-reports/` with `SESSION_REPORT.md` and `SESSION_EVIDENCE.json`. The bundle includes phase records, doctor issues, report compare summary, recovery checkpoints, recovery notes, phase actions, phase-related imports, commits, push refs, test counts, blockers, and suggested next commands.
 
 `brigade work phases import-issues` routes unresolved ledger issues into the scanner-ready work inbox as `source: phase-ledger` task imports. Imports dedupe by a stable source fingerprint and keep promotion explicit.
 

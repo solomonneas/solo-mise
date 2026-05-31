@@ -779,6 +779,10 @@ def test_phase_session_report_bundle(tmp_path, capsys):
     capsys.readouterr()
     assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "213-214", "--goal", "report session", "--json"]) == 0
     session = json.loads(capsys.readouterr().out)
+    assert cli.main(["work", "phases", "session", "checkpoint", session["session_id"], "--target", str(tmp_path), "--summary", "Report checkpoint.", "--json"]) == 0
+    checkpoint = json.loads(capsys.readouterr().out)
+    assert cli.main(["work", "phases", "session", "recovery-note", session["session_id"], "--target", str(tmp_path), "--summary", "Report recovery note.", "--json"]) == 0
+    recovery_note = json.loads(capsys.readouterr().out)
 
     assert cli.main(["work", "phases", "session", "report", "build", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
@@ -786,8 +790,12 @@ def test_phase_session_report_bundle(tmp_path, capsys):
     report_dir = tmp_path / ".brigade" / "work" / "phases" / "session-reports" / report_id
     assert (report_dir / "SESSION_REPORT.md").is_file()
     assert (report_dir / "SESSION_EVIDENCE.json").is_file()
+    report_markdown = (report_dir / "SESSION_REPORT.md").read_text()
+    assert "## Recovery" in report_markdown
     assert report["session"]["session_id"] == session["session_id"]
     assert report["next"]["next_step"]["phase_id"] == "phase-214"
+    assert report["recovery"]["latest_checkpoint"]["checkpoint_id"] == checkpoint["checkpoint_id"]
+    assert report["recovery"]["recovery_notes"][0]["note_id"] == recovery_note["note_id"]
     assert "commit_summary" in report
     assert "test_summary" in report
 

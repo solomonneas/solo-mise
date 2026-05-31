@@ -80,6 +80,7 @@ Center reviews include blocked or stale phase-session checkpoint items with loca
 Work brief includes the latest phase-session checkpoint and compare summary in the phase ledger block.
 Phase action planning can turn blocked or stale phase-session checkpoint issues into local phase actions.
 Session checkpoint archive moves old recovery points into local JSONL metadata so they stop driving latest-checkpoint health.
+Session report bundles include a recovery section with checkpoint and recovery-note summaries.
 `brigade work phases evidence add` appends local files, tests, report ids, handoff paths, and notes to a phase record without running commands.
 `brigade work phases verify plan/record` keeps expected verification and recorded outcomes visible without executing tests.
 `brigade work phases reconcile` checks recorded commit and push evidence against local git state without changing git.

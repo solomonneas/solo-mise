@@ -126,6 +126,7 @@ Implementation scope:
 - Surface latest phase session checkpoint evidence in work brief.
 - Route blocked or stale phase session checkpoint issues into phase action planning.
 - Archive old phase session checkpoints into local JSONL metadata.
+- Add recovery checkpoint and recovery-note sections to phase session reports.
 - Add `brigade work phases session report build/list/show` for local session evidence bundles.
 - Add `brigade work phases session activity` for read-only chronological AFK session timelines.
 - Add `brigade work phases session progress` for read-only session completion, blocker, test, commit, push, and remaining-step summaries.

@@ -2058,6 +2058,19 @@ def _session_report_payload(target: Path, session: dict[str, Any]) -> dict[str, 
     actions = [_action_summary(action) for action in _read_actions(target) if action.get("status") in {"pending", "active"}]
     latest_report = _latest_report(target)
     report_compare = _report_compare_summary(target, latest_report)
+    latest_checkpoint = _latest_checkpoint_for_session(target, session.get("session_id"))
+    checkpoint_compare = None
+    if isinstance(latest_checkpoint, dict):
+        try:
+            checkpoint_compare = _session_checkpoint_compare_payload(target, latest_checkpoint)
+        except ValueError:
+            checkpoint_compare = None
+    recovery_notes = [
+        _recovery_note_summary(note)
+        for note in _read_session_recovery_notes(target)
+        if note.get("session_id") == session.get("session_id")
+    ]
+    open_recovery_notes = [note for note in recovery_notes if note.get("status") not in {"reviewed", "archived"}]
     return {
         "schema_version": SCHEMA_VERSION,
         "schema": _schema("phase-ledger-session-report"),
@@ -2075,6 +2088,20 @@ def _session_report_payload(target: Path, session: dict[str, Any]) -> dict[str, 
             "checks": doctor_data["checks"],
         },
         "next": next_data,
+        "recovery": {
+            "latest_checkpoint": _checkpoint_summary(latest_checkpoint) if isinstance(latest_checkpoint, dict) else None,
+            "checkpoint_compare": {
+                "issue_count": checkpoint_compare.get("issue_count"),
+                "top_issue": checkpoint_compare.get("top_issue"),
+                "suggested_next_command": checkpoint_compare.get("suggested_next_command"),
+            }
+            if isinstance(checkpoint_compare, dict)
+            else None,
+            "recovery_notes": recovery_notes,
+            "recovery_note_count": len(recovery_notes),
+            "open_recovery_note_count": len(open_recovery_notes),
+            "suggested_next_command": "brigade work phases session recovery-notes list" if recovery_notes else "brigade work phases session recovery-note latest",
+        },
         "actions": actions,
         "action_count": len(actions),
         "imports": _session_import_summaries(target),
@@ -2112,9 +2139,29 @@ def _write_session_report_markdown(path: Path, payload: dict[str, Any]) -> None:
         f"- `{payload['next']['next_step']['step_type']}`: {payload['next']['next_step']['detail']}",
         f"- Command: `{payload['next']['suggested_next_command']}`",
         "",
-        "## Records",
+        "## Recovery",
         "",
     ]
+    recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
+    checkpoint = recovery.get("latest_checkpoint") if isinstance(recovery.get("latest_checkpoint"), dict) else None
+    checkpoint_compare = recovery.get("checkpoint_compare") if isinstance(recovery.get("checkpoint_compare"), dict) else {}
+    if checkpoint:
+        lines.append(f"- Checkpoint: `{checkpoint.get('checkpoint_id')}` `{checkpoint.get('status')}`")
+        lines.append(f"- Checkpoint issues: `{checkpoint_compare.get('issue_count', 0)}`")
+    else:
+        lines.append("- Checkpoint: none")
+    notes = recovery.get("recovery_notes") if isinstance(recovery.get("recovery_notes"), list) else []
+    lines.append(f"- Recovery notes: `{len(notes)}`")
+    for note in notes[:10]:
+        if isinstance(note, dict):
+            lines.append(f"- `{note.get('note_id')}` `{note.get('status')}`: {note.get('summary')}")
+    lines.extend(
+        [
+            "",
+            "## Records",
+            "",
+        ]
+    )
     for record in payload.get("phase_records", []):
         lines.append(f"- `{record.get('phase_id')}` `{record.get('status')}` commit=`{record.get('commit_hash') or 'none'}` push=`{record.get('push_ref') or 'none'}`")
     lines.extend(["", "## Blockers", ""])
