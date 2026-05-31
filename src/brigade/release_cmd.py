@@ -834,6 +834,7 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
     learning_health = learn_cmd.health(target)
     projects_health = projects_cmd.health(target)
     repo_health = repos_cmd.health(target)
+    repo_daily_use = repos_cmd.daily_use_health(target)
     roadmap_health = roadmap_cmd.health(target)
     tool_health = tools_cmd.health(target)
     memory_health = memory_cmd.health(target)
@@ -967,6 +968,17 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
             "actions": repo_health.get("actions"),
             "sweep": repo_health.get("sweep"),
             "release_train": repo_health.get("release_train"),
+        },
+        "repo_fleet_daily_use": {
+            "repo_count": repo_daily_use.get("repo_count"),
+            "issue_count": repo_daily_use.get("issue_count"),
+            "top_issue": repo_daily_use.get("top_issue"),
+            "report_issue_count": repo_daily_use.get("report_issue_count"),
+            "action_issue_count": repo_daily_use.get("action_issue_count"),
+            "sweep_issue_count": repo_daily_use.get("sweep_issue_count"),
+            "release_train_issue_count": repo_daily_use.get("release_train_issue_count"),
+            "manual_only": repo_daily_use.get("manual_only"),
+            "privacy": repo_daily_use.get("privacy"),
         },
         "roadmap": {
             "issue_count": roadmap_health.get("issue_count"),
@@ -1284,6 +1296,7 @@ def _candidate_payload(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         "daily_driver": evidence.get("daily_driver"),
         "daily_hardening": evidence.get("daily_hardening"),
         "repo_fleet": evidence.get("repo_fleet"),
+        "repo_fleet_daily_use": evidence.get("repo_fleet_daily_use"),
         "roadmap": evidence.get("roadmap"),
         "git": git,
         "changed_files": changed_files,

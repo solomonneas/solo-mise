@@ -182,7 +182,7 @@ HARDENING_PHASE_TITLES: dict[int, str] = {
 }
 
 
-IMPLEMENTED_HARDENING_PHASES: set[int] = set(range(115, 145))
+IMPLEMENTED_HARDENING_PHASES: set[int] = set(range(115, 155))
 
 
 def _hardening_phases() -> list[dict[str, Any]]:
@@ -2414,9 +2414,25 @@ def hardening_audit_payload(target: Path) -> dict[str, Any]:
         )
 
     repo_health = repos_cmd.health(target)
+    repo_daily_use = repos_cmd.daily_use_health(target)
     if int(repo_health.get("issue_count") or 0) > 0:
         top = repo_health.get("top_issue") if isinstance(repo_health.get("top_issue"), dict) else {}
         findings.append(_hardening_finding(workstream="repo-fleet-daily-use", phase=145, name="repo_fleet_health_issue", severity="medium", safe_summary=str(top.get("detail") or "repo fleet has health issues"), suggested_command="brigade repos doctor", evidence_refs=["repo fleet health"]))
+    for issue in repo_daily_use.get("checks", []) if isinstance(repo_daily_use.get("checks"), list) else []:
+        if not isinstance(issue, dict) or issue.get("status") == "ok":
+            continue
+        findings.append(
+            _hardening_finding(
+                workstream="repo-fleet-daily-use",
+                phase=issue.get("phase") if isinstance(issue.get("phase"), int) else 145,
+                name=str(issue.get("name") or "repo_fleet_daily_use_issue"),
+                severity="medium",
+                safe_summary=str(issue.get("detail") or "repo fleet daily-use issue"),
+                suggested_command=str(issue.get("suggested_next_command") or "brigade repos doctor"),
+                evidence_refs=["repo fleet daily-use health"],
+                metadata={"issue": issue},
+            )
+        )
 
     release_readiness = release_cmd._latest_release_receipt(target)
     release_candidate = release_cmd._latest_candidate(target)

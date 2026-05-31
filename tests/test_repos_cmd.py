@@ -42,6 +42,12 @@ def test_repos_init_list_show_scan_doctor_json(tmp_path, capsys):
     doctored = json.loads(capsys.readouterr().out)
     assert doctored["issue_count"] == 0
 
+    daily_use = repos_cmd.daily_use_health(tmp_path)
+    assert daily_use["manual_only"] is True
+    assert daily_use["privacy"]["safe_labels_only"] is True
+    assert daily_use["issue_count"] >= 1
+    assert any(check["phase"] in {145, 147, 148} for check in daily_use["checks"])
+
 
 def test_repos_claude_fallback_detection_does_not_copy_contents(tmp_path, capsys):
     _init_git_repo(tmp_path)

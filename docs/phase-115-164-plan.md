@@ -102,6 +102,15 @@ Goal: keep fleet reports, actions, dispatch, and release trains visible in daily
 - 153: Document fleet daily-use expectations.
 - 154: Carry fleet state into release evidence.
 
+Status: implemented.
+
+Implementation notes:
+
+- `repos_cmd.daily_use_health` now summarizes repo fleet report, action, sweep, dispatch, release train, manual-only, and privacy health as a compact read-only payload.
+- `brigade daily hardening audit` consumes repo fleet daily-use health and maps fleet findings to phases 145-154.
+- Release readiness and release candidate evidence now include repo fleet daily-use summaries with safe labels, counts, manual-only state, and privacy policy.
+- The daily-use health layer does not run fleet sweeps, dispatch actions, publish, clone, or mutate remotes.
+
 ## Workstream 5: Phase 155-164, Self-Dogfood Release Loop
 
 Goal: make Brigade's own local release path readable through daily receipts and release evidence.

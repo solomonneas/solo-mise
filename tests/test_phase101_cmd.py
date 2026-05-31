@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from brigade import center_cmd, cli, daily_cmd, handoff_cmd, release_cmd, work_cmd
+from brigade import center_cmd, cli, daily_cmd, handoff_cmd, release_cmd, repos_cmd, work_cmd
 
 
 def _write_command_inventory(path, capsys=None):
@@ -954,12 +954,14 @@ def test_release_evidence_and_candidate_include_daily_hardening(tmp_path, capsys
     assert "operator_center_contract" in readiness["evidence"]
     assert readiness["evidence"]["operator_center_contract"]["issue_count"] == 0
     assert "inbox_quality" in readiness["evidence"]
+    assert "repo_fleet_daily_use" in readiness["evidence"]
 
     assert release_cmd.candidate_plan(target=tmp_path, base_ref=None, json_output=True) == 0
     candidate = json.loads(capsys.readouterr().out)
     assert "daily_hardening" in candidate
     assert "operator_center_contract" in candidate
     assert "inbox_quality" in candidate
+    assert "repo_fleet_daily_use" in candidate
 
 
 def test_daily_hardening_center_contract_findings(tmp_path, monkeypatch, capsys):
@@ -1011,3 +1013,25 @@ def test_daily_hardening_inbox_quality_findings(tmp_path, capsys):
     audit = json.loads(capsys.readouterr().out)
     inbox_phases = {finding["phase"] for finding in audit["findings"] if finding["workstream"] == "inbox-evidence-quality"}
     assert {135, 138, 142} <= inbox_phases
+
+
+def test_daily_hardening_repo_fleet_daily_use_findings(tmp_path, monkeypatch, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+
+    monkeypatch.setattr(
+        repos_cmd,
+        "daily_use_health",
+        lambda target: {
+            "issue_count": 2,
+            "checks": [
+                {"status": "warn", "name": "repo_fleet_actions_need_review", "detail": "1 open fleet action", "phase": 146, "suggested_next_command": "brigade repos actions list"},
+                {"status": "warn", "name": "repo_fleet_release_manual_plan_missing", "detail": "manual plan missing", "phase": 151, "suggested_next_command": "brigade repos release show latest"},
+            ],
+        },
+    )
+
+    assert cli.main(["daily", "hardening", "audit", "--target", str(tmp_path), "--json"]) == 0
+    audit = json.loads(capsys.readouterr().out)
+    fleet_phases = {finding["phase"] for finding in audit["findings"] if finding["workstream"] == "repo-fleet-daily-use"}
+    assert {146, 151} <= fleet_phases
+    assert audit["implemented_phase_count"] >= 40

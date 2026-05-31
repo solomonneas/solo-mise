@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import shutil
@@ -4866,6 +4867,103 @@ def health(target: Path) -> dict[str, Any]:
         "sweep": sweep,
         "health_commands": health_registry,
         "release_train": release_train,
+    }
+
+
+def daily_use_health(target: Path) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    data = health(target)
+    checks: list[dict[str, Any]] = []
+    phase_by_bucket = {
+        "report": 145,
+        "actions": 146,
+        "sweep": 147,
+        "release_train": 148,
+    }
+    for bucket_name, phase in phase_by_bucket.items():
+        bucket = data.get(bucket_name) if isinstance(data.get(bucket_name), dict) else {}
+        for check in bucket.get("checks", []) if isinstance(bucket.get("checks"), list) else []:
+            if not isinstance(check, dict) or check.get("status") == OK:
+                continue
+            checks.append({**check, "bucket": bucket_name, "phase": phase})
+    action_health = data.get("actions") if isinstance(data.get("actions"), dict) else {}
+    if int(action_health.get("open_count") or 0):
+        checks.append(
+            {
+                "status": WARN,
+                "name": "repo_fleet_actions_need_review",
+                "detail": f"{action_health.get('open_count')} open fleet action(s)",
+                "bucket": "actions",
+                "phase": 149,
+                "suggested_next_command": "brigade repos actions list",
+            }
+        )
+    action_checks = action_health.get("checks") if isinstance(action_health.get("checks"), list) else []
+    dispatch_checks = [
+        check
+        for check in action_checks
+        if isinstance(check, dict) and str(check.get("name") or "").startswith("repo_fleet_action_")
+    ]
+    if dispatch_checks:
+        checks.append(
+            {
+                "status": WARN,
+                "name": "repo_fleet_dispatch_manual_review",
+                "detail": f"{len(dispatch_checks)} dispatched fleet action(s) need manual reconciliation",
+                "bucket": "dispatch",
+                "phase": 150,
+                "suggested_next_command": "brigade repos actions reconcile",
+            }
+        )
+    release_train = data.get("release_train") if isinstance(data.get("release_train"), dict) else {}
+    latest_train = release_train.get("latest") if isinstance(release_train.get("latest"), dict) else None
+    if latest_train is not None:
+        train_id = str(latest_train.get("train_id") or "")
+        if train_id and not (_release_trains_root(target) / train_id / "MANUAL_PUBLISH_PLAN.md").is_file():
+            checks.append(
+                {
+                    "status": WARN,
+                    "name": "repo_fleet_release_manual_plan_missing",
+                    "detail": f"{train_id} is missing the manual publish plan",
+                    "bucket": "release_train",
+                    "phase": 151,
+                    "suggested_next_command": f"brigade repos release show {train_id}",
+                }
+            )
+    rendered = json.dumps(data, sort_keys=True, default=str)
+    privacy_checks: list[dict[str, Any]] = []
+    if re.search(r"https?://|[A-Za-z0-9_]*(?:token|secret|password|api[_-]?key)[A-Za-z0-9_]*\s*[:=]", rendered):
+        privacy_checks.append(
+            {
+                "status": WARN,
+                "name": "repo_fleet_private_reference",
+                "detail": "repo fleet health includes a private-looking reference",
+                "bucket": "privacy",
+                "phase": 152,
+                "suggested_next_command": "brigade repos doctor",
+            }
+        )
+    checks.extend(privacy_checks)
+    return {
+        "schema_version": 1,
+        "schema": {"name": "repo-fleet-daily-use-health", "version": 1},
+        "target_label": "repo-fleet",
+        "repo_count": data.get("repo_count"),
+        "report_issue_count": int((data.get("report") or {}).get("issue_count") or 0) if isinstance(data.get("report"), dict) else 0,
+        "action_issue_count": int((data.get("actions") or {}).get("issue_count") or 0) if isinstance(data.get("actions"), dict) else 0,
+        "sweep_issue_count": int((data.get("sweep") or {}).get("issue_count") or 0) if isinstance(data.get("sweep"), dict) else 0,
+        "release_train_issue_count": int((data.get("release_train") or {}).get("issue_count") or 0) if isinstance(data.get("release_train"), dict) else 0,
+        "health_command_issue_count": int((data.get("health_commands") or {}).get("issue_count") or 0) if isinstance(data.get("health_commands"), dict) else 0,
+        "manual_only": True,
+        "privacy": {
+            "safe_labels_only": True,
+            "stores_raw_repo_paths": False,
+            "stores_raw_logs": False,
+        },
+        "checks": checks,
+        "issue_count": len(checks),
+        "top_issue": checks[0] if checks else None,
+        "suggested_next_commands": ["brigade repos report build", "brigade repos actions list", "brigade repos release build"] if checks else [],
     }
 
 
