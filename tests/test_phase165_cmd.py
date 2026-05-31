@@ -395,6 +395,29 @@ def test_phase_ledger_actions_defer_requires_reason(tmp_path, capsys):
     assert deferred["review_reason"] == "Waiting for review."
 
 
+def test_phase_ledger_actions_import_issues_dedupes_open_actions(tmp_path, capsys):
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-263", title="Import action", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-263", summary="No evidence", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.actions_build(target=tmp_path, json_output=True) == 0
+    build_payload = json.loads(capsys.readouterr().out)
+    assert build_payload["created_count"] >= 1
+
+    assert cli.main(["work", "phases", "actions", "import-issues", "--target", str(tmp_path), "--json"]) == 0
+    imports = json.loads(capsys.readouterr().out)
+    assert imports["created_count"] >= 1
+    first = imports["created"][0]
+    assert first["source"] == "phase-ledger-action"
+    assert first["metadata"]["phase_action_id"]
+    assert first["metadata"]["source_item_key"].startswith("phase-ledger-action:")
+
+    assert cli.main(["work", "phases", "actions", "import-issues", "--target", str(tmp_path), "--json"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["created_count"] == 0
+    assert second["skipped_count"] >= 1
+
+
 def test_phase_report_compare_warns_on_missing_closeout_and_stale_report(tmp_path, capsys):
     assert phases_cmd.plan(target=tmp_path, phase_id="phase-262", title="Report compare", source_goal="audit", json_output=True) == 0
     capsys.readouterr()

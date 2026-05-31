@@ -86,6 +86,7 @@ brigade work phases import-issues
 brigade work phases actions plan
 brigade work phases actions build
 brigade work phases actions list
+brigade work phases actions import-issues
 brigade work phases report build
 brigade work phases report list
 brigade work phases report show <report-id>
@@ -155,6 +156,8 @@ Each phase record stores the stated goal, status, implementation summary, change
 The phase ledger is surfaced in `brigade daily status`, `brigade daily doctor`, `brigade work brief`, `brigade work doctor`, and `brigade center status`. Future AFK multi-phase work is not complete unless the ledger shows evidence or explicit deferrals.
 
 Phase health includes open phase action counts and the top open phase action. `brigade work brief` and `brigade center status` expose those counts so the daily loop can see whether ledger issues already have local follow-up actions.
+
+Open phase actions can be routed into the normal scanner-ready inbox with `brigade work phases actions import-issues`. The command writes only local imports, preserves phase action provenance, and keeps promotion explicit.
 
 The daily driver also treats phase-ledger actions and unresolved phase issues as candidate work. It ranks them below accepted tasks and high-quality imports unless the issue blocks AFK or release completion. `brigade daily run` may start one local phase action or build one phase report as its single bounded step, but it does not execute the suggested repair command.
 

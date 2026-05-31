@@ -1219,6 +1219,71 @@ def actions_archive(*, target: Path, action_id: str | None = None, completed: bo
     return 0
 
 
+def actions_import_issues(*, target: Path, dry_run: bool = False, json_output: bool = False) -> int:
+    from . import work_cmd
+
+    target = target.expanduser().resolve()
+    records: list[dict[str, Any]] = []
+    for action in _read_actions(target):
+        if action.get("status") not in {"pending", "active"}:
+            continue
+        action_id = str(action.get("action_id") or "")
+        issue_type = str(action.get("issue_type") or "phase_action")
+        source_fingerprint = str(action.get("source_fingerprint") or hashlib.sha256(json.dumps(action, sort_keys=True).encode("utf-8")).hexdigest()[:16])
+        records.append(
+            {
+                "kind": "task",
+                "source": "phase-ledger-action",
+                "text": f"Resolve phase ledger action: {issue_type}",
+                "type": "workflow",
+                "priority": "high" if "missing" in issue_type or "blocked" in issue_type else "normal",
+                "acceptance": [
+                    "The phase ledger action is resolved, deferred, or archived with a reason.",
+                    "The affected phase ledger evidence has current tests, commit, push, closeout, or report metadata as appropriate.",
+                    "`brigade work phases doctor` and `brigade work phases actions list` reflect the updated state.",
+                ],
+                "metadata": {
+                    "phase_action_id": action_id,
+                    "phase_id": action.get("phase_id"),
+                    "issue_type": issue_type,
+                    "safe_summary": action.get("safe_summary"),
+                    "suggested_command": action.get("suggested_next_command"),
+                    "source_item_key": f"phase-ledger-action:{action_id}",
+                    "source_fingerprint": source_fingerprint,
+                },
+            }
+        )
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    dismissed: list[dict[str, Any]] = []
+    if dry_run:
+        created = records
+    elif records:
+        created, skipped, dismissed = work_cmd._append_import_records(target, records)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-action-import-issues"),
+        "target": str(target),
+        "dry_run": dry_run,
+        "created": created,
+        "skipped": skipped,
+        "dismissed": dismissed,
+        "invalid": [],
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "dismissed_count": len(dismissed),
+        "invalid_count": 0,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase action imports: {target}")
+        print(f"created: {payload['created_count']}")
+        print(f"skipped: {payload['skipped_count']}")
+        print(f"dismissed: {payload['dismissed_count']}")
+    return 0
+
+
 def _report_payload(target: Path, *, phase_range: str | None = None) -> dict[str, Any]:
     target = target.expanduser().resolve()
     status_data = status_payload(target, phase_range=phase_range)
