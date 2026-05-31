@@ -52,11 +52,19 @@ brigade daily history
 brigade daily show <run-id>
 brigade daily doctor
 brigade daily schema
+brigade daily resume
+brigade daily repair
+brigade daily unblock
+brigade daily protocol
+brigade daily telemetry
+brigade daily telemetry doctor
 brigade daily approvals list
 brigade daily approvals show <approval-id>
 brigade daily approvals approve <approval-id>
 brigade daily approvals reject <approval-id> --reason "not now"
 brigade daily approvals hold <approval-id> --reason "needs review"
+brigade daily approvals compare <approval-id>
+brigade daily approvals archive --consumed
 ```
 
 `status` summarizes active work, pending tasks, pending imports, scanner sweep health, review health, handoff drafts, tool catalog health, learning candidates, context packs, release readiness, release candidates, repo fleet, roadmap health, project consolidation, and security health.
@@ -84,17 +92,19 @@ Every center row uses the same wrapper-facing fields: `subsystem`, `local_id`, `
 
 `brigade daily init` writes conservative local defaults to `.brigade/daily.toml`. The config can prefer task, inbox, or readiness modes and can disable context pack builds, operator report builds, readiness imports, import promotion, or work runs.
 
-`brigade daily plan` ranks local candidate actions by urgency, safety, acceptance coverage, provenance, and expected usefulness. It prefers pending accepted tasks, then reviewed imports with acceptance criteria, reviewed center actions, readiness blockers that can become imports, and stale handoff, memory, or security issues. It chooses one recommended action and writes no state unless `--record` is passed. The local preferred mode can move inbox or readiness items upward without bypassing risk, approval, or remote-mutation guards.
+`brigade daily plan` ranks local candidate actions by urgency, safety, acceptance coverage, provenance, and expected usefulness. It prefers pending accepted tasks, then reviewed imports with acceptance criteria, reviewed center actions, readiness blockers that can become imports, and stale handoff, memory, or security issues. It chooses one recommended action and writes no state unless `--record` is passed. The local preferred mode can move inbox or readiness items upward without bypassing risk, approval, or remote-mutation guards. JSON output includes selection reasons, rejection reasons, safety blockers, approval blockers, stale evidence blockers, and quality blockers for wrappers.
 
 `brigade daily review` previews the selected action with selected adapter, safe evidence references, acceptance criteria when available, risk, config blockers, approval boundary, likely next command, and context pack planning.
 
-`brigade daily run` executes exactly one bounded local step. It can run a pending task, promote an approved import, start a reviewed center action, build an operator report, build a safe context pack, or import readiness issues. It refuses approval-required actions unless `--approved` or `--approval <approval-id>` is passed, refuses disabled adapters, and records receipts under `.brigade/daily/runs/`.
+`brigade daily run` executes exactly one bounded local step. It can run a pending task, promote an approved import, start a reviewed center action, build an operator report, build a safe context pack, or import readiness issues. It refuses approval-required actions unless `--approved` or `--approval <approval-id>` is passed, refuses disabled adapters, and records receipts under `.brigade/daily/runs/`. Each run receipt includes a normalized adapter result with commands invoked, receipts created, blockers, warnings, evidence references, and the next recommended command.
 
-Approval-required daily actions can be paused as local requests under `.brigade/daily/approvals/`. `brigade daily approvals list/show/approve/reject/hold` reviews those requests without executing anything. `brigade daily run --approval <approval-id>` consumes one approved, unconsumed request only after revalidating the current config, source evidence, and source fingerprint.
+Approval-required daily actions can be paused as local requests under `.brigade/daily/approvals/`. `brigade daily approvals list/show/approve/reject/hold/compare/archive` reviews, compares, or archives those requests without executing anything. `brigade daily run --approval <approval-id>` consumes one approved, unconsumed request only after revalidating the current config, source evidence, and source fingerprint.
 
 `brigade daily closeout` updates the latest daily receipt as reviewed, deferred, blocked, or archived. It can also write a Memory Handoff draft for durable knowledge, but it never edits canonical memory.
 
-`brigade daily history` and `brigade daily show <run-id|latest>` inspect local plan and run receipts. `brigade daily doctor` reports missing or invalid config, stale plans, stale unclosed or blocked runs, parse errors, missing source evidence, and unsafe config. `brigade daily schema` prints wrapper-facing JSON contracts.
+`brigade daily resume`, `brigade daily repair`, and `brigade daily unblock` recover from blocked, failed, stale, or approval-waiting runs by suggesting the next safe command or writing local repair, approval, or import metadata. They do not run arbitrary suggested commands.
+
+`brigade daily history` and `brigade daily show <run-id|latest>` inspect local plan and run receipts. `brigade daily doctor` reports missing or invalid config, stale plans, stale unclosed or blocked runs, parse errors, missing source evidence, approval issues, telemetry parse errors, and unsafe config. `brigade daily schema` prints wrapper-facing JSON contracts. `brigade daily protocol` documents the JSON-first agent loop, and `brigade daily telemetry` summarizes local-only dogfood metrics.
 
 Daily commands are the intended wrapper path for an agent:
 
@@ -106,7 +116,7 @@ brigade daily run --json
 brigade daily closeout --json
 ```
 
-The daily driver never executes arbitrary suggested commands, starts scanners or reviewers, runs tools, runs fleet sweeps, mutates remotes, pushes, tags, publishes, or edits canonical memory.
+The daily driver never executes arbitrary suggested commands, starts scanners or reviewers, runs tools, runs fleet sweeps, mutates remotes, pushes, tags, publishes, uploads analytics, or edits canonical memory.
 
 ## Operator Reports
 

@@ -5302,6 +5302,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "latest_run": daily_health["latest_run"],
             "latest_plan": daily_health["latest_plan"],
             "approvals": daily_health.get("approvals"),
+            "telemetry": daily_health.get("telemetry"),
         },
         "handoff_issues": {
             "count": len(new_handoff_issues),

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from brigade import center_cmd, cli, daily_cmd, handoff_cmd, work_cmd
+from brigade import center_cmd, cli, daily_cmd, handoff_cmd, release_cmd, work_cmd
 
 
 def _write_command_inventory(path, capsys=None):
@@ -645,3 +645,183 @@ def test_daily_closeout_states_and_handoff(tmp_path, monkeypatch, capsys):
     assert receipt["handoff_path"]
     assert Path(receipt["handoff_path"]).is_file()
     assert handoff_cmd.lint_file(Path(receipt["handoff_path"])).valid
+
+
+def test_daily_plan_explainability_noise_and_adapter_result_shape(tmp_path, monkeypatch, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+    work_cmd._append_import_records(
+        tmp_path,
+        [
+            {
+                "kind": "task",
+                "text": "Noisy import",
+                "source": "noisy-source",
+                "priority": "high",
+                "acceptance": ["Resolve noisy item."],
+                "metadata": {"source_fingerprint": "noisy-current"},
+            },
+            {
+                "kind": "task",
+                "text": "Clean import",
+                "source": "clean-source",
+                "priority": "high",
+                "acceptance": ["Resolve clean item."],
+                "metadata": {"source_fingerprint": "clean-current"},
+            },
+        ],
+    )
+    imports = work_cmd._read_imports(tmp_path)
+    for idx in range(4):
+        item = work_cmd._make_import(f"dismissed {idx}", kind="task", source="noisy-source", metadata={"source_fingerprint": f"old-{idx}"})
+        item["status"] = "dismissed"
+        imports.append(item)
+    work_cmd._write_imports(tmp_path, imports)
+
+    assert daily_cmd.plan(target=tmp_path, json_output=True) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["candidate_explanations"]
+    noisy = next(item for item in plan["candidate_actions"] if item["safe_summary"] == "Noisy import")
+    assert "noisy source" in noisy["ranking_reasons"]
+    assert any(item["rejection_reasons"] for item in plan["candidate_explanations"] if item["action_id"] != plan["selected_action_id"])
+
+    action = _daily_action("build-operator-report", source_subsystem="center-report", source_local_id="report")
+    monkeypatch.setattr(daily_cmd, "_all_candidates", lambda target: [action])
+    monkeypatch.setattr(center_cmd, "report_build", lambda **kwargs: print("wrapped output") or 0)
+    assert daily_cmd.run(target=tmp_path, json_output=True) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    adapter = receipt["adapter_result"]
+    assert {
+        "adapter_id",
+        "source_subsystem",
+        "source_local_id",
+        "status",
+        "commands_invoked",
+        "receipts_created",
+        "blockers",
+        "warnings",
+        "next_recommended_command",
+        "evidence_references",
+    } <= set(adapter)
+    assert adapter["commands_invoked"][-1]["command"] == "brigade center report build"
+    assert receipt["commands_invoked"][-1]["command"] == "brigade center report build"
+
+
+def test_daily_recovery_protocol_and_approval_compare_archive(tmp_path, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+    work_cmd._append_import_records(
+        tmp_path,
+        [
+            {
+                "kind": "task",
+                "text": "Approval import",
+                "source": "scanner",
+                "priority": "high",
+                "acceptance": ["Approval is reviewed."],
+                "metadata": {"source_fingerprint": "approval-fp"},
+            }
+        ],
+    )
+
+    assert daily_cmd.run(target=tmp_path, json_output=True) == 1
+    blocked = json.loads(capsys.readouterr().out)
+    approval_id = blocked["approval_id"]
+
+    assert cli.main(["daily", "protocol", "--target", str(tmp_path), "--json"]) == 0
+    protocol = json.loads(capsys.readouterr().out)
+    assert [step["step"] for step in protocol["steps"]][:3] == ["status", "plan", "review"]
+
+    assert cli.main(["daily", "approvals", "compare", approval_id, "--target", str(tmp_path), "--json"]) == 0
+    compare = json.loads(capsys.readouterr().out)
+    assert compare["approval_id"] == approval_id
+    assert compare["ok"] is True
+
+    assert daily_cmd.approvals_approve(target=tmp_path, approval_id=approval_id, json_output=True) == 0
+    capsys.readouterr()
+    assert cli.main(["daily", "resume", "--target", str(tmp_path), "--json"]) == 0
+    resume = json.loads(capsys.readouterr().out)
+    assert resume["next_recommended_command"] == f"brigade daily run --approval {approval_id}"
+
+    assert daily_cmd.run(target=tmp_path, approval_id=approval_id, json_output=True) == 0
+    consumed = json.loads(capsys.readouterr().out)
+    assert consumed["approval_id"] == approval_id
+
+    assert cli.main(["daily", "approvals", "archive", "--consumed", "--target", str(tmp_path), "--json"]) == 0
+    archive = json.loads(capsys.readouterr().out)
+    assert archive["archived_count"] == 1
+    assert not (tmp_path / ".brigade" / "daily" / "approvals" / approval_id).exists()
+
+
+def test_daily_repair_unblock_telemetry_context_and_release_evidence(tmp_path, monkeypatch, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+    (tmp_path / ".brigade" / "daily.toml").write_text(
+        "\n".join(
+            [
+                'preferred_mode = "task-first"',
+                'max_risk_without_approval = "medium"',
+                "allow_context_pack_build = true",
+                "allow_operator_report_build = true",
+                "allow_readiness_imports = true",
+                "allow_import_promotion_with_approval = true",
+                "allow_work_run = true",
+                "verification_required_for_work_run = true",
+                "verification_required_for_import_promotion = false",
+                "verification_required_for_release_actions = false",
+                'allowed_verification_commands = "pytest -q"',
+                "verification_timeout = 120",
+                "stale_plan_threshold_hours = 12",
+                "stale_run_threshold_hours = 12",
+            ]
+        )
+        + "\n"
+    )
+    task, _ = work_cmd._add_task(tmp_path, "Telemetry task", acceptance=["Context has daily action."])
+    monkeypatch.setattr(work_cmd, "run", lambda *args, **kwargs: 0)
+
+    assert daily_cmd.run(target=tmp_path, json_output=True) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    context_path = tmp_path / ".brigade" / "context" / "packs" / receipt["context_pack_id"] / "context.json"
+    context_payload = json.loads(context_path.read_text())
+    assert context_payload["daily_action"]["acceptance"] == ["Context has daily action."]
+    assert "raw scanner output" in context_payload["excluded_private_evidence"]
+    assert "private repo names" in context_payload["excluded_private_evidence"]
+    assert receipt["task_id"] == task["id"]
+
+    assert daily_cmd.closeout(target=tmp_path, status="reviewed", json_output=True) == 0
+    closeout = json.loads(capsys.readouterr().out)
+    assert closeout["verification_expectation"]["required"] is True
+    assert closeout["verification_blockers"] == ["verification receipt required by daily config"]
+    assert "release_readiness_impact" in closeout
+
+    assert cli.main(["daily", "telemetry", "--target", str(tmp_path), "--json"]) == 0
+    telemetry = json.loads(capsys.readouterr().out)
+    assert telemetry["metrics"]["run_count"] >= 1
+    assert telemetry["metrics"]["selected_action_types"]["run-task"] >= 1
+
+    assert cli.main(["daily", "telemetry", "doctor", "--target", str(tmp_path), "--json"]) == 0
+    json.loads(capsys.readouterr().out)
+
+    repair_dir = tmp_path / ".brigade" / "daily" / "runs" / "blocked-example"
+    repair_dir.mkdir(parents=True)
+    (repair_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "blocked-example",
+                "status": "blocked",
+                "started_at": "2026-05-30T00:00:00+00:00",
+                "completed_at": "2026-05-30T00:01:00+00:00",
+                "blockers": ["needs repair"],
+            }
+        )
+    )
+    assert cli.main(["daily", "repair", "--target", str(tmp_path), "--json"]) == 0
+    repair = json.loads(capsys.readouterr().out)
+    assert repair["repair_id"]
+    assert repair["writes"]
+
+    assert cli.main(["daily", "unblock", "--target", str(tmp_path), "--json"]) == 0
+    unblock = json.loads(capsys.readouterr().out)
+    assert unblock["created_imports"] or unblock["skipped_imports"]
+
+    evidence = release_cmd._evidence(tmp_path, base_ref=None)
+    assert "daily_driver" in evidence
+    assert evidence["daily_driver"]["latest_run"]["run_id"]

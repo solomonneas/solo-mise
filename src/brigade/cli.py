@@ -103,6 +103,24 @@ def _build_parser() -> argparse.ArgumentParser:
     p_daily_run.add_argument("--plan-id", default=None, help="Run from a recorded daily plan id or latest.")
     p_daily_run.add_argument("--replan", action="store_true", help="Ignore a stale or supplied plan and choose a fresh action.")
     p_daily_run.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    for name, help_text in (
+        ("resume", "Resume or explain recovery for the latest daily run."),
+        ("repair", "Inspect daily driver state and write local repair metadata."),
+        ("unblock", "Create local unblock metadata, imports, or approval requests."),
+        ("protocol", "Print the wrapper-facing daily agent protocol."),
+    ):
+        p_daily_extra = daily_sub.add_parser(name, help=help_text)
+        p_daily_extra.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        if name == "unblock":
+            p_daily_extra.add_argument("--dry-run", action="store_true", help="Preview unblock writes.")
+        p_daily_extra.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_telemetry = daily_sub.add_parser("telemetry", help="Summarize local daily driver telemetry.")
+    p_daily_telemetry.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_daily_telemetry.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    telemetry_sub = p_daily_telemetry.add_subparsers(dest="daily_telemetry_command", metavar="<telemetry-command>")
+    p_daily_telemetry_doctor = telemetry_sub.add_parser("doctor", help="Check daily telemetry health.")
+    p_daily_telemetry_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_daily_telemetry_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_daily_approvals = daily_sub.add_parser("approvals", help="Review daily approval requests.")
     approvals_sub = p_daily_approvals.add_subparsers(dest="daily_approval_command", metavar="<approval-command>")
     approvals_sub.required = True
@@ -123,6 +141,14 @@ def _build_parser() -> argparse.ArgumentParser:
         else:
             p_daily_approval_review.add_argument("--reason", default=None, help="Optional review reason.")
         p_daily_approval_review.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_approvals_compare = approvals_sub.add_parser("compare", help="Compare a daily approval request with current evidence.")
+    p_daily_approvals_compare.add_argument("approval_id")
+    p_daily_approvals_compare.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_daily_approvals_compare.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_approvals_archive = approvals_sub.add_parser("archive", help="Archive closed daily approval requests.")
+    p_daily_approvals_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_daily_approvals_archive.add_argument("--consumed", action="store_true", help="Archive consumed, rejected, or superseded approvals.")
+    p_daily_approvals_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_daily_history = daily_sub.add_parser("history", help="List local daily receipts.")
     p_daily_history.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_daily_history.add_argument("--limit", type=int, default=20, help="Maximum receipts to show.")
@@ -1915,6 +1941,18 @@ def main(argv=None) -> int:
             return daily_cmd.review(target=args.target, json_output=args.json)
         if args.daily_command == "schema":
             return daily_cmd.schema(target=args.target, json_output=args.json)
+        if args.daily_command == "protocol":
+            return daily_cmd.protocol(target=args.target, json_output=args.json)
+        if args.daily_command == "resume":
+            return daily_cmd.resume(target=args.target, json_output=args.json)
+        if args.daily_command == "repair":
+            return daily_cmd.repair(target=args.target, json_output=args.json)
+        if args.daily_command == "unblock":
+            return daily_cmd.unblock(target=args.target, dry_run=args.dry_run, json_output=args.json)
+        if args.daily_command == "telemetry":
+            if getattr(args, "daily_telemetry_command", None) == "doctor":
+                return daily_cmd.telemetry_doctor(target=args.target, json_output=args.json)
+            return daily_cmd.telemetry(target=args.target, json_output=args.json)
         if args.daily_command == "history":
             return daily_cmd.history(target=args.target, limit=args.limit, json_output=args.json)
         if args.daily_command == "show":
@@ -1932,6 +1970,10 @@ def main(argv=None) -> int:
                 return daily_cmd.approvals_reject(target=args.target, approval_id=args.approval_id, reason=args.reason, json_output=args.json)
             if args.daily_approval_command == "hold":
                 return daily_cmd.approvals_hold(target=args.target, approval_id=args.approval_id, reason=args.reason, json_output=args.json)
+            if args.daily_approval_command == "compare":
+                return daily_cmd.approvals_compare(target=args.target, approval_id=args.approval_id, json_output=args.json)
+            if args.daily_approval_command == "archive":
+                return daily_cmd.approvals_archive(target=args.target, consumed=args.consumed, json_output=args.json)
             parser.error(f"unknown daily approvals command: {args.daily_approval_command}")
             return 2
         if args.daily_command == "run":

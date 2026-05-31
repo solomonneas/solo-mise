@@ -788,6 +788,20 @@ Phase 104 status:
 - Daily doctor, daily status, daily review, work brief, and center reviews surface pending, stale, held, rejected, approved, or changed-evidence approval requests.
 - Approval commands are local review actions only. They do not execute selected actions, run arbitrary commands, mutate remotes, or edit canonical memory.
 
+Phase 105-114 status:
+
+- Hardened the daily driver as the wrapper-facing agent loop instead of adding a broad new subsystem.
+- Normalized `daily run` adapter results for work task runs, import promotion, center action starts, readiness imports, operator report builds, and context pack builds.
+- Daily planning now exposes ranked candidates, selection reasons, rejection reasons, safety blockers, approval blockers, stale evidence blockers, missing acceptance/provenance penalties, and noisy-source penalties.
+- Added recovery command surface: `brigade daily resume`, `brigade daily repair`, and `brigade daily unblock`.
+- Daily context packs now include selected daily action context and expanded excluded-private-evidence summaries.
+- Daily closeout records verification expectations, latest verification, changed-file summaries, work closeout state, review closeout state, handoff state, and release-readiness impact.
+- Added `brigade daily approvals compare <approval-id>` and `brigade daily approvals archive --consumed`.
+- Added `brigade daily protocol` for the stable JSON-first external agent loop.
+- Added local-only daily telemetry with `brigade daily telemetry` and `brigade daily telemetry doctor`.
+- Release readiness and release candidate evidence now include latest daily plan, run, health, and telemetry state.
+- Deferred: automatic execution inside `daily resume`. Reason: recovery remains explicit and local; `resume` returns the safe next command instead of running an approval or repair path implicitly.
+
 ## Suggested Execution Order
 
 1. Roadmap audit, inspiration pattern registry, and repo-fleet readiness.

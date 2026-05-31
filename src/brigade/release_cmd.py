@@ -825,7 +825,7 @@ def _resolve_candidate(target: Path, candidate_id: str) -> tuple[dict[str, Any] 
 
 
 def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
-    from . import center_cmd
+    from . import center_cmd, daily_cmd
 
     sweep = work_cmd._scanner_sweep_health(target)
     review = work_cmd._review_health(target)
@@ -975,6 +975,12 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
             "top_action": operator_actions_health.get("top_action"),
             "issue_count": operator_actions_health.get("issue_count"),
             "top_issue": operator_actions_health.get("top_issue"),
+        },
+        "daily_driver": {
+            "health": daily_cmd.health(target),
+            "latest_run": daily_cmd._latest_run(target),
+            "latest_plan": daily_cmd._latest_plan(target),
+            "telemetry": daily_cmd.telemetry_payload(target).get("metrics"),
         },
         "security_closeout": _latest_closeout_json(target / ".brigade" / "security" / "closeouts"),
         "docs": {
@@ -1228,6 +1234,7 @@ def _candidate_payload(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         "projects": evidence.get("projects"),
         "learning": evidence.get("learning"),
         "operator_report": evidence.get("operator_report"),
+        "daily_driver": evidence.get("daily_driver"),
         "repo_fleet": evidence.get("repo_fleet"),
         "roadmap": evidence.get("roadmap"),
         "git": git,
