@@ -16,6 +16,7 @@ PHASE_STATUSES = {"pending", "in-progress", "implemented", "verified", "committe
 PHASE_CLOSEOUT_STATUSES = {"reviewed", "deferred", "blocked", "archived"}
 PHASE_ACTION_STATUSES = {"pending", "active", "done", "deferred", "archived"}
 PHASE_REPORT_CLOSEOUT_STATUSES = {"reviewed", "deferred", "superseded", "archived"}
+PHASE_SESSION_CLOSEOUT_STATUSES = {"reviewed", "deferred", "blocked", "archived"}
 DONE_STATUSES = {"implemented", "verified", "committed", "pushed"}
 STALE_IN_PROGRESS_HOURS = 12
 REPORT_STALE_HOURS = 24
@@ -44,6 +45,10 @@ def _closeouts_root(target: Path) -> Path:
 
 def _actions_root(target: Path) -> Path:
     return _root(target) / "actions"
+
+
+def _sessions_root(target: Path) -> Path:
+    return _root(target) / "sessions"
 
 
 def _index_path(target: Path) -> Path:
@@ -216,6 +221,7 @@ def schema(*, target: Path, json_output: bool = False) -> int:
             _schema("phase-ledger-report"),
             _schema("phase-ledger-closeout"),
             _schema("phase-ledger-action"),
+            _schema("phase-ledger-session"),
             _schema("phase-ledger-doctor"),
         ],
         "status_values": sorted(PHASE_STATUSES),
@@ -724,6 +730,197 @@ def _read_actions(target: Path) -> list[dict[str, Any]]:
         payload.setdefault("path", str(path))
         actions.append(payload)
     return actions
+
+
+def _session_summary(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "session_id": session.get("session_id"),
+        "phase_range": session.get("phase_range"),
+        "status": session.get("status"),
+        "current_phase_id": session.get("current_phase_id"),
+        "started_at": session.get("started_at"),
+        "completed_at": session.get("completed_at"),
+        "closeout_status": (session.get("closeout") or {}).get("status") if isinstance(session.get("closeout"), dict) else None,
+        "path": session.get("path"),
+        "next_recommended_command": session.get("next_recommended_command"),
+    }
+
+
+def _read_sessions(target: Path) -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    for path in sorted(_sessions_root(target).glob("*.json")):
+        payload = _read_json(path)
+        if payload is None:
+            continue
+        payload.setdefault("path", str(path))
+        sessions.append(payload)
+    sessions.sort(key=lambda item: str(item.get("started_at") or item.get("session_id") or ""))
+    return sessions
+
+
+def _latest_session(target: Path) -> dict[str, Any] | None:
+    sessions = _read_sessions(target)
+    return sessions[-1] if sessions else None
+
+
+def _resolve_session(target: Path, session_id: str) -> tuple[Path | None, dict[str, Any] | None, str | None]:
+    target = target.expanduser().resolve()
+    if session_id == "latest":
+        latest = _latest_session(target)
+        return (Path(str(latest.get("path"))), latest, None) if latest else (None, None, "phase session not found: latest")
+    wanted = _slug(session_id)
+    exact = _sessions_root(target) / f"{wanted}.json"
+    if exact.is_file():
+        return exact, _read_json(exact), None
+    matches = [path for path in _sessions_root(target).glob("*.json") if path.stem.startswith(wanted)]
+    if len(matches) == 1:
+        return matches[0], _read_json(matches[0]), None
+    if len(matches) > 1:
+        return None, None, f"phase session id is ambiguous: {session_id}"
+    return None, None, f"phase session not found: {session_id}"
+
+
+def _session_phase_records(target: Path, phase_range: str) -> tuple[list[dict[str, Any]], list[str]]:
+    parsed = _parse_range(phase_range)
+    if parsed is None:
+        return [], []
+    start, end = parsed
+    records = {str(record.get("phase_id")): record for record in _records(target)}
+    expected = [_phase_id_for(number) for number in range(start, end + 1)]
+    return [records[item] for item in expected if item in records], [item for item in expected if item not in records]
+
+
+def _session_payload(target: Path, *, phase_range: str, source_goal: str | None = None) -> dict[str, Any]:
+    records, missing = _session_phase_records(target, phase_range)
+    status_data = status_payload(target, phase_range=phase_range)
+    doctor_data = doctor_payload(target, phase_range=phase_range)
+    next_phase_record = status_data.get("next_phase")
+    current_phase_id = next_phase_record.get("phase_id") if isinstance(next_phase_record, dict) else None
+    latest_report = _latest_report(target)
+    latest_report_summary = {
+        "report_id": latest_report.get("report_id"),
+        "phase_range": latest_report.get("phase_range"),
+        "path": latest_report.get("path"),
+    } if latest_report else None
+    session_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-phase-session-{uuid4().hex[:6]}"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session"),
+        "target": str(target),
+        "session_id": session_id,
+        "source_goal": source_goal or "unspecified",
+        "phase_range": phase_range,
+        "status": "active",
+        "started_at": _now().isoformat(),
+        "completed_at": None,
+        "current_phase_id": current_phase_id,
+        "missing_phase_ids": missing,
+        "phase_status": status_data,
+        "doctor": {"issue_count": doctor_data["issue_count"], "top_issue": doctor_data["top_issue"]},
+        "phase_records": [_record_summary(record) for record in records],
+        "commit_summary": {
+            "committed": len([record for record in records if record.get("commit_hash")]),
+            "pushed": len([record for record in records if record.get("push_ref")]),
+        },
+        "test_summary": {
+            "with_tests": len([record for record in records if record.get("tests_run")]),
+            "without_tests": len([record for record in records if not record.get("tests_run")]),
+        },
+        "report_references": [latest_report_summary] if latest_report_summary else [],
+        "closeout": None,
+        "next_recommended_command": status_data.get("suggested_next_command") or "brigade work phases doctor",
+    }
+
+
+def session_start(*, target: Path, phase_range: str, source_goal: str | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    try:
+        _parse_range(phase_range)
+        payload = _session_payload(target, phase_range=phase_range, source_goal=source_goal)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    path = _sessions_root(target) / f"{payload['session_id']}.json"
+    payload["path"] = str(path)
+    _write_json(path, payload)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session: {payload['session_id']}")
+        print(f"range: {payload['phase_range']}")
+        print(f"current: {payload.get('current_phase_id') or 'none'}")
+        print(f"next: {payload['next_recommended_command']}")
+    return 0
+
+
+def session_list(*, target: Path, limit: int = 20, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    sessions = [_session_summary(session) for session in reversed(_read_sessions(target))][:limit]
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-list"),
+        "target": str(target),
+        "sessions": sessions,
+        "session_count": len(sessions),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase sessions: {len(sessions)}")
+        for session in sessions:
+            print(f"- {session.get('session_id')} [{session.get('status')}] range={session.get('phase_range')}")
+    return 0
+
+
+def session_show(*, target: Path, session_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _path, session, error = _resolve_session(target, session_id)
+    if session is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if json_output:
+        print(json.dumps(session, indent=2, sort_keys=True))
+    else:
+        print(f"phase session: {session.get('session_id')}")
+        print(f"status: {session.get('status')}")
+        print(f"range: {session.get('phase_range')}")
+        print(f"current: {session.get('current_phase_id') or 'none'}")
+        print(f"next: {session.get('next_recommended_command') or 'none'}")
+    return 0
+
+
+def session_closeout(*, target: Path, session_id: str, status: str = "reviewed", reason: str | None = None, json_output: bool = False) -> int:
+    if status not in PHASE_SESSION_CLOSEOUT_STATUSES:
+        print(f"error: --status must be one of {sorted(PHASE_SESSION_CLOSEOUT_STATUSES)}", file=sys.stderr)
+        return 2
+    target = target.expanduser().resolve()
+    path, session, error = _resolve_session(target, session_id)
+    if session is None or path is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    phase_range = str(session.get("phase_range") or "")
+    doctor_data = doctor_payload(target, phase_range=phase_range)
+    closeout_payload = {
+        "status": status,
+        "reason": reason or f"phase session marked {status}",
+        "reviewed_at": _now().isoformat(),
+        "unresolved_issue_count": doctor_data["issue_count"],
+        "source_fingerprint": _source_fingerprint(session.get("phase_records") if isinstance(session.get("phase_records"), list) else [], {"session_id": session.get("session_id"), "status": session.get("status")}),
+    }
+    session["status"] = "closed" if status in {"reviewed", "archived"} else status
+    session["completed_at"] = session.get("completed_at") or _now().isoformat()
+    session["updated_at"] = _now().isoformat()
+    session["closeout"] = closeout_payload
+    session["next_recommended_command"] = "brigade work phases session list"
+    session["path"] = str(path)
+    _write_json(path, session)
+    if json_output:
+        print(json.dumps(session, indent=2, sort_keys=True))
+    else:
+        print(f"phase session closeout: {session.get('session_id')}")
+        print(f"status: {status}")
+        print(f"unresolved: {doctor_data['issue_count']}")
+    return 0
 
 
 def _find_action(target: Path, action_id: str) -> tuple[Path, dict[str, Any] | None]:

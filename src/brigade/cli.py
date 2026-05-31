@@ -1044,6 +1044,28 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_report_compare.add_argument("report_id", help="Report id, unique prefix, or latest.")
     p_work_phases_report_compare.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_phases_report_compare.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session = phases_sub.add_parser("session", help="Start and review phase execution sessions.")
+    phases_session_sub = p_work_phases_session.add_subparsers(dest="phases_session_command", metavar="<phases-session-command>")
+    phases_session_sub.required = True
+    p_work_phases_session_start = phases_session_sub.add_parser("start", help="Start a local phase execution session.")
+    p_work_phases_session_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_session_start.add_argument("--range", dest="phase_range", required=True, help="Phase range, such as 211-225.")
+    p_work_phases_session_start.add_argument("--goal", dest="source_goal", default=None, help="Source goal text.")
+    p_work_phases_session_start.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session_list = phases_session_sub.add_parser("list", help="List phase execution sessions.")
+    p_work_phases_session_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_session_list.add_argument("--limit", type=int, default=20, help="Maximum sessions to list.")
+    p_work_phases_session_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session_show = phases_session_sub.add_parser("show", help="Show one phase execution session.")
+    p_work_phases_session_show.add_argument("session_id", help="Session id, unique prefix, or latest.")
+    p_work_phases_session_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_session_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session_closeout = phases_session_sub.add_parser("closeout", help="Close out one phase execution session.")
+    p_work_phases_session_closeout.add_argument("session_id", help="Session id, unique prefix, or latest.")
+    p_work_phases_session_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_session_closeout.add_argument("--status", choices=["reviewed", "deferred", "blocked", "archived"], default="reviewed", help="Session closeout state.")
+    p_work_phases_session_closeout.add_argument("--reason", default=None, help="Closeout reason.")
+    p_work_phases_session_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_next = work_sub.add_parser("next", help="Show the next daily work task and suggested command.")
     p_work_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_next.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -3091,6 +3113,17 @@ def main(argv=None) -> int:
                 if args.phases_report_command == "compare":
                     return phases_cmd.report_compare(target=args.target, report_id=args.report_id, json_output=args.json)
                 parser.error(f"unknown phases report command: {args.phases_report_command}")
+                return 2
+            if args.phases_command == "session":
+                if args.phases_session_command == "start":
+                    return phases_cmd.session_start(target=args.target, phase_range=args.phase_range, source_goal=args.source_goal, json_output=args.json)
+                if args.phases_session_command == "list":
+                    return phases_cmd.session_list(target=args.target, limit=args.limit, json_output=args.json)
+                if args.phases_session_command == "show":
+                    return phases_cmd.session_show(target=args.target, session_id=args.session_id, json_output=args.json)
+                if args.phases_session_command == "closeout":
+                    return phases_cmd.session_closeout(target=args.target, session_id=args.session_id, status=args.status, reason=args.reason, json_output=args.json)
+                parser.error(f"unknown phases session command: {args.phases_session_command}")
                 return 2
             parser.error(f"unknown phases command: {args.phases_command}")
             return 2

@@ -42,6 +42,10 @@ brigade work phases report list
 brigade work phases report show latest
 brigade work phases report closeout latest --status reviewed --reason "checked report"
 brigade work phases report compare latest
+brigade work phases session start --range 211-225 --goal "AFK tranche"
+brigade work phases session list
+brigade work phases session show latest
+brigade work phases session closeout latest --status reviewed --reason "checked session"
 ```
 
 Every command supports stable JSON output with `--json`.
@@ -142,6 +146,8 @@ Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range stat
 `brigade work phases report closeout <report-id|latest>` writes `CLOSEOUT.json` into the local report bundle with `reviewed`, `deferred`, `superseded`, or `archived` status. Report closeouts are local review metadata only.
 
 `brigade work phases report compare <report-id|latest>` checks a report bundle against current phase status counts, doctor issue count, HEAD label when captured, closeout state, and newer phase record changes.
+
+`brigade work phases session start --range <range>` creates a local AFK execution session under `.brigade/work/phases/sessions/`. A session records the requested phase range, source goal, current phase, phase status summary, commit and test counts, report references, closeout state, and next recommended command. `session list`, `session show`, and `session closeout` inspect or review that local metadata without executing work.
 
 `brigade work phases import-issues` routes unresolved ledger issues into the scanner-ready work inbox as `source: phase-ledger` task imports. Imports dedupe by a stable source fingerprint and keep promotion explicit.
 

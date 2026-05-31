@@ -92,6 +92,10 @@ brigade work phases report list
 brigade work phases report show <report-id>
 brigade work phases report closeout <report-id|latest>
 brigade work phases report compare <report-id|latest>
+brigade work phases session start --range <range>
+brigade work phases session list
+brigade work phases session show <session-id|latest>
+brigade work phases session closeout <session-id|latest>
 ```
 
 `status` summarizes active work, pending tasks, pending imports, scanner sweep health, review health, handoff drafts, tool catalog health, learning candidates, context packs, release readiness, release candidates, repo fleet, roadmap health, project consolidation, and security health.
@@ -152,6 +156,8 @@ The daily driver never executes arbitrary suggested commands, starts scanners or
 `brigade work phases` records long unattended work as local phase evidence under `.brigade/work/phases/`. The ledger exists so an agent-facing run cannot silently compress dozens of phases into a vague summary and later claim completion.
 
 Each phase record stores the stated goal, status, implementation summary, changed files, tests run, test result summary, commit hash, push ref, deferrals, blockers, and next phase recommendation. A phase range must be declared up front with individual records or an explicit grouped record. `brigade work phases doctor` warns on missing records, stale in-progress phases, blocked phases without next steps, complete phases without tests or changed files, committed phases without hashes, pushed phases without push refs, stale completed phases without review closeout, and range records that were compressed without explicit grouping. `brigade work phases status` and `next` make a range easy to resume, `closeout` writes local reviewed, deferred, blocked, or archived closeout metadata, `compare` checks whether record evidence still matches local HEAD, files, reports, and doctor counts, `actions` builds metadata-only local action records from ledger issues, `report build` writes local Markdown and JSON evidence, `report closeout` writes report-bundle review metadata, `report compare` checks saved report freshness, and `import-issues` routes ledger problems into the work inbox without automatic promotion.
+
+Phase execution sessions group a declared AFK range into one local record under `.brigade/work/phases/sessions/`. `session start` records the range, current phase, status summary, commit and test counts, report references, closeout state, and next command. `session list`, `show`, and `closeout` only read or update local session metadata.
 
 The phase ledger is surfaced in `brigade daily status`, `brigade daily doctor`, `brigade work brief`, `brigade work doctor`, and `brigade center status`. Future AFK multi-phase work is not complete unless the ledger shows evidence or explicit deferrals.
 

@@ -450,3 +450,34 @@ def test_phase_report_compare_warns_on_missing_closeout_and_stale_report(tmp_pat
     names = {check["name"] for check in stale["checks"]}
     assert "phase_report_status_counts_changed" not in names
     assert "phase_report_newer_phase_record" in names
+
+
+def test_phase_execution_session_lifecycle(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "211-213", "--title", "Session", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "complete", "phase-211", "--target", str(tmp_path), "--summary", "Done", "--file", "file.py", "--test", "pytest", "--json"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "211-213", "--goal", "afk session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+    session_id = session["session_id"]
+    assert session["phase_range"] == "211-213"
+    assert session["current_phase_id"] == "phase-212"
+    assert session["phase_status"]["record_count"] == 3
+    assert session["commit_summary"]["committed"] == 0
+    assert (tmp_path / ".brigade" / "work" / "phases" / "sessions" / f"{session_id}.json").is_file()
+
+    assert cli.main(["work", "phases", "session", "list", "--target", str(tmp_path), "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["session_count"] == 1
+    assert listed["sessions"][0]["session_id"] == session_id
+
+    assert cli.main(["work", "phases", "session", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["session_id"] == session_id
+
+    assert cli.main(["work", "phases", "session", "closeout", "latest", "--target", str(tmp_path), "--status", "reviewed", "--reason", "Checked session.", "--json"]) == 0
+    closed = json.loads(capsys.readouterr().out)
+    assert closed["status"] == "closed"
+    assert closed["closeout"]["status"] == "reviewed"
+    assert closed["closeout"]["reason"] == "Checked session."
