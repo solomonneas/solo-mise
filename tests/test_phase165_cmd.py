@@ -670,6 +670,27 @@ def test_phase_session_recovery_notes_are_reviewable(tmp_path, capsys):
     assert any(event["event_type"] == "session-recovery-note" and event["local_id"] == note["note_id"] and event["status"] == "reviewed" for event in activity["events"])
 
 
+def test_phase_session_risk_summarizes_checkpoint_notes_and_doctor(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "235-236", "--title", "Risk", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "235-236", "--goal", "risk session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+    assert cli.main(["work", "phases", "session", "checkpoint", session["session_id"], "--target", str(tmp_path), "--status", "blocked", "--summary", "Checkpoint blocked.", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "recovery-note", session["session_id"], "--target", str(tmp_path), "--summary", "Open recovery note.", "--json"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["work", "phases", "session", "risk", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
+    risk = json.loads(capsys.readouterr().out)
+    assert risk["session_id"] == session["session_id"]
+    assert risk["risk_level"] == "high"
+    names = {item["name"] for item in risk["risks"]}
+    assert "phase_session_checkpoint_risk" in names
+    assert "phase_session_open_recovery_notes" in names
+    assert risk["open_recovery_note_count"] == 1
+    assert risk["checkpoint"]["issue_count"] >= 1
+
+
 def test_phase_session_report_bundle(tmp_path, capsys):
     assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "213-214", "--title", "Report", "--goal", "afk", "--json"]) == 0
     capsys.readouterr()

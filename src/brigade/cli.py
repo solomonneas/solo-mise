@@ -1162,6 +1162,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_session_recovery_notes_closeout.add_argument("--status", choices=["reviewed", "deferred", "blocked", "archived"], default="reviewed", help="Recovery note closeout state.")
     p_work_phases_session_recovery_notes_closeout.add_argument("--reason", default=None, help="Closeout reason.")
     p_work_phases_session_recovery_notes_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_session_risk = phases_session_sub.add_parser("risk", help="Summarize phase session risk.")
+    p_work_phases_session_risk.add_argument("session_id", nargs="?", default="latest", help="Session id, unique prefix, or latest.")
+    p_work_phases_session_risk.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_session_risk.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_session_next = phases_session_sub.add_parser("next", help="Show the next required phase session step.")
     p_work_phases_session_next.add_argument("session_id", nargs="?", default="latest", help="Session id, unique prefix, or latest.")
     p_work_phases_session_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -3318,6 +3322,8 @@ def main(argv=None) -> int:
                     if args.phases_session_recovery_notes_command == "closeout":
                         return phases_cmd.session_recovery_note_closeout(target=args.target, note_id=args.note_id, status=args.status, reason=args.reason, json_output=args.json)
                     parser.error(f"unknown phases session recovery notes command: {args.phases_session_recovery_notes_command}")
+                if args.phases_session_command == "risk":
+                    return phases_cmd.session_risk(target=args.target, session_id=args.session_id, json_output=args.json)
                 if args.phases_session_command == "next":
                     return phases_cmd.session_next(target=args.target, session_id=args.session_id, json_output=args.json)
                 if args.phases_session_command == "resume":

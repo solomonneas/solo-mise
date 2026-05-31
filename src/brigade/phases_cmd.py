@@ -1491,6 +1491,74 @@ def session_recovery_note_closeout(*, target: Path, note_id: str, status: str = 
     return 0
 
 
+def _session_risk_payload(target: Path, session: dict[str, Any]) -> dict[str, Any]:
+    next_payload = _session_next_payload(target, session)
+    doctor = doctor_payload(target, phase_range=str(session.get("phase_range") or ""))
+    risks: list[dict[str, Any]] = []
+    step = next_payload.get("next_step") if isinstance(next_payload.get("next_step"), dict) else {}
+    step_type = str(step.get("step_type") or "")
+    if step_type in {"missing_record", "blocked_phase", "stale_in_progress_phase", "unverified_phase", "missing_commit_hash", "missing_push_ref", "unreviewed_pushed_phase"}:
+        risks.append(_check("block" if step_type in {"missing_record", "blocked_phase"} else "warn", f"phase_session_{step_type}", str(step.get("detail") or step_type), phase_id=step.get("phase_id"), suggested=step.get("suggested_next_command")))
+    checkpoint = next_payload.get("checkpoint") if isinstance(next_payload.get("checkpoint"), dict) else None
+    if checkpoint and int(checkpoint.get("issue_count") or 0) > 0:
+        top_issue = checkpoint.get("top_issue") if isinstance(checkpoint.get("top_issue"), dict) else {}
+        status = "block" if top_issue.get("status") == "block" else "warn"
+        risks.append(_check(status, "phase_session_checkpoint_risk", str(top_issue.get("detail") or "checkpoint issues are open"), phase_id=top_issue.get("phase_id"), suggested=checkpoint.get("suggested_next_command")))
+    open_notes = [
+        note for note in _read_session_recovery_notes(target)
+        if note.get("session_id") == session.get("session_id") and note.get("status") in {"open", "blocked"}
+    ]
+    if open_notes:
+        top_note = open_notes[-1]
+        risks.append(_check("warn", "phase_session_open_recovery_notes", f"{len(open_notes)} open recovery note(s)", phase_id=top_note.get("phase_id"), suggested=f"brigade work phases session recovery-notes show {top_note.get('note_id')}"))
+    if int(doctor.get("issue_count") or 0) > 0:
+        top = doctor.get("top_issue") if isinstance(doctor.get("top_issue"), dict) else {}
+        risks.append(_check("warn", "phase_session_doctor_issues", str(top.get("detail") or "phase ledger doctor has issue(s)"), phase_id=top.get("phase_id"), suggested=top.get("suggested_next_command") or "brigade work phases doctor"))
+    if not risks:
+        risks.append(_check("ok", "phase_session_risk", "no phase session risks detected", suggested="brigade work phases session next latest"))
+    issues = [risk for risk in risks if risk["status"] != "ok"]
+    risk_level = "high" if any(risk["status"] == "block" for risk in issues) else "medium" if issues else "low"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-risk"),
+        "target": str(target),
+        "session_id": session.get("session_id"),
+        "phase_range": session.get("phase_range"),
+        "risk_level": risk_level,
+        "risks": risks,
+        "risk_count": len(issues),
+        "top_risk": issues[0] if issues else None,
+        "next_step": step,
+        "checkpoint": checkpoint,
+        "open_recovery_note_count": len(open_notes),
+        "doctor_issue_count": doctor.get("issue_count"),
+        "suggested_next_command": issues[0]["suggested_next_command"] if issues else next_payload.get("suggested_next_command"),
+    }
+
+
+def session_risk(*, target: Path, session_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _path, session, error = _resolve_session(target, session_id)
+    if session is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    try:
+        payload = _session_risk_payload(target, session)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session risk: {payload['session_id']}")
+        print(f"risk: {payload['risk_level']}")
+        print(f"issues: {payload['risk_count']}")
+        if payload.get("top_risk"):
+            print(f"top: {payload['top_risk']['name']}")
+        print(f"next: {payload['suggested_next_command']}")
+    return 0
+
+
 def _checkpoint_state_for_session_next(target: Path, session: dict[str, Any], step: dict[str, Any]) -> dict[str, Any] | None:
     checkpoint = _latest_checkpoint_for_session(target, session.get("session_id"))
     if checkpoint is None:

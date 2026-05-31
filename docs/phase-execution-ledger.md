@@ -181,6 +181,8 @@ Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range stat
 
 `brigade daily run` may also select `write-phase-session-checkpoint` for an active phase session and write exactly one local checkpoint receipt. This is still metadata-only and does not run phase work, tests, git commands, scanners, or remote operations.
 
+`brigade work phases session risk <session-id|latest>` summarizes the current AFK risk level from the session next step, checkpoint issues, open recovery notes, and phase-ledger doctor issues. The command is read-only and gives wrappers one compact risk record before deciding whether to resume, checkpoint, import issues, or close out.
+
 `brigade work phases session activity <session-id|latest>` produces a chronological read-only activity ledger from phase starts, completions, tests, commits, reports, compare summaries, actions, imports, closeouts, handoff drafts, and session resume events.
 
 `brigade work phases session progress <session-id|latest>` summarizes percent complete, status counts, blockers, current phase, next command, test coverage, commit and push coverage, and estimated remaining local steps. It is read-only.
