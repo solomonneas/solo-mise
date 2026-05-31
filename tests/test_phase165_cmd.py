@@ -603,6 +603,28 @@ def test_phase_session_activity_timeline(tmp_path, capsys):
     assert payload["event_count"] == len(payload["events"])
 
 
+def test_phase_session_progress_summary(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "222-224", "--title", "Progress", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "complete", "phase-222", "--target", str(tmp_path), "--summary", "Done", "--test", "pytest one", "--commit", "abc222", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "defer", "phase-223", "--target", str(tmp_path), "--reason", "Deferred in test.", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "222-224", "--goal", "progress session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+
+    assert cli.main(["work", "phases", "session", "progress", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["percent_complete"] == 66.7
+    assert payload["status_counts"]["implemented"] == 1
+    assert payload["status_counts"]["deferred"] == 1
+    assert payload["current_phase_id"] == "phase-224"
+    assert payload["test_coverage"]["with_tests"] == 1
+    assert payload["commit_summary"]["with_commit"] == 1
+    assert payload["push_summary"]["with_push_ref"] == 0
+    assert payload["estimated_remaining_local_steps"] >= 1
+
+
 def test_daily_driver_surfaces_and_runs_phase_session_step(tmp_path, capsys):
     assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "214-215", "--title", "Daily", "--goal", "afk", "--json"]) == 0
     capsys.readouterr()

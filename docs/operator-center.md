@@ -100,6 +100,7 @@ brigade work phases session next <session-id|latest>
 brigade work phases session resume <session-id|latest>
 brigade work phases session closeout <session-id|latest>
 brigade work phases session activity <session-id|latest>
+brigade work phases session progress <session-id|latest>
 brigade work phases session report build <session-id|latest>
 brigade work phases session report list
 brigade work phases session report show <report-id|latest>
@@ -169,6 +170,8 @@ Phase execution sessions group a declared AFK range into one local record under 
 `brigade work phases session report build` writes `SESSION_REPORT.md` and `SESSION_EVIDENCE.json` under `.brigade/work/phases/session-reports/`. Session reports collect phase records, doctor checks, phase report compare state, action summaries, imports, commits, push refs, tests, blockers, and suggested next commands.
 
 `brigade work phases session activity` provides a read-only chronological ledger for a session, covering phase records, starts, completions, tests, commits, report and compare evidence, actions, imports, closeouts, handoff drafts, and resume events.
+
+`brigade work phases session progress` gives a read-only progress summary for a session: percent complete, phase status counts, blockers, current phase, next command, test coverage, commit and push coverage, and estimated remaining local steps.
 
 The daily driver surfaces active phase sessions in `daily status`, `plan`, `review`, `run`, and `doctor`. A session can become the selected daily action when it blocks AFK completion. `daily run` still performs exactly one bounded local step: building a session report or writing reviewed session closeout metadata.
 

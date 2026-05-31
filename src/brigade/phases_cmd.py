@@ -1449,6 +1449,78 @@ def session_activity(*, target: Path, session_id: str, json_output: bool = False
     return 0
 
 
+def _session_progress_payload(target: Path, session: dict[str, Any]) -> dict[str, Any]:
+    phase_range = str(session.get("phase_range") or "")
+    records, missing = _session_phase_records(target, phase_range)
+    parsed = _parse_range(phase_range) if phase_range else None
+    expected_total = (parsed[1] - parsed[0] + 1) if parsed else len(records)
+    complete_records = [record for record in records if record.get("status") in DONE_STATUSES | {"deferred"}]
+    percent_complete = round((len(complete_records) / expected_total) * 100, 1) if expected_total else 0.0
+    status_counts = _status_counts(records)
+    doctor_data = doctor_payload(target, phase_range=phase_range)
+    blockers = [check for check in doctor_data["checks"] if check.get("status") != "ok"]
+    next_payload = _session_next_payload(target, session)
+    test_with = len([record for record in records if record.get("tests_run")])
+    test_without = len(records) - test_with
+    commit_count = len([record for record in records if record.get("commit_hash")])
+    push_count = len([record for record in records if record.get("push_ref")])
+    remaining_phase_count = max(expected_total - len(complete_records), 0)
+    estimated_remaining_local_steps = remaining_phase_count + len(missing) + len(blockers)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-progress"),
+        "target": str(target),
+        "session_id": session.get("session_id"),
+        "phase_range": phase_range,
+        "expected_phase_count": expected_total,
+        "record_count": len(records),
+        "missing_phase_ids": missing,
+        "percent_complete": percent_complete,
+        "status_counts": status_counts,
+        "current_phase_id": next_payload["next_step"].get("phase_id"),
+        "next_step": next_payload["next_step"],
+        "suggested_next_command": next_payload["suggested_next_command"],
+        "blockers": blockers,
+        "blocker_count": len(blockers),
+        "test_coverage": {
+            "with_tests": test_with,
+            "without_tests": test_without,
+            "coverage_percent": round((test_with / len(records)) * 100, 1) if records else 0.0,
+        },
+        "commit_summary": {
+            "with_commit": commit_count,
+            "without_commit": len(records) - commit_count,
+        },
+        "push_summary": {
+            "with_push_ref": push_count,
+            "without_push_ref": len(records) - push_count,
+        },
+        "estimated_remaining_local_steps": estimated_remaining_local_steps,
+    }
+
+
+def session_progress(*, target: Path, session_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _path, session, error = _resolve_session(target, session_id)
+    if session is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    try:
+        payload = _session_progress_payload(target, session)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session progress: {payload['session_id']}")
+        print(f"complete: {payload['percent_complete']}%")
+        print(f"current: {payload['current_phase_id'] or 'none'}")
+        print(f"blockers: {payload['blocker_count']}")
+        print(f"next: {payload['suggested_next_command']}")
+    return 0
+
+
 def _find_action(target: Path, action_id: str) -> tuple[Path, dict[str, Any] | None]:
     wanted = _slug(action_id)
     exact = _actions_root(target) / f"{wanted}.json"
