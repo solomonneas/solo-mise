@@ -28,6 +28,7 @@ brigade work phases closeout <phase-id|range|latest> --status reviewed --reason 
 brigade work phases compare <phase-id|range|latest>
 brigade work phases doctor --range 165-170
 brigade work phases import-issues --range 165-170
+brigade work phases evidence add <phase-id> --file src/file.py --test "pytest ..."
 brigade work phases actions plan
 brigade work phases actions build
 brigade work phases actions list
@@ -157,6 +158,8 @@ Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range stat
 `brigade work phases session report build <session-id|latest>` writes a local bundle under `.brigade/work/phases/session-reports/` with `SESSION_REPORT.md` and `SESSION_EVIDENCE.json`. The bundle includes phase records, doctor issues, report compare summary, phase actions, phase-related imports, commits, push refs, test counts, blockers, and suggested next commands.
 
 `brigade work phases import-issues` routes unresolved ledger issues into the scanner-ready work inbox as `source: phase-ledger` task imports. Imports dedupe by a stable source fingerprint and keep promotion explicit.
+
+`brigade work phases evidence add <phase-id>` appends local evidence metadata to a phase record. Evidence attachments can include changed files, test commands, test result summaries, report ids, handoff paths, and notes. Doctor warns when attached local file or handoff references are missing.
 
 Release readiness and release candidate evidence include a compact phase-ledger summary so publish review can see whether long unattended work still has open ledger issues.
 Release doctor and release candidate compare also warn when pushed phases are unreviewed, phase reports are missing or stale, closeouts have unresolved issues, report compare has open issues, or newer phase closeout/report evidence exists after a candidate was built.

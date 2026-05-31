@@ -1442,6 +1442,13 @@ def doctor_payload(target: Path, *, phase_range: str | None = None) -> dict[str,
                 checks.append(_check("warn", "phase_complete_without_tests", "phase is marked complete without tests run", phase_id=phase_id, suggested=f"brigade work phases show {phase_id}"))
             if not record.get("files_changed") and not record.get("deferred_items"):
                 checks.append(_check("warn", "phase_complete_without_changes_or_deferral", "phase is complete without changed files or deferral evidence", phase_id=phase_id, suggested=f"brigade work phases show {phase_id}"))
+            for attachment in record.get("evidence_attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                for key in ("files_changed", "handoff_paths"):
+                    for rel_path in attachment.get(key) or []:
+                        if rel_path and not (target / str(rel_path)).exists():
+                            checks.append(_check("warn", "phase_evidence_missing_reference", f"missing {key[:-1]} evidence: {rel_path}", phase_id=phase_id, suggested=f"brigade work phases evidence add {phase_id}"))
             completed = _parse_time(record.get("completed_at"))
             if completed and now - completed > timedelta(hours=STALE_UNREVIEWED_COMPLETED_HOURS) and not _phase_has_current_closeout(target, phase_id, record):
                 checks.append(
@@ -1597,6 +1604,52 @@ def closeout(*, target: Path, selector: str, status: str = "reviewed", reason: s
         print(f"status: {status}")
         print(f"phases: {', '.join(phase_ids)}")
         print(f"unresolved: {len(selected_issues)}")
+    return 0
+
+
+def evidence_add(
+    *,
+    target: Path,
+    phase_id: str,
+    files_changed: list[str] | None = None,
+    tests_run: list[str] | None = None,
+    test_result_summary: str | None = None,
+    report_ids: list[str] | None = None,
+    handoff_paths: list[str] | None = None,
+    notes: list[str] | None = None,
+    json_output: bool = False,
+) -> int:
+    target = target.expanduser().resolve()
+    path, record = _find_record(target, phase_id)
+    if record is None:
+        print(f"error: phase record not found: {phase_id}", file=sys.stderr)
+        return 1
+    attachment = {
+        "attached_at": _now().isoformat(),
+        "files_changed": [str(item) for item in (files_changed or []) if str(item)],
+        "tests_run": [str(item) for item in (tests_run or []) if str(item)],
+        "test_result_summary": test_result_summary or "",
+        "report_ids": [str(item) for item in (report_ids or []) if str(item)],
+        "handoff_paths": [str(item) for item in (handoff_paths or []) if str(item)],
+        "notes": [str(item) for item in (notes or []) if str(item)],
+    }
+    attachments = record.get("evidence_attachments") if isinstance(record.get("evidence_attachments"), list) else []
+    attachments.append(attachment)
+    record["evidence_attachments"] = attachments
+    if attachment["files_changed"]:
+        record["files_changed"] = _append_unique(record.get("files_changed", []), attachment["files_changed"])
+    if attachment["tests_run"]:
+        record["tests_run"] = _append_unique(record.get("tests_run", []), attachment["tests_run"])
+    if test_result_summary:
+        record["test_result_summary"] = test_result_summary
+    record["updated_at"] = _now().isoformat()
+    record["path"] = str(path)
+    _write_json(path, record)
+    if json_output:
+        print(json.dumps(record, indent=2, sort_keys=True))
+    else:
+        print(f"phase evidence: {record.get('phase_id')}")
+        print(f"attachments: {len(attachments)}")
     return 0
 
 

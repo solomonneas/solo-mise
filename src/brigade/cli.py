@@ -979,6 +979,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_import.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 165-170.")
     p_work_phases_import.add_argument("--dry-run", action="store_true", help="Report imports without writing them.")
     p_work_phases_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_evidence = phases_sub.add_parser("evidence", help="Attach local evidence metadata to phase records.")
+    phases_evidence_sub = p_work_phases_evidence.add_subparsers(dest="phases_evidence_command", metavar="<phases-evidence-command>")
+    phases_evidence_sub.required = True
+    p_work_phases_evidence_add = phases_evidence_sub.add_parser("add", help="Attach local evidence to one phase.")
+    p_work_phases_evidence_add.add_argument("phase_id", help="Phase id or unique prefix.")
+    p_work_phases_evidence_add.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_evidence_add.add_argument("--file", dest="files_changed", action="append", default=[], help="Changed file path. May be repeated.")
+    p_work_phases_evidence_add.add_argument("--test", dest="tests_run", action="append", default=[], help="Verification command. May be repeated.")
+    p_work_phases_evidence_add.add_argument("--test-result", default=None, help="Verification result summary.")
+    p_work_phases_evidence_add.add_argument("--report-id", action="append", default=[], help="Related phase report id. May be repeated.")
+    p_work_phases_evidence_add.add_argument("--handoff", dest="handoff_paths", action="append", default=[], help="Memory Handoff path. May be repeated.")
+    p_work_phases_evidence_add.add_argument("--note", dest="notes", action="append", default=[], help="Evidence note. May be repeated.")
+    p_work_phases_evidence_add.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_actions = phases_sub.add_parser("actions", help="Plan and manage local phase ledger action records.")
     phases_actions_sub = p_work_phases_actions.add_subparsers(dest="phases_actions_command", metavar="<phases-actions-command>")
     phases_actions_sub.required = True
@@ -3103,6 +3116,21 @@ def main(argv=None) -> int:
                 return phases_cmd.doctor(target=args.target, phase_range=args.phase_range, json_output=args.json)
             if args.phases_command == "import-issues":
                 return phases_cmd.import_issues(target=args.target, phase_range=args.phase_range, dry_run=args.dry_run, json_output=args.json)
+            if args.phases_command == "evidence":
+                if args.phases_evidence_command == "add":
+                    return phases_cmd.evidence_add(
+                        target=args.target,
+                        phase_id=args.phase_id,
+                        files_changed=args.files_changed,
+                        tests_run=args.tests_run,
+                        test_result_summary=args.test_result,
+                        report_ids=args.report_id,
+                        handoff_paths=args.handoff_paths,
+                        notes=args.notes,
+                        json_output=args.json,
+                    )
+                parser.error(f"unknown phases evidence command: {args.phases_evidence_command}")
+                return 2
             if args.phases_command == "actions":
                 if args.phases_actions_command == "plan":
                     return phases_cmd.actions_plan(target=args.target, phase_range=args.phase_range, json_output=args.json)

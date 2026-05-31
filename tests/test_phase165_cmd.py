@@ -582,3 +582,43 @@ def test_daily_driver_surfaces_and_runs_phase_session_step(tmp_path, capsys):
     assert center_cmd.reviews(target=tmp_path, json_output=True) == 0
     center_reviews = json.loads(capsys.readouterr().out)
     assert any(item["subsystem"] == "phase-session" for item in center_reviews["reviews"])
+
+
+def test_phase_evidence_add_attaches_metadata_and_doctor_warns_on_missing_refs(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--phase-id", "phase-216", "--title", "Evidence", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(
+        [
+            "work",
+            "phases",
+            "evidence",
+            "add",
+            "phase-216",
+            "--target",
+            str(tmp_path),
+            "--file",
+            "missing.py",
+            "--test",
+            "pytest tests/test_phase165_cmd.py -q",
+            "--test-result",
+            "passed",
+            "--report-id",
+            "report-1",
+            "--handoff",
+            ".claude/memory-handoffs/missing.md",
+            "--note",
+            "attached by test",
+            "--json",
+        ]
+    ) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["files_changed"] == ["missing.py"]
+    assert record["tests_run"] == ["pytest tests/test_phase165_cmd.py -q"]
+    assert record["test_result_summary"] == "passed"
+    assert record["evidence_attachments"][0]["report_ids"] == ["report-1"]
+
+    assert cli.main(["work", "phases", "complete", "phase-216", "--target", str(tmp_path), "--summary", "Done", "--json"]) == 0
+    capsys.readouterr()
+    assert phases_cmd.doctor(target=tmp_path, json_output=True) == 0
+    doctor_payload = json.loads(capsys.readouterr().out)
+    assert any(check["name"] == "phase_evidence_missing_reference" for check in doctor_payload["checks"])
