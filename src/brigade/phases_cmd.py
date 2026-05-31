@@ -14,6 +14,7 @@ from uuid import uuid4
 SCHEMA_VERSION = 1
 PHASE_STATUSES = {"pending", "in-progress", "implemented", "verified", "committed", "pushed", "deferred", "blocked"}
 PHASE_CLOSEOUT_STATUSES = {"reviewed", "deferred", "blocked", "archived"}
+PHASE_ACTION_STATUSES = {"pending", "active", "done", "deferred", "archived"}
 DONE_STATUSES = {"implemented", "verified", "committed", "pushed"}
 STALE_IN_PROGRESS_HOURS = 12
 REPORT_STALE_HOURS = 24
@@ -38,6 +39,10 @@ def _reports_root(target: Path) -> Path:
 
 def _closeouts_root(target: Path) -> Path:
     return _root(target) / "closeouts"
+
+
+def _actions_root(target: Path) -> Path:
+    return _root(target) / "actions"
 
 
 def _index_path(target: Path) -> Path:
@@ -209,6 +214,7 @@ def schema(*, target: Path, json_output: bool = False) -> int:
             _schema("phase-ledger-status"),
             _schema("phase-ledger-report"),
             _schema("phase-ledger-closeout"),
+            _schema("phase-ledger-action"),
             _schema("phase-ledger-doctor"),
         ],
         "status_values": sorted(PHASE_STATUSES),
@@ -645,6 +651,28 @@ def _latest_report(target: Path) -> dict[str, Any] | None:
     return sorted(reports, key=lambda item: str(item.get("created_at") or ""))[-1]
 
 
+def _read_actions(target: Path) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for path in sorted(_actions_root(target).glob("*.json")):
+        payload = _read_json(path)
+        if payload is None:
+            continue
+        payload.setdefault("path", str(path))
+        actions.append(payload)
+    return actions
+
+
+def _find_action(target: Path, action_id: str) -> tuple[Path, dict[str, Any] | None]:
+    wanted = _slug(action_id)
+    exact = _actions_root(target) / f"{wanted}.json"
+    if exact.is_file():
+        return exact, _read_json(exact)
+    matches = [path for path in _actions_root(target).glob("*.json") if path.stem.startswith(wanted)]
+    if len(matches) == 1:
+        return matches[0], _read_json(matches[0])
+    return exact, None
+
+
 def _git_head(target: Path) -> str:
     try:
         result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=target, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -665,6 +693,89 @@ def _phase_has_current_closeout(target: Path, phase_id: str, record: dict[str, A
         if phase_id in (item.get("phase_ids") or []) and item.get("source_fingerprint") == wanted and item.get("status") in PHASE_CLOSEOUT_STATUSES:
             return True
     return False
+
+
+def _action_source_fingerprint(phase_id: str, issue_type: str, detail: str) -> str:
+    return hashlib.sha256(f"{phase_id}:{issue_type}:{detail}".encode("utf-8")).hexdigest()[:16]
+
+
+def _action_summary(action: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action_id": action.get("action_id"),
+        "phase_id": action.get("phase_id"),
+        "issue_type": action.get("issue_type"),
+        "status": action.get("status"),
+        "safe_summary": action.get("safe_summary"),
+        "source_fingerprint": action.get("source_fingerprint"),
+        "suggested_next_command": action.get("suggested_next_command"),
+        "path": action.get("path"),
+    }
+
+
+def _phase_action_candidates(target: Path, *, phase_range: str | None = None) -> list[dict[str, Any]]:
+    doctor_data = doctor_payload(target, phase_range=phase_range)
+    candidates: list[dict[str, Any]] = []
+    for check in doctor_data["checks"]:
+        if check.get("status") == "ok":
+            continue
+        phase_id = str(check.get("phase_id") or "ledger")
+        issue_type = str(check.get("name") or "phase_issue")
+        detail = str(check.get("detail") or "")
+        fingerprint = _action_source_fingerprint(phase_id, issue_type, detail)
+        candidates.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "schema": _schema("phase-ledger-action"),
+                "action_id": f"phase-action-{_slug(phase_id)}-{_slug(issue_type)}-{fingerprint[:8]}",
+                "phase_id": phase_id,
+                "issue_type": issue_type,
+                "status": "pending",
+                "safe_summary": detail,
+                "source": "doctor",
+                "source_fingerprint": fingerprint,
+                "source_status": check.get("status"),
+                "created_at": None,
+                "updated_at": None,
+                "reviewed_at": None,
+                "review_reason": "",
+                "suggested_next_command": check.get("suggested_next_command") or "brigade work phases doctor",
+            }
+        )
+    for closeout_record in _read_closeouts(target):
+        if closeout_record.get("status") not in {"blocked", "deferred"} and int(closeout_record.get("unresolved_issue_count") or 0) == 0:
+            continue
+        for issue in closeout_record.get("unresolved_issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            phase_id = str(issue.get("phase_id") or "ledger")
+            issue_type = f"closeout_{issue.get('name') or 'blocker'}"
+            detail = str(issue.get("detail") or closeout_record.get("reason") or "closeout blocker")
+            fingerprint = _action_source_fingerprint(phase_id, issue_type, detail)
+            candidates.append(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "schema": _schema("phase-ledger-action"),
+                    "action_id": f"phase-action-{_slug(phase_id)}-{_slug(issue_type)}-{fingerprint[:8]}",
+                    "phase_id": phase_id,
+                    "issue_type": issue_type,
+                    "status": "pending",
+                    "safe_summary": detail,
+                    "source": "closeout",
+                    "source_closeout_id": closeout_record.get("closeout_id"),
+                    "source_fingerprint": fingerprint,
+                    "source_status": issue.get("status"),
+                    "created_at": None,
+                    "updated_at": None,
+                    "reviewed_at": None,
+                    "review_reason": "",
+                    "suggested_next_command": issue.get("suggested_next_command") or "brigade work phases closeout latest",
+                }
+            )
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for candidate in candidates:
+        key = (str(candidate.get("phase_id")), str(candidate.get("issue_type")), str(candidate.get("source_fingerprint")))
+        deduped.setdefault(key, candidate)
+    return list(deduped.values())
 
 
 def _check(status: str, name: str, detail: str, *, phase_id: str | None = None, suggested: str = "brigade work phases doctor") -> dict[str, Any]:
@@ -901,6 +1012,172 @@ def compare(*, target: Path, selector: str, json_output: bool = False) -> int:
         print(f"records: {len(records)}")
         for check in checks:
             print(f"[{check['status']}] {check['name']}: {check['detail']}")
+    return 0
+
+
+def actions_plan(*, target: Path, phase_range: str | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    existing = {(item.get("phase_id"), item.get("issue_type"), item.get("source_fingerprint")): item for item in _read_actions(target) if item.get("status") != "archived"}
+    planned: list[dict[str, Any]] = []
+    for candidate in _phase_action_candidates(target, phase_range=phase_range):
+        key = (candidate.get("phase_id"), candidate.get("issue_type"), candidate.get("source_fingerprint"))
+        planned.append(_action_summary(existing.get(key, candidate)))
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-action-plan"),
+        "target": str(target),
+        "phase_range": phase_range,
+        "actions": planned,
+        "action_count": len(planned),
+        "suggested_next_command": "brigade work phases actions build",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase actions planned: {len(planned)}")
+        for action in planned:
+            print(f"- {action.get('action_id')} [{action.get('status')}] {action.get('issue_type')}")
+    return 0
+
+
+def actions_build(*, target: Path, phase_range: str | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _actions_root(target).mkdir(parents=True, exist_ok=True)
+    existing = {(item.get("phase_id"), item.get("issue_type"), item.get("source_fingerprint")): item for item in _read_actions(target) if item.get("status") != "archived"}
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for candidate in _phase_action_candidates(target, phase_range=phase_range):
+        key = (candidate.get("phase_id"), candidate.get("issue_type"), candidate.get("source_fingerprint"))
+        if key in existing:
+            skipped.append(_action_summary(existing[key]))
+            continue
+        now = _now().isoformat()
+        candidate["created_at"] = now
+        candidate["updated_at"] = now
+        path = _actions_root(target) / f"{candidate['action_id']}.json"
+        candidate["path"] = str(path)
+        _write_json(path, candidate)
+        created.append(_action_summary(candidate))
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-action-build"),
+        "target": str(target),
+        "phase_range": phase_range,
+        "created": created,
+        "skipped": skipped,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "suggested_next_command": "brigade work phases actions list",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase actions created: {len(created)}")
+        print(f"phase actions skipped: {len(skipped)}")
+    return 0
+
+
+def actions_list(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    actions = [_action_summary(action) for action in _read_actions(target) if action.get("status") != "archived"]
+    payload = {"schema_version": SCHEMA_VERSION, "schema": _schema("phase-ledger-action-list"), "target": str(target), "actions": actions, "action_count": len(actions)}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase actions: {len(actions)}")
+        for action in actions:
+            print(f"- {action.get('action_id')} [{action.get('status')}] {action.get('issue_type')}")
+    return 0
+
+
+def actions_show(*, target: Path, action_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    path, action = _find_action(target, action_id)
+    if action is None:
+        print(f"error: phase action not found: {action_id}", file=sys.stderr)
+        return 1
+    action["path"] = str(path)
+    if json_output:
+        print(json.dumps(action, indent=2, sort_keys=True))
+    else:
+        print(f"phase action: {action.get('action_id')}")
+        print(f"status: {action.get('status')}")
+        print(f"issue: {action.get('issue_type')}")
+        print(f"next: {action.get('suggested_next_command')}")
+    return 0
+
+
+def _set_action_status(target: Path, action_id: str, status: str, reason: str | None = None) -> tuple[int, dict[str, Any] | None]:
+    if status not in PHASE_ACTION_STATUSES:
+        print(f"error: invalid phase action status: {status}", file=sys.stderr)
+        return 2, None
+    target = target.expanduser().resolve()
+    path, action = _find_action(target, action_id)
+    if action is None:
+        print(f"error: phase action not found: {action_id}", file=sys.stderr)
+        return 1, None
+    action["status"] = status
+    action["updated_at"] = _now().isoformat()
+    if status in {"done", "deferred", "archived"}:
+        action["reviewed_at"] = action["updated_at"]
+    if reason is not None:
+        action["review_reason"] = reason
+    action["path"] = str(path)
+    _write_json(path, action)
+    return 0, action
+
+
+def _actions_update_status(*, target: Path, action_id: str, status: str, reason: str | None = None, json_output: bool = False) -> int:
+    result, action = _set_action_status(target.expanduser().resolve(), action_id, status, reason)
+    if result != 0 or action is None:
+        return result
+    if json_output:
+        print(json.dumps(action, indent=2, sort_keys=True))
+    else:
+        print(f"phase action: {action.get('action_id')}")
+        print(f"status: {status}")
+    return 0
+
+
+def actions_start(*, target: Path, action_id: str, json_output: bool = False) -> int:
+    return _actions_update_status(target=target, action_id=action_id, status="active", json_output=json_output)
+
+
+def actions_done(*, target: Path, action_id: str, json_output: bool = False) -> int:
+    return _actions_update_status(target=target, action_id=action_id, status="done", json_output=json_output)
+
+
+def actions_defer(*, target: Path, action_id: str, reason: str, json_output: bool = False) -> int:
+    if not reason.strip():
+        print("error: --reason is required", file=sys.stderr)
+        return 2
+    return _actions_update_status(target=target, action_id=action_id, status="deferred", reason=reason, json_output=json_output)
+
+
+def actions_archive(*, target: Path, action_id: str | None = None, completed: bool = False, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    archived: list[dict[str, Any]] = []
+    if completed:
+        candidates = [action for action in _read_actions(target) if action.get("status") in {"done", "deferred"}]
+    elif action_id:
+        path, action = _find_action(target, action_id)
+        if action is None:
+            print(f"error: phase action not found: {action_id}", file=sys.stderr)
+            return 1
+        action["path"] = str(path)
+        candidates = [action]
+    else:
+        print("error: pass an action id or --completed", file=sys.stderr)
+        return 2
+    for action in candidates:
+        result, updated = _set_action_status(target, str(action.get("action_id")), "archived")
+        if result == 0 and updated is not None:
+            archived.append(_action_summary(updated))
+    payload = {"schema_version": SCHEMA_VERSION, "schema": _schema("phase-ledger-action-archive"), "target": str(target), "archived": archived, "archived_count": len(archived)}
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase actions archived: {len(archived)}")
     return 0
 
 

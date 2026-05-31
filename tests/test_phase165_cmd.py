@@ -317,3 +317,59 @@ def test_phase_ledger_compare_detects_local_evidence_drift(tmp_path, capsys, mon
     assert cli.main(["work", "phases", "compare", "250-251", "--target", str(tmp_path), "--json"]) == 0
     range_payload = json.loads(capsys.readouterr().out)
     assert any(check["name"] == "phase_compare_missing_records" for check in range_payload["checks"])
+
+
+def test_phase_ledger_actions_build_dedupe_and_transition(tmp_path, capsys):
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-260", title="Action", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-260", summary="No evidence", json_output=True) == 0
+    capsys.readouterr()
+
+    assert cli.main(["work", "phases", "actions", "plan", "--target", str(tmp_path), "--json"]) == 0
+    plan_payload = json.loads(capsys.readouterr().out)
+    assert plan_payload["action_count"] >= 1
+
+    assert cli.main(["work", "phases", "actions", "build", "--target", str(tmp_path), "--json"]) == 0
+    build_payload = json.loads(capsys.readouterr().out)
+    assert build_payload["created_count"] >= 1
+    action_id = build_payload["created"][0]["action_id"]
+
+    assert cli.main(["work", "phases", "actions", "build", "--target", str(tmp_path), "--json"]) == 0
+    second_build = json.loads(capsys.readouterr().out)
+    assert second_build["created_count"] == 0
+    assert second_build["skipped_count"] >= 1
+
+    assert cli.main(["work", "phases", "actions", "list", "--target", str(tmp_path), "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["action_count"] >= 1
+
+    assert cli.main(["work", "phases", "actions", "show", action_id, "--target", str(tmp_path), "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["action_id"] == action_id
+
+    assert cli.main(["work", "phases", "actions", "start", action_id, "--target", str(tmp_path), "--json"]) == 0
+    active = json.loads(capsys.readouterr().out)
+    assert active["status"] == "active"
+
+    assert cli.main(["work", "phases", "actions", "done", action_id, "--target", str(tmp_path), "--json"]) == 0
+    done = json.loads(capsys.readouterr().out)
+    assert done["status"] == "done"
+
+    assert cli.main(["work", "phases", "actions", "archive", "--target", str(tmp_path), "--completed", "--json"]) == 0
+    archived = json.loads(capsys.readouterr().out)
+    assert archived["archived_count"] >= 1
+
+
+def test_phase_ledger_actions_defer_requires_reason(tmp_path, capsys):
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-261", title="Action", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-261", summary="No evidence", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.actions_build(target=tmp_path, json_output=True) == 0
+    build_payload = json.loads(capsys.readouterr().out)
+    action_id = build_payload["created"][0]["action_id"]
+
+    assert cli.main(["work", "phases", "actions", "defer", action_id, "--target", str(tmp_path), "--reason", "Waiting for review.", "--json"]) == 0
+    deferred = json.loads(capsys.readouterr().out)
+    assert deferred["status"] == "deferred"
+    assert deferred["review_reason"] == "Waiting for review."

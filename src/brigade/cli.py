@@ -979,6 +979,42 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_import.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 165-170.")
     p_work_phases_import.add_argument("--dry-run", action="store_true", help="Report imports without writing them.")
     p_work_phases_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions = phases_sub.add_parser("actions", help="Plan and manage local phase ledger action records.")
+    phases_actions_sub = p_work_phases_actions.add_subparsers(dest="phases_actions_command", metavar="<phases-actions-command>")
+    phases_actions_sub.required = True
+    p_work_phases_actions_plan = phases_actions_sub.add_parser("plan", help="Preview phase ledger actions from current issues.")
+    p_work_phases_actions_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_actions_plan.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 201-205.")
+    p_work_phases_actions_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_build = phases_actions_sub.add_parser("build", help="Build local phase ledger action records.")
+    p_work_phases_actions_build.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_actions_build.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 201-205.")
+    p_work_phases_actions_build.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_list = phases_actions_sub.add_parser("list", help="List local phase ledger actions.")
+    p_work_phases_actions_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_actions_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_show = phases_actions_sub.add_parser("show", help="Show one phase ledger action.")
+    p_work_phases_actions_show.add_argument("action_id", help="Action id or unique prefix.")
+    p_work_phases_actions_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_actions_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_start = phases_actions_sub.add_parser("start", help="Mark one phase ledger action active.")
+    p_work_phases_actions_start.add_argument("action_id", help="Action id or unique prefix.")
+    p_work_phases_actions_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_actions_start.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_done = phases_actions_sub.add_parser("done", help="Mark one phase ledger action done.")
+    p_work_phases_actions_done.add_argument("action_id", help="Action id or unique prefix.")
+    p_work_phases_actions_done.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_actions_done.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_defer = phases_actions_sub.add_parser("defer", help="Defer one phase ledger action.")
+    p_work_phases_actions_defer.add_argument("action_id", help="Action id or unique prefix.")
+    p_work_phases_actions_defer.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_actions_defer.add_argument("--reason", required=True, help="Deferral reason.")
+    p_work_phases_actions_defer.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_actions_archive = phases_actions_sub.add_parser("archive", help="Archive phase ledger actions.")
+    p_work_phases_actions_archive.add_argument("action_id", nargs="?", default=None, help="Action id or unique prefix.")
+    p_work_phases_actions_archive.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_actions_archive.add_argument("--completed", action="store_true", help="Archive done and deferred actions.")
+    p_work_phases_actions_archive.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_report = phases_sub.add_parser("report", help="Build and inspect phase ledger reports.")
     phases_report_sub = p_work_phases_report.add_subparsers(dest="phases_report_command", metavar="<phases-report-command>")
     phases_report_sub.required = True
@@ -3008,6 +3044,25 @@ def main(argv=None) -> int:
                 return phases_cmd.doctor(target=args.target, phase_range=args.phase_range, json_output=args.json)
             if args.phases_command == "import-issues":
                 return phases_cmd.import_issues(target=args.target, phase_range=args.phase_range, dry_run=args.dry_run, json_output=args.json)
+            if args.phases_command == "actions":
+                if args.phases_actions_command == "plan":
+                    return phases_cmd.actions_plan(target=args.target, phase_range=args.phase_range, json_output=args.json)
+                if args.phases_actions_command == "build":
+                    return phases_cmd.actions_build(target=args.target, phase_range=args.phase_range, json_output=args.json)
+                if args.phases_actions_command == "list":
+                    return phases_cmd.actions_list(target=args.target, json_output=args.json)
+                if args.phases_actions_command == "show":
+                    return phases_cmd.actions_show(target=args.target, action_id=args.action_id, json_output=args.json)
+                if args.phases_actions_command == "start":
+                    return phases_cmd.actions_start(target=args.target, action_id=args.action_id, json_output=args.json)
+                if args.phases_actions_command == "done":
+                    return phases_cmd.actions_done(target=args.target, action_id=args.action_id, json_output=args.json)
+                if args.phases_actions_command == "defer":
+                    return phases_cmd.actions_defer(target=args.target, action_id=args.action_id, reason=args.reason, json_output=args.json)
+                if args.phases_actions_command == "archive":
+                    return phases_cmd.actions_archive(target=args.target, action_id=args.action_id, completed=args.completed, json_output=args.json)
+                parser.error(f"unknown phases actions command: {args.phases_actions_command}")
+                return 2
             if args.phases_command == "report":
                 if args.phases_report_command == "build":
                     return phases_cmd.report_build(target=args.target, phase_range=args.phase_range, json_output=args.json)
