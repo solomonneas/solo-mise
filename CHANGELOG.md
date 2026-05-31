@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `brigade work phases init/plan/list/show/start/complete/defer/doctor` for a gitignored phase execution ledger that makes unattended multi-phase work auditable, detects silent compression, and surfaces phase-ledger health in daily, work, and center views.
 - Daily hardening audits now perform phase-aware checks across daily receipts, center contracts, inbox evidence quality, repo fleet daily-use state, and release self-dogfood evidence, with release readiness and release candidates carrying compact summaries for those checks.
 - `brigade daily hardening plan/audit/import-issues/closeout` plus `docs/phase-115-164-plan.md` for the production-hardening queue across daily reliability, operator-center contracts, inbox evidence quality, repo-fleet daily use, and self-dogfood release evidence.
 - `brigade daily resume/repair/unblock/protocol`, `brigade daily telemetry doctor`, daily approval compare/archive commands, normalized daily adapter receipts, explainable plans, verification-aware closeout fields, local telemetry, and release evidence for the daily driver.

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from . import chat_cmd, context_cmd, handoff_cmd, learn_cmd, memory_cmd, projects_cmd, release_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd, work_cmd
+from . import chat_cmd, context_cmd, handoff_cmd, learn_cmd, memory_cmd, phases_cmd, projects_cmd, release_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd, work_cmd
 
 SCHEMA_VERSION = 1
 SCHEMA_MANIFEST_VERSION = 1
@@ -877,6 +877,10 @@ def _reviews(target: Path) -> list[dict[str, Any]]:
     top_daily = daily_health.get("top_issue") if isinstance(daily_health.get("top_issue"), dict) else None
     if top_daily:
         items.append(_item("daily-driver", str(top_daily.get("name") or "daily"), str(top_daily.get("status") or "warn"), str(top_daily.get("detail") or "daily driver needs review"), "brigade daily doctor"))
+    phase_health = phases_cmd.health(target)
+    top_phase = phase_health.get("top_issue") if isinstance(phase_health.get("top_issue"), dict) else None
+    if top_phase:
+        items.append(_item("phase-ledger", str(top_phase.get("phase_id") or top_phase.get("name") or "phase-ledger"), str(top_phase.get("status") or "warn"), str(top_phase.get("detail") or "phase execution ledger needs review"), "brigade work phases doctor"))
     return items
 
 
@@ -914,6 +918,7 @@ def status_payload(target: Path) -> dict[str, Any]:
         "operator_report": report_health(target),
         "action_queue": actions_health(target),
         "daily_driver": daily_cmd.health(target),
+        "phase_ledger": phases_cmd.health(target),
         "review_queue_count": len(_reviews(target)),
     }
 
@@ -929,6 +934,10 @@ def status(*, target: Path, json_output: bool = False) -> int:
     print(f"reviews: {payload['review_queue_count']}")
     print(f"actions: {payload['action_queue']['open_count']}")
     print(f"context_packs: {payload['context']['pack_count']}")
+    phase_ledger = payload.get("phase_ledger") if isinstance(payload.get("phase_ledger"), dict) else {}
+    if phase_ledger:
+        print(f"phase_records: {phase_ledger.get('record_count', 0)}")
+        print(f"phase_issues: {phase_ledger.get('issue_count', 0)}")
     return 0
 
 

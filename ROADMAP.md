@@ -13,6 +13,7 @@ Status: in progress.
 - `brigade work tasks` plus `brigade work task add/show/done` provide a gitignored local task ledger.
 - `brigade work run --queue-next` queues extracted follow-up work without duplicating equivalent pending tasks.
 - `brigade work import add/list/show/promote` gives scanners and wrappers a stable local inbox for candidate work.
+- `brigade work phases` provides a gitignored execution ledger for long unattended multi-phase work, including no-silent-compression checks and completion evidence requirements.
 
 ## Foundation: Scanner-Ready Inbox
 

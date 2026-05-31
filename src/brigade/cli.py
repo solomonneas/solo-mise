@@ -904,6 +904,55 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_review_closeout.add_argument("run_id", help="Run id, unique prefix, or latest.")
     p_work_review_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
     p_work_review_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases = work_sub.add_parser("phases", help="Plan and inspect auditable phase execution records.")
+    phases_sub = p_work_phases.add_subparsers(dest="phases_command", metavar="<phases-command>")
+    phases_sub.required = True
+    p_work_phases_init = phases_sub.add_parser("init", help="Initialize the local phase execution ledger.")
+    p_work_phases_init.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_init.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_plan = phases_sub.add_parser("plan", help="Plan one phase or a range of phases.")
+    p_work_phases_plan.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_plan.add_argument("--phase-id", "--phase", dest="phase_id", default=None, help="Phase id to create, such as phase-165.")
+    p_work_phases_plan.add_argument("--range", dest="phase_range", default=None, help="Phase range to create, such as 165-170.")
+    p_work_phases_plan.add_argument("--title", default=None, help="Phase title.")
+    p_work_phases_plan.add_argument("--goal", dest="source_goal", default=None, help="Source goal text or label.")
+    p_work_phases_plan.add_argument("--grouped", action="store_true", help="Declare an explicit grouped phase range.")
+    p_work_phases_plan.add_argument("--force", action="store_true", help="Overwrite existing phase records.")
+    p_work_phases_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_list = phases_sub.add_parser("list", help="List local phase records.")
+    p_work_phases_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_show = phases_sub.add_parser("show", help="Show one local phase record.")
+    p_work_phases_show.add_argument("phase_id", help="Phase id or unique prefix.")
+    p_work_phases_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_start = phases_sub.add_parser("start", help="Mark one phase in progress.")
+    p_work_phases_start.add_argument("phase_id", help="Phase id or unique prefix.")
+    p_work_phases_start.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_start.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_complete = phases_sub.add_parser("complete", help="Attach completion evidence to one phase.")
+    p_work_phases_complete.add_argument("phase_id", help="Phase id or unique prefix.")
+    p_work_phases_complete.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_complete.add_argument("--status", choices=["implemented", "verified", "committed", "pushed"], default="implemented", help="Completion status.")
+    p_work_phases_complete.add_argument("--summary", default=None, help="Implementation summary.")
+    p_work_phases_complete.add_argument("--file", dest="files_changed", action="append", default=[], help="Changed file. May be repeated.")
+    p_work_phases_complete.add_argument("--test", dest="tests_run", action="append", default=[], help="Verification command. May be repeated.")
+    p_work_phases_complete.add_argument("--test-result", default=None, help="Test result summary.")
+    p_work_phases_complete.add_argument("--commit", dest="commit_hash", default=None, help="Commit hash.")
+    p_work_phases_complete.add_argument("--push-ref", default=None, help="Push ref.")
+    p_work_phases_complete.add_argument("--deferred-item", action="append", default=[], help="Deferred item. May be repeated.")
+    p_work_phases_complete.add_argument("--next", dest="next_phase_recommendation", default=None, help="Next phase recommendation.")
+    p_work_phases_complete.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_defer = phases_sub.add_parser("defer", help="Defer one phase with a reason.")
+    p_work_phases_defer.add_argument("phase_id", help="Phase id or unique prefix.")
+    p_work_phases_defer.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_defer.add_argument("--reason", required=True, help="Deferral reason.")
+    p_work_phases_defer.add_argument("--next", dest="next_phase_recommendation", default=None, help="Next phase recommendation.")
+    p_work_phases_defer.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_doctor = phases_sub.add_parser("doctor", help="Check phase execution ledger health.")
+    p_work_phases_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_doctor.add_argument("--range", dest="phase_range", default=None, help="Required phase range, such as 165-170.")
+    p_work_phases_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_next = work_sub.add_parser("next", help="Show the next daily work task and suggested command.")
     p_work_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_next.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -2858,6 +2907,55 @@ def main(argv=None) -> int:
             if args.review_command == "closeout":
                 return work_cmd.review_closeout(target=args.target, run_id=args.run_id, json_output=args.json)
             parser.error(f"unknown review command: {args.review_command}")
+            return 2
+        if args.work_command == "phases":
+            from . import phases_cmd
+
+            if args.phases_command == "init":
+                return phases_cmd.init(target=args.target, json_output=args.json)
+            if args.phases_command == "plan":
+                return phases_cmd.plan(
+                    target=args.target,
+                    phase_id=args.phase_id,
+                    phase_range=args.phase_range,
+                    title=args.title,
+                    source_goal=args.source_goal,
+                    grouped=args.grouped,
+                    force=args.force,
+                    json_output=args.json,
+                )
+            if args.phases_command == "list":
+                return phases_cmd.list_phases(target=args.target, json_output=args.json)
+            if args.phases_command == "show":
+                return phases_cmd.show(target=args.target, phase_id=args.phase_id, json_output=args.json)
+            if args.phases_command == "start":
+                return phases_cmd.start(target=args.target, phase_id=args.phase_id, json_output=args.json)
+            if args.phases_command == "complete":
+                return phases_cmd.complete(
+                    target=args.target,
+                    phase_id=args.phase_id,
+                    status=args.status,
+                    summary=args.summary,
+                    files_changed=args.files_changed,
+                    tests_run=args.tests_run,
+                    test_result_summary=args.test_result,
+                    commit_hash=args.commit_hash,
+                    push_ref=args.push_ref,
+                    deferred_items=args.deferred_item,
+                    next_phase_recommendation=args.next_phase_recommendation,
+                    json_output=args.json,
+                )
+            if args.phases_command == "defer":
+                return phases_cmd.defer(
+                    target=args.target,
+                    phase_id=args.phase_id,
+                    reason=args.reason,
+                    next_phase_recommendation=args.next_phase_recommendation,
+                    json_output=args.json,
+                )
+            if args.phases_command == "doctor":
+                return phases_cmd.doctor(target=args.target, phase_range=args.phase_range, json_output=args.json)
+            parser.error(f"unknown phases command: {args.phases_command}")
             return 2
         if args.work_command == "next":
             return work_cmd.next(target=args.target, json_output=args.json)

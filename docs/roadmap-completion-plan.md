@@ -97,6 +97,28 @@ Not covered:
 
 ## Completion Themes
 
+### 0. AFK Phase Execution Ledger
+
+Deliverable: future long-run goals are auditable before completion is claimed.
+
+Implementation scope:
+
+- Add `brigade work phases init/plan/list/show/start/complete/defer/doctor`.
+- Store local phase records under `.brigade/work/phases/`.
+- Require each phase to record goal, status, summary, changed files, tests, commit, push ref, deferrals, blockers, and next recommendation.
+- Detect silent compression by requiring explicit grouped records before grouped phase work starts.
+- Surface phase-ledger health through the daily driver, work brief and doctor, and operator center status.
+
+Acceptance:
+
+- Tests cover command text and JSON output.
+- Tests cover missing phase records, incomplete evidence, missing commit or push metadata, stale in-progress phases, blocked phases without next steps, and explicit grouped records.
+- Docs state that future AFK multi-phase work is not complete unless ledger evidence or explicit deferrals exist.
+
+Phase 165 status:
+
+- Implemented with local JSON records, doctor checks, daily/work/center health integration, and `docs/phase-execution-ledger.md`.
+
 ### 1. Roadmap State Audit And Closure Map
 
 Deliverable: a machine-readable and human-readable roadmap health view.

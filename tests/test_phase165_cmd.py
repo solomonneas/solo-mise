@@ -1,0 +1,186 @@
+import json
+from datetime import datetime, timedelta, timezone
+
+from brigade import center_cmd, cli, daily_cmd, phases_cmd, work_cmd
+
+
+def test_phase_ledger_init_plan_list_show_start_complete_and_defer(tmp_path, capsys):
+    assert cli.main(["work", "phases", "init", "--target", str(tmp_path), "--json"]) == 0
+    init_payload = json.loads(capsys.readouterr().out)
+    assert init_payload["written"] is True
+    assert (tmp_path / ".brigade" / "work" / "phases" / "index.json").is_file()
+
+    assert cli.main(
+        [
+            "work",
+            "phases",
+            "plan",
+            "--target",
+            str(tmp_path),
+            "--phase-id",
+            "phase-165",
+            "--title",
+            "AFK ledger",
+            "--goal",
+            "phase execution evidence",
+            "--json",
+        ]
+    ) == 0
+    plan_payload = json.loads(capsys.readouterr().out)
+    assert plan_payload["created_count"] == 1
+    assert plan_payload["created"][0]["phase_id"] == "phase-165"
+
+    assert cli.main(["work", "phases", "list", "--target", str(tmp_path), "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["record_count"] == 1
+
+    assert cli.main(["work", "phases", "start", "phase-165", "--target", str(tmp_path), "--json"]) == 0
+    started = json.loads(capsys.readouterr().out)
+    assert started["status"] == "in-progress"
+    assert started["started_at"]
+
+    assert cli.main(
+        [
+            "work",
+            "phases",
+            "complete",
+            "phase-165",
+            "--target",
+            str(tmp_path),
+            "--status",
+            "pushed",
+            "--summary",
+            "Implemented the ledger.",
+            "--file",
+            "src/brigade/phases_cmd.py",
+            "--test",
+            "pytest tests/test_phase165_cmd.py -q",
+            "--test-result",
+            "passed",
+            "--commit",
+            "abc1234",
+            "--push-ref",
+            "main",
+            "--next",
+            "Use the ledger for unattended phase ranges.",
+            "--json",
+        ]
+    ) == 0
+    completed = json.loads(capsys.readouterr().out)
+    assert completed["status"] == "pushed"
+    assert completed["commit_hash"] == "abc1234"
+    assert completed["push_ref"] == "main"
+
+    assert cli.main(["work", "phases", "show", "phase-165", "--target", str(tmp_path), "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["implementation_summary"] == "Implemented the ledger."
+
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--phase-id", "phase-166", "--title", "Deferred", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "defer", "phase-166", "--target", str(tmp_path), "--reason", "Not needed in this tranche.", "--json"]) == 0
+    deferred = json.loads(capsys.readouterr().out)
+    assert deferred["status"] == "deferred"
+    assert deferred["deferred_items"] == ["Not needed in this tranche."]
+
+
+def test_phase_ledger_doctor_range_and_evidence_warnings(tmp_path, capsys):
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-170", title="No tests", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-170", summary="Done", json_output=True) == 0
+    capsys.readouterr()
+
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-171", title="No commit", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-171", status="committed", files_changed=["file.py"], tests_run=["pytest"], json_output=True) == 0
+    capsys.readouterr()
+
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-172", title="No push ref", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-172", status="pushed", files_changed=["file.py"], tests_run=["pytest"], commit_hash="abc123", json_output=True) == 0
+    capsys.readouterr()
+
+    assert phases_cmd.doctor(target=tmp_path, phase_range="170-173", json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    names = {check["name"] for check in payload["checks"]}
+    assert "phase_range_missing_records" in names
+    assert "phase_complete_without_tests" in names
+    assert "phase_complete_without_changes_or_deferral" in names
+    assert "phase_committed_without_hash" in names
+    assert "phase_pushed_without_ref" in names
+
+
+def test_phase_ledger_explicit_group_and_silent_compression_detection(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "180-182", "--grouped", "--title", "Grouped hardening", "--goal", "audit", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    created_ids = {item["phase_id"] for item in payload["created"]}
+    assert {"phase-180-182-group", "phase-180", "phase-181", "phase-182"} <= created_ids
+
+    rogue = tmp_path / ".brigade" / "work" / "phases" / "records" / "phase-190-195.json"
+    rogue.write_text(
+        json.dumps(
+            {
+                "phase_id": "phase-190-195",
+                "kind": "phase",
+                "status": "implemented",
+                "phase_range": "190-195",
+                "explicit_grouping": False,
+                "files_changed": ["file.py"],
+                "tests_run": ["pytest"],
+            }
+        )
+        + "\n"
+    )
+
+    assert phases_cmd.doctor(target=tmp_path, json_output=True) == 0
+    doctor_payload = json.loads(capsys.readouterr().out)
+    assert any(check["name"] == "phase_range_compressed_without_group" for check in doctor_payload["checks"])
+
+
+def test_phase_ledger_stale_in_progress_and_blocked_without_next_step(tmp_path, capsys):
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-200", title="Stale", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.start(target=tmp_path, phase_id="phase-200", json_output=True) == 0
+    started = json.loads(capsys.readouterr().out)
+    path = tmp_path / ".brigade" / "work" / "phases" / "records" / "phase-200.json"
+    started["started_at"] = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    path.write_text(json.dumps(started) + "\n")
+
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-201", title="Blocked", source_goal="audit", json_output=True) == 0
+    blocked = json.loads(capsys.readouterr().out)
+    blocked_path = tmp_path / ".brigade" / "work" / "phases" / "records" / "phase-201.json"
+    blocked_record = json.loads(blocked_path.read_text())
+    blocked_record["status"] = "blocked"
+    blocked_record["blocker_reason"] = "Need input."
+    blocked_path.write_text(json.dumps(blocked_record) + "\n")
+
+    assert phases_cmd.doctor(target=tmp_path, json_output=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    names = {check["name"] for check in payload["checks"]}
+    assert "phase_stale_in_progress" in names
+    assert "phase_blocked_without_next_step" in names
+
+
+def test_phase_ledger_daily_work_and_center_integration(tmp_path, capsys):
+    assert phases_cmd.plan(target=tmp_path, phase_id="phase-210", title="Warn", source_goal="audit", json_output=True) == 0
+    capsys.readouterr()
+    assert phases_cmd.complete(target=tmp_path, phase_id="phase-210", summary="No evidence", json_output=True) == 0
+    capsys.readouterr()
+
+    assert daily_cmd.status(target=tmp_path, json_output=True) == 0
+    daily_status = json.loads(capsys.readouterr().out)
+    assert daily_status["phase_ledger"]["issue_count"] >= 1
+
+    assert daily_cmd.doctor(target=tmp_path, json_output=True) == 0
+    daily_doctor = json.loads(capsys.readouterr().out)
+    assert any(check["name"] == "phase_ledger_issue" for check in daily_doctor["checks"])
+
+    assert work_cmd.brief(target=tmp_path, json_output=True) == 0
+    brief = json.loads(capsys.readouterr().out)
+    assert brief["phase_ledger"]["issue_count"] >= 1
+
+    assert work_cmd.doctor(target=tmp_path) in {0, 1}
+    assert "phase_complete_without_tests" in capsys.readouterr().out
+
+    assert center_cmd.status(target=tmp_path, json_output=True) == 0
+    center_status = json.loads(capsys.readouterr().out)
+    assert center_status["phase_ledger"]["issue_count"] >= 1

@@ -5123,7 +5123,7 @@ def _suggested_command(active: dict[str, Any] | None, next_text: object, source:
 
 
 def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
-    from . import center_cmd, chat_cmd, context_cmd, daily_cmd, handoff_cmd, learn_cmd, memory_cmd, projects_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd
+    from . import center_cmd, chat_cmd, context_cmd, daily_cmd, handoff_cmd, learn_cmd, memory_cmd, phases_cmd, projects_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd
 
     target = target.expanduser().resolve()
     active = _active_session_info(target)
@@ -5156,6 +5156,7 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
     center_report_health = center_cmd.report_health(target)
     center_actions_health = center_cmd.actions_health(target)
     daily_health = daily_cmd.health(target)
+    phase_health = phases_cmd.health(target)
     handoff_issues = handoff_cmd.collect_issues(target)
     known_handoff_issue_ids = handoff_cmd._known_local_issue_ids(target)
     new_handoff_issues = [issue for issue in handoff_issues if issue.id not in known_handoff_issue_ids]
@@ -5304,6 +5305,14 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "latest_plan": daily_health["latest_plan"],
             "approvals": daily_health.get("approvals"),
             "telemetry": daily_health.get("telemetry"),
+        },
+        "phase_ledger": {
+            "records_path": phase_health["records_path"],
+            "record_count": phase_health["record_count"],
+            "open_count": phase_health["open_count"],
+            "issue_count": phase_health["issue_count"],
+            "top_issue": phase_health["top_issue"],
+            "latest": phase_health["latest"],
         },
         "handoff_issues": {
             "count": len(new_handoff_issues),
@@ -5966,6 +5975,14 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
         if approvals.get("pending_count"):
             top_approval = approvals.get("top_pending") if isinstance(approvals.get("top_pending"), dict) else {}
             print(f"daily_pending_approval: {top_approval.get('approval_id')} {_short(str(top_approval.get('safe_summary', '')))}")
+
+    phase_ledger = payload.get("phase_ledger") if isinstance(payload.get("phase_ledger"), dict) else {}
+    if phase_ledger:
+        print(f"phase_ledger: {_count_status(phase_ledger.get('issue_count'))}")
+        print(f"phase_records: {phase_ledger.get('record_count', 0)}")
+        top_phase = phase_ledger.get("top_issue") if isinstance(phase_ledger.get("top_issue"), dict) else None
+        if top_phase:
+            print(f"phase_top_issue: {top_phase.get('name')} {_short(str(top_phase.get('detail', '')))}")
 
     tool_catalog = payload.get("tool_catalog") if isinstance(payload.get("tool_catalog"), dict) else {}
     if tool_catalog:
@@ -10362,7 +10379,7 @@ def status(*, target: Path, limit: int = 12) -> int:
 
 
 def doctor(*, target: Path) -> int:
-    from . import center_cmd, chat_cmd, context_cmd, daily_cmd, handoff_cmd, learn_cmd, memory_cmd, projects_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd
+    from . import center_cmd, chat_cmd, context_cmd, daily_cmd, handoff_cmd, learn_cmd, memory_cmd, phases_cmd, projects_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd
 
     target = target.expanduser().resolve()
     failures = 0
@@ -10673,6 +10690,14 @@ def doctor(*, target: Path) -> int:
         _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
     if not daily_health.get("issue_count"):
         _doctor_line(OK, "daily_driver", f"{daily_health.get('run_count', 0)} run(s)")
+
+    phase_health = phases_cmd.health(effective_target)
+    for check in phase_health.get("checks", []):
+        if check.get("status") == FAIL:
+            failures += 1
+        _doctor_line(str(check.get("status")), str(check.get("name")), check.get("detail"))
+    if not phase_health.get("issue_count"):
+        _doctor_line(OK, "phase_ledger", f"{phase_health.get('record_count', 0)} record(s)")
 
     handoff_inbox = (
         cfg.handoff_inbox

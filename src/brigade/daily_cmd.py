@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from . import center_cmd, context_cmd, handoff_cmd, memory_cmd, security_cmd, tools_cmd, work_cmd
+from . import center_cmd, context_cmd, handoff_cmd, memory_cmd, phases_cmd, security_cmd, tools_cmd, work_cmd
 
 SCHEMA_VERSION = 1
 RUN_STATUSES = {"reviewed", "deferred", "blocked", "archived"}
@@ -960,6 +960,7 @@ def status_payload(target: Path) -> dict[str, Any]:
     tools = center.get("tool_catalog") if isinstance(center.get("tool_catalog"), dict) else {}
     latest_report = center_cmd.latest_report(target)
     daily_health = health(target)
+    phase_health = phases_cmd.health(target)
     approvals = daily_health.get("approvals") if isinstance(daily_health.get("approvals"), dict) else {}
     return {
         "schema_version": SCHEMA_VERSION,
@@ -968,6 +969,7 @@ def status_payload(target: Path) -> dict[str, Any]:
         "config": config,
         "config_checks": config_checks,
         "daily_health": daily_health,
+        "phase_ledger": phase_health,
         "top_pending_approval": approvals.get("top_pending"),
         "telemetry": daily_health.get("telemetry"),
         "active_session": center.get("active_session"),
@@ -1002,6 +1004,10 @@ def status(*, target: Path, json_output: bool = False) -> int:
     print(f"pending_imports: {payload['pending_import_count']}")
     print(f"center_reviews: {payload['center_review_count']}")
     print(f"open_actions: {payload['open_daily_action_count']}")
+    phase_ledger = payload.get("phase_ledger") if isinstance(payload.get("phase_ledger"), dict) else {}
+    if phase_ledger:
+        print(f"phase_records: {phase_ledger.get('record_count', 0)}")
+        print(f"phase_issues: {phase_ledger.get('issue_count', 0)}")
     blocker = payload.get("top_readiness_blocker")
     print(f"top_readiness_blocker: {blocker.get('safe_summary') if isinstance(blocker, dict) else 'none'}")
     print(f"next: {payload['next_recommended_command']}")
@@ -1707,6 +1713,7 @@ def health(target: Path) -> dict[str, Any]:
     plans, plan_errors = _iter_receipts(_plans_root(target), "plan.json")
     approvals, approval_errors = _read_approvals(target)
     telemetry_events, telemetry_errors = _telemetry_events(target)
+    phase_health = phases_cmd.health(target)
     for error in [*run_errors, *plan_errors]:
         checks.append({"status": "fail", "name": "daily_receipt_parse", "detail": f"{error['path']}: {error['error']}"})
     for error in approval_errors:
@@ -1746,6 +1753,9 @@ def health(target: Path) -> dict[str, Any]:
         checks.append({"status": "warn", "name": "daily_held_approval", "detail": str(held_approvals[0].get("approval_id"))})
     if rejected_approvals:
         checks.append({"status": "warn", "name": "daily_rejected_approval", "detail": str(rejected_approvals[0].get("approval_id"))})
+    if phase_health.get("issue_count"):
+        top_phase_issue = phase_health.get("top_issue") if isinstance(phase_health.get("top_issue"), dict) else {}
+        checks.append({"status": "warn", "name": "phase_ledger_issue", "detail": top_phase_issue.get("detail") or "phase execution ledger needs review"})
     for approval in approvals:
         current = _current_action_for_approval(target, approval)
         if current is None and approval.get("status") in {"pending", "approved"}:
@@ -1777,6 +1787,7 @@ def health(target: Path) -> dict[str, Any]:
             "failed_run_count": sum(1 for run in runs if run.get("status") == "failed"),
             "blocked_run_count": sum(1 for run in runs if run.get("status") == "blocked"),
         },
+        "phase_ledger": phase_health,
         "checks": checks,
         "issue_count": len(active_checks),
         "top_issue": top_issue,
