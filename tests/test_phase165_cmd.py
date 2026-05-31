@@ -165,10 +165,14 @@ def test_phase_ledger_daily_work_and_center_integration(tmp_path, capsys):
     capsys.readouterr()
     assert phases_cmd.complete(target=tmp_path, phase_id="phase-210", summary="No evidence", json_output=True) == 0
     capsys.readouterr()
+    assert phases_cmd.actions_build(target=tmp_path, json_output=True) == 0
+    action_build = json.loads(capsys.readouterr().out)
+    assert action_build["created_count"] >= 1
 
     assert daily_cmd.status(target=tmp_path, json_output=True) == 0
     daily_status = json.loads(capsys.readouterr().out)
     assert daily_status["phase_ledger"]["issue_count"] >= 1
+    assert daily_status["phase_ledger"]["open_action_count"] >= 1
 
     assert daily_cmd.doctor(target=tmp_path, json_output=True) == 0
     daily_doctor = json.loads(capsys.readouterr().out)
@@ -177,13 +181,22 @@ def test_phase_ledger_daily_work_and_center_integration(tmp_path, capsys):
     assert work_cmd.brief(target=tmp_path, json_output=True) == 0
     brief = json.loads(capsys.readouterr().out)
     assert brief["phase_ledger"]["issue_count"] >= 1
+    assert brief["phase_ledger"]["open_action_count"] >= 1
+
+    assert work_cmd.brief(target=tmp_path) == 0
+    assert "phase_actions:" in capsys.readouterr().out
 
     assert work_cmd.doctor(target=tmp_path) in {0, 1}
-    assert "phase_complete_without_tests" in capsys.readouterr().out
+    doctor_out = capsys.readouterr().out
+    assert "phase_complete_without_tests" in doctor_out
 
     assert center_cmd.status(target=tmp_path, json_output=True) == 0
     center_status = json.loads(capsys.readouterr().out)
     assert center_status["phase_ledger"]["issue_count"] >= 1
+    assert center_status["phase_ledger"]["open_action_count"] >= 1
+
+    assert center_cmd.status(target=tmp_path) == 0
+    assert "phase_actions:" in capsys.readouterr().out
 
 
 def test_phase_ledger_schema_status_next_report_and_imports(tmp_path, capsys):

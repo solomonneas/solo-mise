@@ -110,6 +110,7 @@ Implementation scope:
 - Add `brigade work phases actions plan/build/list/show/start/done/defer/archive`.
 - Make `brigade daily plan`, `daily review`, and `daily run` understand phase-ledger actions and unresolved phase issues as bounded local daily steps.
 - Include latest phase closeout and phase report references in release readiness and release candidate evidence, with release doctor and candidate compare warnings for unresolved or stale phase evidence.
+- Surface phase action queue health in daily status, work brief, work doctor, and center status.
 - Store local phase records under `.brigade/work/phases/`.
 - Require each phase to record goal, status, summary, changed files, tests, commit, push ref, deferrals, blockers, and next recommendation.
 - Detect silent compression by requiring explicit grouped records before grouped phase work starts.

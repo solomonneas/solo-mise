@@ -5313,6 +5313,9 @@ def _brief_payload(target: Path, *, limit: int = 3) -> dict[str, Any]:
             "issue_count": phase_health["issue_count"],
             "top_issue": phase_health["top_issue"],
             "latest": phase_health["latest"],
+            "open_action_count": phase_health.get("open_action_count", 0),
+            "top_action": phase_health.get("top_action"),
+            "action_counts": phase_health.get("action_counts", {}),
         },
         "handoff_issues": {
             "count": len(new_handoff_issues),
@@ -5980,9 +5983,13 @@ def brief(*, target: Path, limit: int = 3, json_output: bool = False) -> int:
     if phase_ledger:
         print(f"phase_ledger: {_count_status(phase_ledger.get('issue_count'))}")
         print(f"phase_records: {phase_ledger.get('record_count', 0)}")
+        print(f"phase_actions: {phase_ledger.get('open_action_count', 0)}")
         top_phase = phase_ledger.get("top_issue") if isinstance(phase_ledger.get("top_issue"), dict) else None
         if top_phase:
             print(f"phase_top_issue: {top_phase.get('name')} {_short(str(top_phase.get('detail', '')))}")
+        top_phase_action = phase_ledger.get("top_action") if isinstance(phase_ledger.get("top_action"), dict) else None
+        if top_phase_action:
+            print(f"phase_top_action: {top_phase_action.get('action_id')} {_short(str(top_phase_action.get('safe_summary', '')))}")
 
     tool_catalog = payload.get("tool_catalog") if isinstance(payload.get("tool_catalog"), dict) else {}
     if tool_catalog:

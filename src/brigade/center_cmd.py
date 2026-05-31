@@ -938,6 +938,7 @@ def status(*, target: Path, json_output: bool = False) -> int:
     if phase_ledger:
         print(f"phase_records: {phase_ledger.get('record_count', 0)}")
         print(f"phase_issues: {phase_ledger.get('issue_count', 0)}")
+        print(f"phase_actions: {phase_ledger.get('open_action_count', 0)}")
     return 0
 
 

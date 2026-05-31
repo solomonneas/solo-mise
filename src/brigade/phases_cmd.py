@@ -896,6 +896,12 @@ def health(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
     closeouts = _read_closeouts(target)
     latest_report = _latest_report(target)
+    actions = _read_actions(target)
+    open_actions = [action for action in actions if action.get("status") in {"pending", "active"}]
+    action_counts: dict[str, int] = {}
+    for action in actions:
+        status = str(action.get("status") or "unknown")
+        action_counts[status] = action_counts.get(status, 0) + 1
     return {
         "records_path": str(_records_root(target)),
         "record_count": len(records),
@@ -911,6 +917,11 @@ def health(target: Path) -> dict[str, Any]:
         if latest_report
         else None,
         "closeout_count": len(closeouts),
+        "actions_path": str(_actions_root(target)),
+        "action_count": len(actions),
+        "open_action_count": len(open_actions),
+        "action_counts": action_counts,
+        "top_action": _action_summary(open_actions[0]) if open_actions else None,
         "checks": payload["checks"],
         "issue_count": payload["issue_count"],
         "top_issue": payload["top_issue"],
