@@ -121,6 +121,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_daily_telemetry_doctor = telemetry_sub.add_parser("doctor", help="Check daily telemetry health.")
     p_daily_telemetry_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_daily_telemetry_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_hardening = daily_sub.add_parser("hardening", help="Plan and audit daily production hardening.")
+    hardening_sub = p_daily_hardening.add_subparsers(dest="daily_hardening_command", metavar="<hardening-command>")
+    hardening_sub.required = True
+    for name in ("plan", "audit"):
+        p_daily_hardening_action = hardening_sub.add_parser(name, help=f"Run daily hardening {name}.")
+        p_daily_hardening_action.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+        p_daily_hardening_action.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_hardening_import = hardening_sub.add_parser("import-issues", help="Route hardening findings into the work inbox.")
+    p_daily_hardening_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_daily_hardening_import.add_argument("--dry-run", action="store_true", help="Preview imports without writing.")
+    p_daily_hardening_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_daily_hardening_closeout = hardening_sub.add_parser("closeout", help="Write a local hardening closeout receipt.")
+    p_daily_hardening_closeout.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_daily_hardening_closeout.add_argument("--status", choices=["reviewed", "deferred", "blocked", "archived"], default="reviewed")
+    p_daily_hardening_closeout.add_argument("--reason", default=None, help="Closeout reason.")
+    p_daily_hardening_closeout.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_daily_approvals = daily_sub.add_parser("approvals", help="Review daily approval requests.")
     approvals_sub = p_daily_approvals.add_subparsers(dest="daily_approval_command", metavar="<approval-command>")
     approvals_sub.required = True
@@ -1953,6 +1969,17 @@ def main(argv=None) -> int:
             if getattr(args, "daily_telemetry_command", None) == "doctor":
                 return daily_cmd.telemetry_doctor(target=args.target, json_output=args.json)
             return daily_cmd.telemetry(target=args.target, json_output=args.json)
+        if args.daily_command == "hardening":
+            if args.daily_hardening_command == "plan":
+                return daily_cmd.hardening_plan(target=args.target, json_output=args.json)
+            if args.daily_hardening_command == "audit":
+                return daily_cmd.hardening_audit(target=args.target, json_output=args.json)
+            if args.daily_hardening_command == "import-issues":
+                return daily_cmd.hardening_import_issues(target=args.target, dry_run=args.dry_run, json_output=args.json)
+            if args.daily_hardening_command == "closeout":
+                return daily_cmd.hardening_closeout(target=args.target, status=args.status, reason=args.reason, json_output=args.json)
+            parser.error(f"unknown daily hardening command: {args.daily_hardening_command}")
+            return 2
         if args.daily_command == "history":
             return daily_cmd.history(target=args.target, limit=args.limit, json_output=args.json)
         if args.daily_command == "show":

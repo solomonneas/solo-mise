@@ -55,6 +55,7 @@ Browse the public template index in [`templates/`](templates/).
 The installable source files live under `src/brigade/templates/`; root workspace files are local dogfood state and stay ignored.
 
 See [`ROADMAP.md`](ROADMAP.md) for the daily-driver, scanner inbox, chat-surface scanner, and memory-card decay roadmap. The active phase queue for roadmap completion hardening is tracked in [`docs/phase-61-100-plan.md`](docs/phase-61-100-plan.md).
+The production-hardening queue for the daily operator system is tracked in [`docs/phase-115-164-plan.md`](docs/phase-115-164-plan.md).
 See [`docs/workflow-rules.md`](docs/workflow-rules.md) for the public-safe repo workflow rule templates installed under `rules/`.
 
 ## What you do not get
@@ -398,6 +399,10 @@ brigade daily unblock
 brigade daily protocol
 brigade daily telemetry
 brigade daily telemetry doctor
+brigade daily hardening plan
+brigade daily hardening audit
+brigade daily hardening import-issues
+brigade daily hardening closeout
 brigade daily approvals list
 brigade daily approvals show <approval-id>
 brigade daily approvals approve <approval-id>
@@ -678,6 +683,8 @@ brigade daily closeout --json
 When the selected action needs approval, `brigade daily run` creates or reuses a local approval request under `.brigade/daily/approvals/` instead of losing the plan context. `brigade daily approvals list/show/approve/reject/hold/compare/archive` reviews, compares, or archives those requests without executing anything. A later `brigade daily run --approval <approval-id>` consumes one approved, unconsumed request after revalidating the current config, source evidence, and fingerprint.
 
 `brigade daily resume`, `brigade daily repair`, and `brigade daily unblock` are recovery commands for blocked, failed, stale, or approval-waiting runs. They use local receipts and can create local repair metadata, approval requests, or work imports for daily-driver blockers, but they do not run arbitrary suggested commands.
+
+`brigade daily hardening plan/audit/import-issues/closeout` tracks the phase 115-164 production-hardening tranche across daily reliability, operator-center contracts, inbox evidence quality, repo-fleet daily use, and the self-dogfood release loop. Hardening commands are local audit and routing commands only. They never fix, promote, execute, publish, or mutate remotes.
 
 The daily driver is local and explicit. It does not start daemons, run arbitrary commands, execute scanners, reviewers, tools, or fleet sweeps, mutate remotes, push, tag, publish, upload analytics, or edit canonical memory.
 
