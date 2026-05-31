@@ -982,6 +982,24 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
             "latest_plan": daily_cmd._latest_plan(target),
             "telemetry": daily_cmd.telemetry_payload(target).get("metrics"),
         },
+        "daily_hardening": {
+            "audit": {
+                key: value
+                for key, value in daily_cmd.hardening_audit_payload(target).items()
+                if key
+                in {
+                    "phase_range",
+                    "phase_count",
+                    "implemented_phase_count",
+                    "finding_count",
+                    "raw_finding_count",
+                    "quieted_count",
+                    "top_issue",
+                    "workstreams",
+                }
+            },
+            "latest_closeout": daily_cmd._latest_hardening_closeout(target),
+        },
         "security_closeout": _latest_closeout_json(target / ".brigade" / "security" / "closeouts"),
         "docs": {
             "base_ref": base_ref,
@@ -1235,6 +1253,7 @@ def _candidate_payload(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         "learning": evidence.get("learning"),
         "operator_report": evidence.get("operator_report"),
         "daily_driver": evidence.get("daily_driver"),
+        "daily_hardening": evidence.get("daily_hardening"),
         "repo_fleet": evidence.get("repo_fleet"),
         "roadmap": evidence.get("roadmap"),
         "git": git,

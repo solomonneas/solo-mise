@@ -825,6 +825,8 @@ def test_daily_repair_unblock_telemetry_context_and_release_evidence(tmp_path, m
     evidence = release_cmd._evidence(tmp_path, base_ref=None)
     assert "daily_driver" in evidence
     assert evidence["daily_driver"]["latest_run"]["run_id"]
+    assert "daily_hardening" in evidence
+    assert evidence["daily_hardening"]["audit"]["phase_range"] == "115-164"
 
 
 def test_daily_hardening_plan_audit_import_and_closeout(tmp_path, capsys):
@@ -846,6 +848,8 @@ def test_daily_hardening_plan_audit_import_and_closeout(tmp_path, capsys):
     plan = json.loads(capsys.readouterr().out)
     assert plan["phase_range"] == "115-164"
     assert plan["phase_count"] == 50
+    assert plan["implemented_phase_count"] >= 10
+    assert all(item["status"] == "implemented" for item in plan["phases"] if 115 <= item["phase"] <= 124)
     assert {stream["id"] for stream in plan["workstreams"]} == {
         "daily-production-hardening",
         "operator-center-contract-cleanup",
@@ -859,7 +863,7 @@ def test_daily_hardening_plan_audit_import_and_closeout(tmp_path, capsys):
     assert audit["phase_count"] == 50
     assert "inbox-evidence-quality" in audit["workstreams"]
     assert any(finding["workstream"] == "inbox-evidence-quality" for finding in audit["findings"])
-    assert all("finding_id" in finding and "source_fingerprint" in finding for finding in audit["findings"])
+    assert all("finding_id" in finding and "source_fingerprint" in finding and "phase" in finding for finding in audit["findings"])
 
     assert cli.main(["daily", "hardening", "import-issues", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
     dry_run = json.loads(capsys.readouterr().out)
@@ -870,9 +874,81 @@ def test_daily_hardening_plan_audit_import_and_closeout(tmp_path, capsys):
     imports = json.loads(capsys.readouterr().out)
     assert imports["created_count"] >= 1
     assert all(item["source"] == "daily-hardening" for item in imports["created_imports"])
+    assert all("phase" in item["metadata"] for item in imports["created_imports"])
 
     assert cli.main(["daily", "hardening", "closeout", "--target", str(tmp_path), "--status", "deferred", "--reason", "tracked", "--json"]) == 0
     closeout = json.loads(capsys.readouterr().out)
     assert closeout["status"] == "deferred"
     assert closeout["finding_count"] == audit["finding_count"]
     assert Path(closeout["path"]).joinpath("closeout.json").is_file()
+
+
+def test_daily_hardening_daily_receipt_checks_and_reviewed_quieting(tmp_path, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+    run_dir = tmp_path / ".brigade" / "daily" / "runs" / "old-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "old-run",
+                "status": "completed",
+                "started_at": "2026-05-30T00:00:00+00:00",
+                "completed_at": "2026-05-30T00:01:00+00:00",
+            }
+        )
+    )
+    plan_dir = tmp_path / ".brigade" / "daily" / "plans" / "old-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "plan_id": "old-plan",
+                "created_at": "2026-05-30T00:00:00+00:00",
+                "candidate_actions": [{"action_id": "one"}],
+                "candidate_explanations": [],
+            }
+        )
+    )
+
+    assert cli.main(["daily", "hardening", "audit", "--target", str(tmp_path), "--json"]) == 0
+    audit = json.loads(capsys.readouterr().out)
+    phases = {finding["phase"] for finding in audit["findings"]}
+    assert 116 in phases
+    assert 117 in phases
+    assert audit["workstreams"]["daily-production-hardening"]["finding_count"] >= 2
+
+    assert cli.main(["daily", "hardening", "closeout", "--target", str(tmp_path), "--status", "reviewed", "--reason", "known", "--json"]) == 0
+    closeout = json.loads(capsys.readouterr().out)
+    assert closeout["finding_fingerprints"]
+
+    assert cli.main(["daily", "hardening", "audit", "--target", str(tmp_path), "--json"]) == 0
+    quiet = json.loads(capsys.readouterr().out)
+    assert quiet["finding_count"] == 0
+    assert quiet["quieted_count"] == audit["finding_count"]
+
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "plan_id": "old-plan",
+                "created_at": "2026-05-30T00:00:00+00:00",
+                "candidate_actions": [{"action_id": "one"}, {"action_id": "two"}],
+                "candidate_explanations": [],
+            }
+        )
+    )
+    assert cli.main(["daily", "hardening", "audit", "--target", str(tmp_path), "--json"]) == 0
+    changed = json.loads(capsys.readouterr().out)
+    assert any(finding["phase"] == 117 for finding in changed["findings"])
+
+
+def test_release_evidence_and_candidate_include_daily_hardening(tmp_path, capsys):
+    _seed_ready_repo(tmp_path, capsys)
+
+    assert release_cmd.run(target=tmp_path, base_ref=None, json_output=True) == 1
+    readiness = json.loads(capsys.readouterr().out)
+    assert "daily_hardening" in readiness["evidence"]
+    assert readiness["evidence"]["daily_hardening"]["audit"]["implemented_phase_count"] >= 10
+
+    assert release_cmd.candidate_plan(target=tmp_path, base_ref=None, json_output=True) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    assert "daily_hardening" in candidate

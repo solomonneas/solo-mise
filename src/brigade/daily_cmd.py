@@ -128,16 +128,76 @@ HARDENING_WORKSTREAMS: list[dict[str, Any]] = [
 ]
 
 
-HARDENING_PHASES: list[dict[str, Any]] = [
-    {
-        "phase": phase,
-        "workstream": stream["id"],
-        "title": f"{stream['focus']} #{phase - stream['phase_start'] + 1}",
-        "status": "planned",
-    }
-    for stream in HARDENING_WORKSTREAMS
-    for phase in range(int(stream["phase_start"]), int(stream["phase_end"]) + 1)
-]
+HARDENING_PHASE_TITLES: dict[int, str] = {
+    115: "audit daily config and unsafe local policy states",
+    116: "verify daily run receipts have normalized adapter results",
+    117: "verify daily plan receipts have candidate explanations",
+    118: "track approval hygiene and stale approval requests",
+    119: "track telemetry warnings and repeated blockers",
+    120: "route unresolved daily reliability findings into the work inbox",
+    121: "close out reviewed daily reliability findings",
+    122: "keep daily protocol output stable for wrappers",
+    123: "keep JSON output clean when wrapped commands print noise",
+    124: "carry daily reliability state into release evidence",
+    125: "audit center schema manifest presence",
+    126: "audit center review item field coverage",
+    127: "verify review items include suggested next commands",
+    128: "verify receipt references stay local and safe",
+    129: "surface center contract findings in daily hardening audit",
+    130: "route center contract findings into the work inbox",
+    131: "keep center status readable without subsystem-specific parsing",
+    132: "keep center reviews as the unified local review queue",
+    133: "document center schema expectations for wrappers",
+    134: "carry center contract state into release evidence",
+    135: "audit pending imports missing acceptance",
+    136: "audit pending imports missing provenance",
+    137: "audit inbox hygiene issues",
+    138: "penalize noisy and deferred imports in daily planning",
+    139: "preserve changed-fingerprint resurfacing",
+    140: "route inbox quality findings into the work inbox",
+    141: "keep imported findings deduped",
+    142: "bias daily action selection toward high-evidence items",
+    143: "document inbox quality expectations",
+    144: "carry inbox quality state into release evidence",
+    145: "audit repo fleet health from the daily hardening layer",
+    146: "surface fleet action queue health",
+    147: "surface fleet sweep health",
+    148: "surface fleet release train health",
+    149: "route fleet daily-use findings into the work inbox",
+    150: "keep fleet dispatch manual and local",
+    151: "keep fleet release plans manual-only",
+    152: "keep safe repo labels and receipt labels only",
+    153: "document fleet daily-use expectations",
+    154: "carry fleet state into release evidence",
+    155: "audit latest release readiness receipt",
+    156: "audit latest release candidate packet",
+    157: "verify release candidate evidence includes daily driver state",
+    158: "surface blocked release readiness in daily hardening audit",
+    159: "route release dogfood findings into the work inbox",
+    160: "keep publish steps manual-only",
+    161: "keep daily closeout verification evidence visible",
+    162: "document the daily-to-release self-dogfood path",
+    163: "keep release schema output stable for wrappers",
+    164: "close out the hardening tranche with verification and handoff",
+}
+
+
+IMPLEMENTED_HARDENING_PHASES: set[int] = set(range(115, 125))
+
+
+def _hardening_phases() -> list[dict[str, Any]]:
+    phases: list[dict[str, Any]] = []
+    for stream in HARDENING_WORKSTREAMS:
+        for phase in range(int(stream["phase_start"]), int(stream["phase_end"]) + 1):
+            phases.append(
+                {
+                    "phase": phase,
+                    "workstream": stream["id"],
+                    "title": HARDENING_PHASE_TITLES.get(phase, f"{stream['focus']} #{phase - int(stream['phase_start']) + 1}"),
+                    "status": "implemented" if phase in IMPLEMENTED_HARDENING_PHASES else "planned",
+                }
+            )
+    return phases
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -869,6 +929,13 @@ def _is_stale(value: object, hours: int) -> bool:
     if parsed is None:
         return False
     return _now() - parsed > timedelta(hours=hours)
+
+
+def _age_hours(value: object) -> float | None:
+    parsed = _parse_time(value)
+    if parsed is None:
+        return None
+    return (_now() - parsed).total_seconds() / 3600
 
 
 def status_payload(target: Path) -> dict[str, Any]:
@@ -2004,14 +2071,16 @@ def telemetry_doctor(*, target: Path, json_output: bool = False) -> int:
 
 def hardening_plan_payload(target: Path) -> dict[str, Any]:
     target = target.expanduser().resolve()
+    phases = _hardening_phases()
     return {
         "schema_version": SCHEMA_VERSION,
         "schema": {"name": "daily-hardening-plan", "version": SCHEMA_VERSION},
         "target": str(target),
         "phase_range": "115-164",
-        "phase_count": len(HARDENING_PHASES),
+        "phase_count": len(phases),
+        "implemented_phase_count": sum(1 for phase in phases if phase.get("status") == "implemented"),
         "workstreams": HARDENING_WORKSTREAMS,
-        "phases": HARDENING_PHASES,
+        "phases": phases,
         "safety_boundaries": [
             "no daemon",
             "no scheduler mutation",
@@ -2047,6 +2116,7 @@ def hardening_plan(*, target: Path, json_output: bool = False) -> int:
 def _hardening_finding(
     *,
     workstream: str,
+    phase: int | None = None,
     name: str,
     severity: str,
     safe_summary: str,
@@ -2056,6 +2126,8 @@ def _hardening_finding(
 ) -> dict[str, Any]:
     payload = {
         "workstream": workstream,
+        "phase": phase,
+        "phase_title": HARDENING_PHASE_TITLES.get(phase) if phase is not None else None,
         "name": name,
         "severity": severity,
         "safe_summary": safe_summary,
@@ -2068,36 +2140,183 @@ def _hardening_finding(
     return payload
 
 
+def _latest_hardening_closeout(target: Path) -> dict[str, Any] | None:
+    closeouts, _ = _iter_receipts(_hardening_closeouts_root(target), "closeout.json")
+    return closeouts[0] if closeouts else None
+
+
+def _hardening_quieted_findings(target: Path, findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+    closeout = _latest_hardening_closeout(target)
+    if not closeout or closeout.get("status") not in {"reviewed", "archived"}:
+        return findings, [], closeout
+    closed_fingerprints = closeout.get("finding_fingerprints")
+    if not isinstance(closed_fingerprints, list):
+        closed_fingerprints = []
+    closed_set = {str(item) for item in closed_fingerprints}
+    if not closed_set and closeout.get("audit_fingerprint") == _fingerprint(findings):
+        return [], findings, closeout
+    unresolved = [item for item in findings if str(item.get("source_fingerprint")) not in closed_set]
+    quieted = [item for item in findings if str(item.get("source_fingerprint")) in closed_set]
+    return unresolved, quieted, closeout
+
+
+def _adapter_result_is_normalized(run: dict[str, Any]) -> bool:
+    result = run.get("adapter_result")
+    if not isinstance(result, dict):
+        return False
+    required = {
+        "adapter_id",
+        "source_subsystem",
+        "source_local_id",
+        "status",
+        "commands_invoked",
+        "receipts_created",
+        "blockers",
+        "warnings",
+        "next_recommended_command",
+        "evidence_references",
+    }
+    return required <= set(result)
+
+
+def _plan_explanations_are_complete(plan: dict[str, Any]) -> bool:
+    candidates = plan.get("candidate_actions")
+    explanations = plan.get("candidate_explanations")
+    if not isinstance(candidates, list) or not isinstance(explanations, list):
+        return False
+    explanation_ids = {str(item.get("action_id")) for item in explanations if isinstance(item, dict)}
+    candidate_ids = {str(item.get("action_id")) for item in candidates if isinstance(item, dict)}
+    if candidate_ids and not candidate_ids <= explanation_ids:
+        return False
+    for item in explanations:
+        if not isinstance(item, dict):
+            return False
+        if "scoring_reasons" not in item or "rejection_reasons" not in item:
+            return False
+    return True
+
+
 def hardening_audit_payload(target: Path) -> dict[str, Any]:
     from . import release_cmd, repos_cmd
 
     target = target.expanduser().resolve()
     findings: list[dict[str, Any]] = []
     config, config_checks = _load_config(target)
-    latest_run = _latest_run(target)
-    latest_plan = _latest_plan(target)
+    runs, run_errors = _iter_receipts(_runs_root(target), "run.json")
+    plans, plan_errors = _iter_receipts(_plans_root(target), "plan.json")
+    latest_run = runs[0] if runs else None
+    latest_plan = plans[0] if plans else None
     daily_health = health(target)
     telemetry_data = telemetry_payload(target)
+    config_issues = [check for check in config_checks if check.get("status") != "ok"]
     if any(check.get("status") == "fail" for check in config_checks):
-        findings.append(_hardening_finding(workstream="daily-production-hardening", name="daily_config_invalid", severity="high", safe_summary="daily config has invalid fields", suggested_command="brigade daily doctor", evidence_refs=[str(_config_path(target))]))
-    if latest_run and not isinstance(latest_run.get("adapter_result"), dict):
-        findings.append(_hardening_finding(workstream="daily-production-hardening", name="missing_adapter_result", severity="high", safe_summary="latest daily run is missing normalized adapter result", suggested_command="brigade daily show latest", evidence_refs=[str(_runs_root(target))]))
-    if latest_plan and not latest_plan.get("candidate_explanations"):
-        findings.append(_hardening_finding(workstream="daily-production-hardening", name="missing_plan_explanations", severity="medium", safe_summary="latest daily plan is missing candidate explanations", suggested_command="brigade daily plan --record", evidence_refs=[str(_plans_root(target))]))
+        findings.append(_hardening_finding(workstream="daily-production-hardening", phase=115, name="daily_config_invalid", severity="high", safe_summary="daily config has invalid fields", suggested_command="brigade daily doctor", evidence_refs=[str(_config_path(target))], metadata={"checks": config_issues}))
+    unsafe_config_checks = [
+        check
+        for check in config_issues
+        if check.get("name") in {"daily_disabled", "daily_risk_policy"}
+        or str(check.get("name") or "").startswith("allow_")
+    ]
+    if unsafe_config_checks:
+        findings.append(_hardening_finding(workstream="daily-production-hardening", phase=115, name="daily_config_policy_warning", severity="medium", safe_summary="daily config has unsafe or blocking local policy states", suggested_command="brigade daily doctor", evidence_refs=[str(_config_path(target))], metadata={"checks": unsafe_config_checks}))
+    malformed_runs = [run for run in runs[:10] if not _adapter_result_is_normalized(run)]
+    malformed_run_errors = [{"run_id": None, "error": item.get("error"), "path": item.get("path")} for item in run_errors]
+    if malformed_runs or malformed_run_errors:
+        findings.append(
+            _hardening_finding(
+                workstream="daily-production-hardening",
+                phase=116,
+                name="missing_adapter_result",
+                severity="high",
+                safe_summary=f"{len(malformed_runs) + len(malformed_run_errors)} recent daily run receipt(s) lack normalized adapter results",
+                suggested_command="brigade daily show latest",
+                evidence_refs=[str(_runs_root(target))],
+                metadata={
+                    "run_ids": [run.get("run_id") for run in malformed_runs[:10]],
+                    "parse_errors": malformed_run_errors[:10],
+                    "required_fields": [
+                        "adapter_id",
+                        "source_subsystem",
+                        "source_local_id",
+                        "status",
+                        "commands_invoked",
+                        "receipts_created",
+                        "blockers",
+                        "warnings",
+                        "next_recommended_command",
+                        "evidence_references",
+                    ],
+                },
+            )
+        )
+    malformed_plans = [plan for plan in plans[:10] if not _plan_explanations_are_complete(plan)]
+    malformed_plan_errors = [{"plan_id": None, "error": item.get("error"), "path": item.get("path")} for item in plan_errors]
+    if malformed_plans or malformed_plan_errors:
+        findings.append(
+            _hardening_finding(
+                workstream="daily-production-hardening",
+                phase=117,
+                name="missing_plan_explanations",
+                severity="medium",
+                safe_summary=f"{len(malformed_plans) + len(malformed_plan_errors)} recent daily plan receipt(s) lack candidate explanations",
+                suggested_command="brigade daily plan --record",
+                evidence_refs=[str(_plans_root(target))],
+                metadata={
+                    "plan_ids": [plan.get("plan_id") for plan in malformed_plans[:10]],
+                    "plan_fingerprints": [_fingerprint(plan) for plan in malformed_plans[:10]],
+                    "parse_errors": malformed_plan_errors[:10],
+                },
+            )
+        )
     approvals = daily_health.get("approvals") if isinstance(daily_health.get("approvals"), dict) else {}
-    if int(approvals.get("pending_count") or 0) > 0:
-        findings.append(_hardening_finding(workstream="daily-production-hardening", name="pending_daily_approval", severity="medium", safe_summary="daily approval request awaits review", suggested_command="brigade daily approvals list", evidence_refs=[str(_approvals_root(target))]))
+    approval_items, approval_errors = _read_approvals(target)
+    approval_counts = Counter(str(item.get("status") or "unknown") for item in approval_items)
+    stale_approvals = [
+        item
+        for item in approval_items
+        if item.get("status") in {"pending", "approved"}
+        and (_age_hours(item.get("created_at")) is not None and (_age_hours(item.get("created_at")) or 0) > int(config.get("stale_run_threshold_hours") or 24))
+    ]
+    if int(approvals.get("pending_count") or 0) > 0 or stale_approvals or approval_counts.get("held") or approval_counts.get("rejected") or approval_errors:
+        findings.append(
+            _hardening_finding(
+                workstream="daily-production-hardening",
+                phase=118,
+                name="daily_approval_hygiene",
+                severity="medium",
+                safe_summary="daily approvals need review, consumption, or archive",
+                suggested_command="brigade daily approvals list",
+                evidence_refs=[str(_approvals_root(target))],
+                metadata={
+                    "status_counts": dict(approval_counts),
+                    "stale_approval_ids": [item.get("approval_id") for item in stale_approvals[:10]],
+                    "parse_errors": approval_errors[:10],
+                },
+            )
+        )
     if telemetry_data.get("issue_count"):
-        findings.append(_hardening_finding(workstream="daily-production-hardening", name="daily_telemetry_issue", severity="medium", safe_summary="daily telemetry has warnings or parse errors", suggested_command="brigade daily telemetry doctor", evidence_refs=[str(_telemetry_root(target))]))
+        findings.append(_hardening_finding(workstream="daily-production-hardening", phase=119, name="daily_telemetry_issue", severity="medium", safe_summary="daily telemetry has warnings or parse errors", suggested_command="brigade daily telemetry doctor", evidence_refs=[str(_telemetry_root(target))], metadata={"checks": telemetry_data.get("checks"), "metrics": telemetry_data.get("metrics")}))
+    protocol_data = protocol_payload(target)
+    protocol_steps = {str(item.get("step")) for item in protocol_data.get("steps", []) if isinstance(item, dict)}
+    required_protocol_steps = {"status", "plan", "review", "approval", "run", "closeout", "recover"}
+    if not required_protocol_steps <= protocol_steps:
+        findings.append(_hardening_finding(workstream="daily-production-hardening", phase=122, name="daily_protocol_incomplete", severity="high", safe_summary="daily protocol is missing wrapper-facing steps", suggested_command="brigade daily protocol", evidence_refs=["daily protocol"], metadata={"required_steps": sorted(required_protocol_steps), "actual_steps": sorted(protocol_steps)}))
+    for command in protocol_data.get("commands", []) if isinstance(protocol_data.get("commands"), list) else []:
+        if not str(command).startswith("brigade daily "):
+            findings.append(_hardening_finding(workstream="daily-production-hardening", phase=122, name="daily_protocol_command_scope", severity="medium", safe_summary="daily protocol includes a non-daily command", suggested_command="brigade daily protocol", evidence_refs=["daily protocol"], metadata={"command": command}))
+            break
+    latest_run_output = latest_run.get("wrapped_output") if isinstance(latest_run, dict) else None
+    if isinstance(latest_run_output, (str, list, dict)):
+        findings.append(_hardening_finding(workstream="daily-production-hardening", phase=123, name="wrapped_output_in_run_json", severity="medium", safe_summary="daily run receipt appears to include wrapped command output instead of receipt references", suggested_command="brigade daily show latest", evidence_refs=[str(_runs_root(target))]))
 
     center_manifest = center_cmd._center_schema_manifest(target)
     if int(center_manifest.get("schema_count") or 0) < 1:
-        findings.append(_hardening_finding(workstream="operator-center-contract-cleanup", name="center_schema_missing", severity="high", safe_summary="center schema manifest is empty", suggested_command="brigade center schema", evidence_refs=["center schema"]))
+        findings.append(_hardening_finding(workstream="operator-center-contract-cleanup", phase=125, name="center_schema_missing", severity="high", safe_summary="center schema manifest is empty", suggested_command="brigade center schema", evidence_refs=["center schema"]))
     center_reviews = center_cmd._reviews(target)
     required_review_fields = {"subsystem", "local_id", "status", "safe_summary", "suggested_next_command"}
     malformed_review = next((item for item in center_reviews if not required_review_fields <= set(item)), None)
     if malformed_review:
-        findings.append(_hardening_finding(workstream="operator-center-contract-cleanup", name="center_review_shape", severity="medium", safe_summary="center review item is missing wrapper-facing fields", suggested_command="brigade center reviews --json", evidence_refs=["center reviews"]))
+        findings.append(_hardening_finding(workstream="operator-center-contract-cleanup", phase=126, name="center_review_shape", severity="medium", safe_summary="center review item is missing wrapper-facing fields", suggested_command="brigade center reviews --json", evidence_refs=["center reviews"]))
 
     pending_imports = work_cmd._pending_imports(target)
     missing_acceptance = [item for item in pending_imports if not item.get("acceptance")]
@@ -2107,49 +2326,64 @@ def hardening_audit_payload(target: Path) -> dict[str, Any]:
         if not ((item.get("metadata") if isinstance(item.get("metadata"), dict) else {}).get("source_fingerprint") or item.get("source"))
     ]
     if missing_acceptance:
-        findings.append(_hardening_finding(workstream="inbox-evidence-quality", name="pending_import_missing_acceptance", severity="medium", safe_summary=f"{len(missing_acceptance)} pending import(s) missing acceptance", suggested_command="brigade work inbox doctor", evidence_refs=[str(work_cmd._imports_path(target))]))
+        findings.append(_hardening_finding(workstream="inbox-evidence-quality", phase=135, name="pending_import_missing_acceptance", severity="medium", safe_summary=f"{len(missing_acceptance)} pending import(s) missing acceptance", suggested_command="brigade work inbox doctor", evidence_refs=[str(work_cmd._imports_path(target))]))
     if missing_provenance:
-        findings.append(_hardening_finding(workstream="inbox-evidence-quality", name="pending_import_missing_provenance", severity="medium", safe_summary=f"{len(missing_provenance)} pending import(s) missing provenance", suggested_command="brigade work import provenance", evidence_refs=[str(work_cmd._imports_path(target))]))
+        findings.append(_hardening_finding(workstream="inbox-evidence-quality", phase=136, name="pending_import_missing_provenance", severity="medium", safe_summary=f"{len(missing_provenance)} pending import(s) missing provenance", suggested_command="brigade work import provenance", evidence_refs=[str(work_cmd._imports_path(target))]))
     inbox_hygiene = work_cmd._inbox_hygiene_payload(target)
     if int(inbox_hygiene.get("issue_count") or 0) > 0:
         top = inbox_hygiene.get("top_issue") if isinstance(inbox_hygiene.get("top_issue"), dict) else {}
-        findings.append(_hardening_finding(workstream="inbox-evidence-quality", name="inbox_hygiene_issue", severity="medium", safe_summary=str(top.get("detail") or "work inbox has hygiene issues"), suggested_command="brigade work inbox doctor", evidence_refs=[str(work_cmd._imports_path(target))]))
+        findings.append(_hardening_finding(workstream="inbox-evidence-quality", phase=137, name="inbox_hygiene_issue", severity="medium", safe_summary=str(top.get("detail") or "work inbox has hygiene issues"), suggested_command="brigade work inbox doctor", evidence_refs=[str(work_cmd._imports_path(target))]))
 
     repo_health = repos_cmd.health(target)
     if int(repo_health.get("issue_count") or 0) > 0:
         top = repo_health.get("top_issue") if isinstance(repo_health.get("top_issue"), dict) else {}
-        findings.append(_hardening_finding(workstream="repo-fleet-daily-use", name="repo_fleet_health_issue", severity="medium", safe_summary=str(top.get("detail") or "repo fleet has health issues"), suggested_command="brigade repos doctor", evidence_refs=["repo fleet health"]))
+        findings.append(_hardening_finding(workstream="repo-fleet-daily-use", phase=145, name="repo_fleet_health_issue", severity="medium", safe_summary=str(top.get("detail") or "repo fleet has health issues"), suggested_command="brigade repos doctor", evidence_refs=["repo fleet health"]))
 
     release_readiness = release_cmd._latest_release_receipt(target)
     release_candidate = release_cmd._latest_candidate(target)
     if not release_readiness:
-        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", name="missing_release_readiness", severity="medium", safe_summary="latest release readiness receipt is missing", suggested_command="brigade release run", evidence_refs=[".brigade/release/runs"]))
+        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", phase=155, name="missing_release_readiness", severity="medium", safe_summary="latest release readiness receipt is missing", suggested_command="brigade release run", evidence_refs=[".brigade/release/runs"]))
     elif not release_readiness.get("ready"):
-        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", name="blocked_release_readiness", severity="high", safe_summary="latest release readiness is blocked", suggested_command=f"brigade release show {release_readiness.get('run_id')}", evidence_refs=[str(release_readiness.get("path") or ".brigade/release/runs")]))
+        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", phase=158, name="blocked_release_readiness", severity="high", safe_summary="latest release readiness is blocked", suggested_command=f"brigade release show {release_readiness.get('run_id')}", evidence_refs=[str(release_readiness.get("path") or ".brigade/release/runs")]))
     if not release_candidate:
-        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", name="missing_release_candidate", severity="low", safe_summary="latest release candidate packet is missing", suggested_command="brigade release candidate build", evidence_refs=[".brigade/release/candidates"]))
+        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", phase=156, name="missing_release_candidate", severity="low", safe_summary="latest release candidate packet is missing", suggested_command="brigade release candidate build", evidence_refs=[".brigade/release/candidates"]))
     elif not isinstance(release_candidate.get("daily_driver"), dict):
-        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", name="candidate_missing_daily_evidence", severity="medium", safe_summary="latest release candidate is missing daily driver evidence", suggested_command="brigade release candidate build", evidence_refs=[str(release_candidate.get("path") or ".brigade/release/candidates")]))
+        findings.append(_hardening_finding(workstream="self-dogfood-release-loop", phase=157, name="candidate_missing_daily_evidence", severity="medium", safe_summary="latest release candidate is missing daily driver evidence", suggested_command="brigade release candidate build", evidence_refs=[str(release_candidate.get("path") or ".brigade/release/candidates")]))
+    if release_readiness:
+        evidence = release_readiness.get("evidence") if isinstance(release_readiness.get("evidence"), dict) else {}
+        if not isinstance(evidence.get("daily_hardening"), dict):
+            findings.append(_hardening_finding(workstream="daily-production-hardening", phase=124, name="release_missing_daily_hardening", severity="medium", safe_summary="latest release readiness evidence is missing daily hardening state", suggested_command="brigade release run", evidence_refs=[str(release_readiness.get("path") or ".brigade/release/runs")]))
 
     findings.sort(key=lambda item: ({"high": 3, "medium": 2, "low": 1}.get(str(item.get("severity")), 0), str(item.get("finding_id"))), reverse=True)
+    raw_findings = list(findings)
+    findings, quieted_findings, latest_closeout = _hardening_quieted_findings(target, findings)
     by_workstream = {
         stream["id"]: {
             "phase_start": stream["phase_start"],
             "phase_end": stream["phase_end"],
             "finding_count": len([item for item in findings if item.get("workstream") == stream["id"]]),
+            "quieted_count": len([item for item in quieted_findings if item.get("workstream") == stream["id"]]),
             "status": "needs-attention" if any(item.get("workstream") == stream["id"] for item in findings) else "ok",
         }
         for stream in HARDENING_WORKSTREAMS
     }
+    phases = _hardening_phases()
     return {
         "schema_version": SCHEMA_VERSION,
         "schema": {"name": "daily-hardening-audit", "version": SCHEMA_VERSION},
         "target": str(target),
         "phase_range": "115-164",
-        "phase_count": len(HARDENING_PHASES),
+        "phase_count": len(phases),
+        "implemented_phase_count": sum(1 for phase in phases if phase.get("status") == "implemented"),
+        "phases": phases,
         "workstreams": by_workstream,
         "findings": findings,
         "finding_count": len(findings),
+        "raw_findings": raw_findings,
+        "raw_finding_count": len(raw_findings),
+        "quieted_findings": quieted_findings,
+        "quieted_count": len(quieted_findings),
+        "latest_closeout": latest_closeout,
         "issue_count": len(findings),
         "top_issue": findings[0] if findings else None,
         "suggested_next_commands": ["brigade daily hardening import-issues", "brigade daily plan"],
@@ -2189,6 +2423,8 @@ def hardening_import_issues(*, target: Path, dry_run: bool = False, json_output:
                 "metadata": {
                     "finding_id": finding.get("finding_id"),
                     "workstream": finding.get("workstream"),
+                    "phase": finding.get("phase"),
+                    "phase_title": finding.get("phase_title"),
                     "severity": finding.get("severity"),
                     "suggested_command": finding.get("suggested_command"),
                     "source_item_key": f"daily-hardening:{finding.get('finding_id')}",
@@ -2245,9 +2481,14 @@ def hardening_closeout(
         "created_at": _now().isoformat(),
         "phase_range": "115-164",
         "finding_count": audit["finding_count"],
+        "raw_finding_count": audit.get("raw_finding_count"),
+        "quieted_count": audit.get("quieted_count"),
         "unresolved_count": len(unresolved),
         "unresolved_findings": unresolved,
         "audit_fingerprint": _fingerprint(audit["findings"]),
+        "raw_audit_fingerprint": _fingerprint(audit.get("raw_findings", [])),
+        "finding_fingerprints": [finding.get("source_fingerprint") for finding in audit.get("findings", [])],
+        "quieted_fingerprints": [finding.get("source_fingerprint") for finding in audit.get("quieted_findings", [])],
     }
     path = _hardening_closeouts_root(target) / closeout_id / "closeout.json"
     payload["path"] = str(path.parent)

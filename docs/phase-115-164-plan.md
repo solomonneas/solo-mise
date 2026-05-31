@@ -29,6 +29,16 @@ Goal: make the daily loop recoverable, explainable, and consistently receipt-bac
 - 123: Keep JSON output clean when wrapped commands print noise.
 - 124: Carry daily reliability state into release evidence.
 
+Status: implemented.
+
+Implementation notes:
+
+- `brigade daily hardening plan` marks phases 115-124 as implemented while later phases remain planned.
+- `brigade daily hardening audit` now checks recent daily run receipts for normalized adapter result fields, recent daily plan receipts for candidate explanations, approval hygiene, telemetry warnings, protocol step coverage, wrapped-output leakage, and release evidence coverage.
+- `brigade daily hardening import-issues` preserves phase number and phase title metadata on generated work imports.
+- `brigade daily hardening closeout` stores finding fingerprints so reviewed findings stay quiet until their source fingerprint changes.
+- Release readiness and release candidate evidence now include daily hardening summary state.
+
 ## Workstream 2: Phase 125-134, Operator Center Contract Cleanup
 
 Goal: keep center status, activity, reviews, templates, and schema output consistent for wrappers.
