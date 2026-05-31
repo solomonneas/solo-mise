@@ -184,3 +184,49 @@ def test_phase_ledger_daily_work_and_center_integration(tmp_path, capsys):
     assert center_cmd.status(target=tmp_path, json_output=True) == 0
     center_status = json.loads(capsys.readouterr().out)
     assert center_status["phase_ledger"]["issue_count"] >= 1
+
+
+def test_phase_ledger_schema_status_next_report_and_imports(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "220-222", "--title", "Range", "--goal", "audit", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "complete", "phase-220", "--target", str(tmp_path), "--summary", "Done", "--file", "file.py", "--test", "pytest", "--json"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["work", "phases", "schema", "--target", str(tmp_path), "--json"]) == 0
+    schema_payload = json.loads(capsys.readouterr().out)
+    schema_names = {item["name"] for item in schema_payload["schemas"]}
+    assert {"phase-record", "phase-ledger-status", "phase-ledger-report"} <= schema_names
+
+    assert cli.main(["work", "phases", "status", "--target", str(tmp_path), "--range", "220-222", "--json"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["record_count"] == 3
+    assert status_payload["open_count"] == 2
+    assert status_payload["next_phase"]["phase_id"] == "phase-221"
+
+    assert cli.main(["work", "phases", "next", "--target", str(tmp_path), "--range", "220-222", "--json"]) == 0
+    next_payload = json.loads(capsys.readouterr().out)
+    assert next_payload["phase"]["phase_id"] == "phase-221"
+
+    assert cli.main(["work", "phases", "report", "build", "--target", str(tmp_path), "--range", "220-222", "--json"]) == 0
+    report_payload = json.loads(capsys.readouterr().out)
+    report_id = report_payload["report_id"]
+    assert (tmp_path / ".brigade" / "work" / "phases" / "reports" / report_id / "PHASE_REPORT.md").is_file()
+
+    assert cli.main(["work", "phases", "report", "list", "--target", str(tmp_path), "--json"]) == 0
+    reports = json.loads(capsys.readouterr().out)
+    assert reports["report_count"] == 1
+
+    assert cli.main(["work", "phases", "report", "show", "latest", "--target", str(tmp_path), "--json"]) == 0
+    shown_report = json.loads(capsys.readouterr().out)
+    assert shown_report["report_id"] == report_id
+
+    assert cli.main(["work", "phases", "import-issues", "--target", str(tmp_path), "--range", "220-223", "--json"]) == 0
+    imports = json.loads(capsys.readouterr().out)
+    assert imports["created_count"] >= 1
+    pending = work_cmd._pending_imports(tmp_path)
+    assert any(item["source"] == "phase-ledger" for item in pending)
+
+    assert cli.main(["work", "phases", "import-issues", "--target", str(tmp_path), "--range", "220-223", "--json"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["created_count"] == 0
+    assert second["skipped_count"] >= 1

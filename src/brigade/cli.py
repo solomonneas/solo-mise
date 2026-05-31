@@ -922,6 +922,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_list = phases_sub.add_parser("list", help="List local phase records.")
     p_work_phases_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_phases_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_schema = phases_sub.add_parser("schema", help="Show phase ledger JSON contracts.")
+    p_work_phases_schema.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_schema.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_status = phases_sub.add_parser("status", help="Summarize phase ledger range status.")
+    p_work_phases_status.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_status.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 165-170.")
+    p_work_phases_status.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_next = phases_sub.add_parser("next", help="Show the next open phase.")
+    p_work_phases_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_next.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 165-170.")
+    p_work_phases_next.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_phases_show = phases_sub.add_parser("show", help="Show one local phase record.")
     p_work_phases_show.add_argument("phase_id", help="Phase id or unique prefix.")
     p_work_phases_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
@@ -953,6 +964,26 @@ def _build_parser() -> argparse.ArgumentParser:
     p_work_phases_doctor.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_phases_doctor.add_argument("--range", dest="phase_range", default=None, help="Required phase range, such as 165-170.")
     p_work_phases_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_import = phases_sub.add_parser("import-issues", help="Import phase ledger issues into the work inbox.")
+    p_work_phases_import.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_import.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 165-170.")
+    p_work_phases_import.add_argument("--dry-run", action="store_true", help="Report imports without writing them.")
+    p_work_phases_import.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_report = phases_sub.add_parser("report", help="Build and inspect phase ledger reports.")
+    phases_report_sub = p_work_phases_report.add_subparsers(dest="phases_report_command", metavar="<phases-report-command>")
+    phases_report_sub.required = True
+    p_work_phases_report_build = phases_report_sub.add_parser("build", help="Build a local phase ledger report.")
+    p_work_phases_report_build.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to update.")
+    p_work_phases_report_build.add_argument("--range", dest="phase_range", default=None, help="Phase range, such as 165-170.")
+    p_work_phases_report_build.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_report_list = phases_report_sub.add_parser("list", help="List phase ledger reports.")
+    p_work_phases_report_list.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_report_list.add_argument("--limit", type=int, default=20, help="Maximum reports to list.")
+    p_work_phases_report_list.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    p_work_phases_report_show = phases_report_sub.add_parser("show", help="Show one phase ledger report.")
+    p_work_phases_report_show.add_argument("report_id", help="Report id, unique prefix, or latest.")
+    p_work_phases_report_show.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
+    p_work_phases_report_show.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     p_work_next = work_sub.add_parser("next", help="Show the next daily work task and suggested command.")
     p_work_next.add_argument("--target", "-t", type=Path, default=Path("."), help="Repo or workspace to inspect.")
     p_work_next.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -2926,6 +2957,12 @@ def main(argv=None) -> int:
                 )
             if args.phases_command == "list":
                 return phases_cmd.list_phases(target=args.target, json_output=args.json)
+            if args.phases_command == "schema":
+                return phases_cmd.schema(target=args.target, json_output=args.json)
+            if args.phases_command == "status":
+                return phases_cmd.status(target=args.target, phase_range=args.phase_range, json_output=args.json)
+            if args.phases_command == "next":
+                return phases_cmd.next_phase(target=args.target, phase_range=args.phase_range, json_output=args.json)
             if args.phases_command == "show":
                 return phases_cmd.show(target=args.target, phase_id=args.phase_id, json_output=args.json)
             if args.phases_command == "start":
@@ -2955,6 +2992,17 @@ def main(argv=None) -> int:
                 )
             if args.phases_command == "doctor":
                 return phases_cmd.doctor(target=args.target, phase_range=args.phase_range, json_output=args.json)
+            if args.phases_command == "import-issues":
+                return phases_cmd.import_issues(target=args.target, phase_range=args.phase_range, dry_run=args.dry_run, json_output=args.json)
+            if args.phases_command == "report":
+                if args.phases_report_command == "build":
+                    return phases_cmd.report_build(target=args.target, phase_range=args.phase_range, json_output=args.json)
+                if args.phases_report_command == "list":
+                    return phases_cmd.report_list(target=args.target, limit=args.limit, json_output=args.json)
+                if args.phases_report_command == "show":
+                    return phases_cmd.report_show(target=args.target, report_id=args.report_id, json_output=args.json)
+                parser.error(f"unknown phases report command: {args.phases_report_command}")
+                return 2
             parser.error(f"unknown phases command: {args.phases_command}")
             return 2
         if args.work_command == "next":

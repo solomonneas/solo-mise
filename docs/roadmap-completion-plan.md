@@ -103,11 +103,12 @@ Deliverable: future long-run goals are auditable before completion is claimed.
 
 Implementation scope:
 
-- Add `brigade work phases init/plan/list/show/start/complete/defer/doctor`.
+- Add `brigade work phases init/plan/list/schema/status/next/show/start/complete/defer/doctor/import-issues`.
+- Add `brigade work phases report build/list/show`.
 - Store local phase records under `.brigade/work/phases/`.
 - Require each phase to record goal, status, summary, changed files, tests, commit, push ref, deferrals, blockers, and next recommendation.
 - Detect silent compression by requiring explicit grouped records before grouped phase work starts.
-- Surface phase-ledger health through the daily driver, work brief and doctor, and operator center status.
+- Surface phase-ledger health through the daily driver, work brief and doctor, operator center status, release readiness, and release candidate evidence.
 
 Acceptance:
 
@@ -117,7 +118,7 @@ Acceptance:
 
 Phase 165 status:
 
-- Implemented with local JSON records, doctor checks, daily/work/center health integration, and `docs/phase-execution-ledger.md`.
+- Implemented with local JSON records, doctor checks, range status, next-phase selection, report bundles, work-inbox issue routing, daily/work/center/release health integration, and `docs/phase-execution-ledger.md`.
 
 ### 1. Roadmap State Audit And Closure Map
 

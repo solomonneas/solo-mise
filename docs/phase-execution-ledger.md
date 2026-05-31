@@ -17,11 +17,18 @@ brigade work phases init
 brigade work phases plan --phase-id phase-165 --title "Auditable AFK ledger" --goal "phase 165"
 brigade work phases plan --range 165-170 --grouped --title "Grouped hardening" --goal "phase range"
 brigade work phases list
+brigade work phases schema
+brigade work phases status --range 165-170
+brigade work phases next --range 165-170
 brigade work phases show <phase-id>
 brigade work phases start <phase-id>
 brigade work phases complete <phase-id> --summary "..." --file src/file.py --test "pytest ..." --commit <hash> --push-ref main
 brigade work phases defer <phase-id> --reason "..."
 brigade work phases doctor --range 165-170
+brigade work phases import-issues --range 165-170
+brigade work phases report build --range 165-170
+brigade work phases report list
+brigade work phases report show latest
 ```
 
 Every command supports stable JSON output with `--json`.
@@ -93,3 +100,17 @@ Deferral is acceptable. Silent compression is not.
 - blocked phases without a next recommendation
 
 The phase ledger is surfaced in `brigade daily status`, `brigade daily doctor`, `brigade work brief`, `brigade work doctor`, and `brigade center status`.
+
+## Reports And Imports
+
+`brigade work phases report build` writes a local bundle under:
+
+```text
+.brigade/work/phases/reports/
+```
+
+Each report includes `PHASE_REPORT.md` and `PHASE_EVIDENCE.json` with range status, doctor checks, record summaries, and suggested next commands.
+
+`brigade work phases import-issues` routes unresolved ledger issues into the scanner-ready work inbox as `source: phase-ledger` task imports. Imports dedupe by a stable source fingerprint and keep promotion explicit.
+
+Release readiness and release candidate evidence include a compact phase-ledger summary so publish review can see whether long unattended work still has open ledger issues.

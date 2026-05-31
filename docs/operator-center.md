@@ -72,11 +72,18 @@ brigade daily approvals archive --consumed
 brigade work phases init
 brigade work phases plan
 brigade work phases list
+brigade work phases schema
+brigade work phases status
+brigade work phases next
 brigade work phases show <phase-id>
 brigade work phases start <phase-id>
 brigade work phases complete <phase-id>
 brigade work phases defer <phase-id> --reason "not in this tranche"
 brigade work phases doctor
+brigade work phases import-issues
+brigade work phases report build
+brigade work phases report list
+brigade work phases report show <report-id>
 ```
 
 `status` summarizes active work, pending tasks, pending imports, scanner sweep health, review health, handoff drafts, tool catalog health, learning candidates, context packs, release readiness, release candidates, repo fleet, roadmap health, project consolidation, and security health.
@@ -136,7 +143,7 @@ The daily driver never executes arbitrary suggested commands, starts scanners or
 
 `brigade work phases` records long unattended work as local phase evidence under `.brigade/work/phases/`. The ledger exists so an agent-facing run cannot silently compress dozens of phases into a vague summary and later claim completion.
 
-Each phase record stores the stated goal, status, implementation summary, changed files, tests run, test result summary, commit hash, push ref, deferrals, blockers, and next phase recommendation. A phase range must be declared up front with individual records or an explicit grouped record. `brigade work phases doctor` warns on missing records, stale in-progress phases, blocked phases without next steps, complete phases without tests or changed files, committed phases without hashes, pushed phases without push refs, and range records that were compressed without explicit grouping.
+Each phase record stores the stated goal, status, implementation summary, changed files, tests run, test result summary, commit hash, push ref, deferrals, blockers, and next phase recommendation. A phase range must be declared up front with individual records or an explicit grouped record. `brigade work phases doctor` warns on missing records, stale in-progress phases, blocked phases without next steps, complete phases without tests or changed files, committed phases without hashes, pushed phases without push refs, and range records that were compressed without explicit grouping. `brigade work phases status` and `next` make a range easy to resume, `report build` writes local Markdown and JSON evidence, and `import-issues` routes ledger problems into the work inbox without automatic promotion.
 
 The phase ledger is surfaced in `brigade daily status`, `brigade daily doctor`, `brigade work brief`, `brigade work doctor`, and `brigade center status`. Future AFK multi-phase work is not complete unless the ledger shows evidence or explicit deferrals.
 

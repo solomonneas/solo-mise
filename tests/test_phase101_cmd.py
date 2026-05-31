@@ -956,6 +956,7 @@ def test_release_evidence_and_candidate_include_daily_hardening(tmp_path, capsys
     assert "inbox_quality" in readiness["evidence"]
     assert "repo_fleet_daily_use" in readiness["evidence"]
     assert "release_dogfood" in readiness["evidence"]
+    assert "phase_ledger" in readiness["evidence"]
 
     assert release_cmd.candidate_plan(target=tmp_path, base_ref=None, json_output=True) == 0
     candidate = json.loads(capsys.readouterr().out)
@@ -964,6 +965,7 @@ def test_release_evidence_and_candidate_include_daily_hardening(tmp_path, capsys
     assert "inbox_quality" in candidate
     assert "repo_fleet_daily_use" in candidate
     assert "release_dogfood" in candidate
+    assert "phase_ledger" in candidate
 
     dogfood = release_cmd._release_dogfood_health(tmp_path)
     assert dogfood["schema"]["name"] == "release-dogfood-health"

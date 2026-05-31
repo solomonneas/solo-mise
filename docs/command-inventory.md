@@ -37,7 +37,7 @@ brigade roadmap commands --write
 - `brigade security`: 14 command path(s)
 - `brigade status`: 1 command path(s)
 - `brigade tools`: 46 command path(s)
-- `brigade work`: 77 command path(s)
+- `brigade work`: 84 command path(s)
 
 ## Commands
 
@@ -355,11 +355,18 @@ brigade roadmap commands --write
 - `brigade work phases complete`
 - `brigade work phases defer`
 - `brigade work phases doctor`
+- `brigade work phases import-issues`
 - `brigade work phases init`
 - `brigade work phases list`
+- `brigade work phases next`
 - `brigade work phases plan`
+- `brigade work phases report build`
+- `brigade work phases report list`
+- `brigade work phases report show`
+- `brigade work phases schema`
 - `brigade work phases show`
 - `brigade work phases start`
+- `brigade work phases status`
 - `brigade work recap`
 - `brigade work resume`
 - `brigade work review closeout`

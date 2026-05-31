@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from . import context_cmd, handoff_cmd, learn_cmd, memory_cmd, projects_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd, work_cmd
+from . import context_cmd, handoff_cmd, learn_cmd, memory_cmd, phases_cmd, projects_cmd, repos_cmd, roadmap_cmd, security_cmd, tools_cmd, work_cmd
 from .selection import KNOWN_HARNESSES
 
 OK = "ok"
@@ -842,6 +842,7 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
     backup_health = work_cmd._backup_health(target)
     acceptance = work_cmd._acceptance_payload(target)
     inbox_quality = work_cmd._inbox_quality_payload(target)
+    phase_ledger = phases_cmd.health(target)
     operator_report_health = center_cmd.report_health(target)
     operator_actions_health = center_cmd.actions_health(target)
     ci_platform = ci_platform_payload(target)
@@ -984,6 +985,13 @@ def _evidence(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         "roadmap": {
             "issue_count": roadmap_health.get("issue_count"),
             "top_issue": roadmap_health.get("top_issue"),
+        },
+        "phase_ledger": {
+            "record_count": phase_ledger.get("record_count"),
+            "open_count": phase_ledger.get("open_count"),
+            "issue_count": phase_ledger.get("issue_count"),
+            "top_issue": phase_ledger.get("top_issue"),
+            "latest": phase_ledger.get("latest"),
         },
         "operator_report": {
             "issue_count": operator_report_health.get("issue_count"),
@@ -1307,6 +1315,7 @@ def _candidate_payload(target: Path, *, base_ref: str | None) -> dict[str, Any]:
         "repo_fleet": evidence.get("repo_fleet"),
         "repo_fleet_daily_use": evidence.get("repo_fleet_daily_use"),
         "roadmap": evidence.get("roadmap"),
+        "phase_ledger": evidence.get("phase_ledger"),
         "git": git,
         "changed_files": changed_files,
         "docs_touch_status": _candidate_docs_touch([str(item) for item in changed_files]),

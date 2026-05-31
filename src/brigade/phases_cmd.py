@@ -13,6 +13,7 @@ SCHEMA_VERSION = 1
 PHASE_STATUSES = {"pending", "in-progress", "implemented", "verified", "committed", "pushed", "deferred", "blocked"}
 DONE_STATUSES = {"implemented", "verified", "committed", "pushed"}
 STALE_IN_PROGRESS_HOURS = 12
+REPORT_STALE_HOURS = 24
 
 
 def _now() -> datetime:
@@ -25,6 +26,10 @@ def _root(target: Path) -> Path:
 
 def _records_root(target: Path) -> Path:
     return _root(target) / "records"
+
+
+def _reports_root(target: Path) -> Path:
+    return _root(target) / "reports"
 
 
 def _index_path(target: Path) -> Path:
@@ -161,12 +166,54 @@ def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _status_counts(records: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {status: 0 for status in PHASE_STATUSES}
+    counts["invalid"] = 0
+    for record in records:
+        status = str(record.get("status") or "invalid")
+        counts[status] = counts.get(status, 0) + 1
+    return {key: value for key, value in counts.items() if value}
+
+
+def _safe_phase_number(phase_id: object) -> int | None:
+    match = re.fullmatch(r"phase-(\d+)", str(phase_id or ""))
+    return int(match.group(1)) if match else None
+
+
 def _append_unique(values: list[Any], additions: list[str]) -> list[str]:
     rendered = [str(item) for item in values if str(item)]
     for item in additions:
         if item and item not in rendered:
             rendered.append(item)
     return rendered
+
+
+def schema(*, target: Path, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-schema"),
+        "target": str(target),
+        "schemas": [
+            _schema("phase-record"),
+            _schema("phase-ledger-index"),
+            _schema("phase-ledger-plan"),
+            _schema("phase-ledger-status"),
+            _schema("phase-ledger-report"),
+            _schema("phase-ledger-doctor"),
+        ],
+        "status_values": sorted(PHASE_STATUSES),
+        "completion_rule": "A phase is complete only with evidence or an explicit deferral.",
+        "no_silent_compression": True,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase ledger schema: {target}")
+        print("no_silent_compression: true")
+        for item in payload["schemas"]:
+            print(f"- {item['name']}")
+    return 0
 
 
 def init(*, target: Path, json_output: bool = False) -> int:
@@ -289,6 +336,97 @@ def list_phases(*, target: Path, json_output: bool = False) -> int:
         print(f"phase ledger: {target}")
         for record in records:
             print(f"- {record.get('phase_id')} [{record.get('status')}] {record.get('title')}")
+    return 0
+
+
+def status_payload(target: Path, *, phase_range: str | None = None) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    records = _records(target)
+    range_records = records
+    missing: list[str] = []
+    try:
+        parsed_range = _parse_range(phase_range)
+    except ValueError as exc:
+        parsed_range = None
+        missing = [str(exc)]
+    if parsed_range is not None:
+        start, end = parsed_range
+        by_id = {str(record.get("phase_id")): record for record in records}
+        expected = [_phase_id_for(number) for number in range(start, end + 1)]
+        range_records = [by_id[phase_id] for phase_id in expected if phase_id in by_id]
+        missing = [phase_id for phase_id in expected if phase_id not in by_id]
+    open_records = [record for record in range_records if record.get("status") in {"pending", "in-progress", "blocked"}]
+    done_records = [record for record in range_records if record.get("status") in DONE_STATUSES or record.get("status") == "deferred"]
+    next_record = next(
+        (
+            record
+            for record in sorted(range_records, key=lambda item: (_safe_phase_number(item.get("phase_id")) or 999999, str(item.get("phase_id"))))
+            if record.get("status") in {"pending", "blocked", "in-progress"}
+        ),
+        None,
+    )
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-status"),
+        "target": str(target),
+        "phase_range": phase_range,
+        "record_count": len(range_records),
+        "total_record_count": len(records),
+        "status_counts": _status_counts(range_records),
+        "missing_phase_ids": missing,
+        "missing_count": len(missing),
+        "open_count": len(open_records),
+        "done_count": len(done_records),
+        "complete": not missing and bool(range_records) and len(done_records) == len(range_records),
+        "next_phase": _record_summary(next_record) if isinstance(next_record, dict) else None,
+        "suggested_next_command": f"brigade work phases start {next_record.get('phase_id')}" if isinstance(next_record, dict) else "brigade work phases doctor",
+    }
+    return payload
+
+
+def status(*, target: Path, phase_range: str | None = None, json_output: bool = False) -> int:
+    try:
+        payload = status_payload(target, phase_range=phase_range)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase ledger status: {payload['target']}")
+        print(f"records: {payload['record_count']}")
+        print(f"missing: {payload['missing_count']}")
+        print(f"open: {payload['open_count']}")
+        print(f"complete: {str(payload['complete']).lower()}")
+        next_phase = payload.get("next_phase")
+        if isinstance(next_phase, dict):
+            print(f"next: {next_phase.get('phase_id')} [{next_phase.get('status')}]")
+    return 0
+
+
+def next_phase(*, target: Path, phase_range: str | None = None, json_output: bool = False) -> int:
+    payload = status_payload(target, phase_range=phase_range)
+    next_record = payload.get("next_phase")
+    if not isinstance(next_record, dict):
+        if json_output:
+            print(json.dumps({**payload, "found": False}, indent=2, sort_keys=True))
+        else:
+            print("next phase: none")
+        return 1
+    out = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-next"),
+        "target": payload["target"],
+        "found": True,
+        "phase": next_record,
+        "suggested_next_command": payload["suggested_next_command"],
+    }
+    if json_output:
+        print(json.dumps(out, indent=2, sort_keys=True))
+    else:
+        print(f"next phase: {next_record.get('phase_id')}")
+        print(f"status: {next_record.get('status')}")
+        print(f"next: {out['suggested_next_command']}")
     return 0
 
 
@@ -516,3 +654,190 @@ def health(target: Path) -> dict[str, Any]:
         "issue_count": payload["issue_count"],
         "top_issue": payload["top_issue"],
     }
+
+
+def _report_payload(target: Path, *, phase_range: str | None = None) -> dict[str, Any]:
+    target = target.expanduser().resolve()
+    status_data = status_payload(target, phase_range=phase_range)
+    doctor_data = doctor_payload(target, phase_range=phase_range)
+    records = _records(target)
+    if phase_range:
+        parsed = _parse_range(phase_range)
+        if parsed is not None:
+            start, end = parsed
+            wanted = {_phase_id_for(number) for number in range(start, end + 1)}
+            records = [record for record in records if record.get("phase_id") in wanted]
+    report_id = f"{_now().strftime('%Y%m%d-%H%M%S')}-phase-report-{uuid4().hex[:6]}"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-report"),
+        "target": str(target),
+        "report_id": report_id,
+        "created_at": _now().isoformat(),
+        "phase_range": phase_range,
+        "status": status_data,
+        "doctor": {
+            "issue_count": doctor_data["issue_count"],
+            "top_issue": doctor_data["top_issue"],
+            "checks": doctor_data["checks"],
+        },
+        "records": [_record_summary(record) for record in records],
+        "record_count": len(records),
+        "suggested_next_commands": [
+            "brigade work phases doctor",
+            status_data.get("suggested_next_command") or "brigade work phases list",
+        ],
+    }
+
+
+def _write_report_markdown(path: Path, payload: dict[str, Any]) -> None:
+    lines = [
+        "# Brigade Phase Ledger Report",
+        "",
+        f"- Report id: `{payload['report_id']}`",
+        f"- Created: `{payload['created_at']}`",
+        f"- Phase range: `{payload.get('phase_range') or 'all'}`",
+        f"- Records: `{payload['record_count']}`",
+        f"- Issues: `{payload['doctor']['issue_count']}`",
+        "",
+        "## Status Counts",
+        "",
+    ]
+    for status_name, count in sorted(payload["status"].get("status_counts", {}).items()):
+        lines.append(f"- `{status_name}`: {count}")
+    lines.extend(["", "## Checks", ""])
+    for check in payload["doctor"].get("checks", []):
+        lines.append(f"- `{check.get('status')}` `{check.get('name')}`: {check.get('detail')}")
+    lines.extend(["", "## Records", ""])
+    for record in payload.get("records", []):
+        lines.append(f"- `{record.get('phase_id')}` `{record.get('status')}`: {record.get('title')}")
+    path.write_text("\n".join(lines).rstrip() + "\n")
+
+
+def report_build(*, target: Path, phase_range: str | None = None, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    payload = _report_payload(target, phase_range=phase_range)
+    report_dir = _reports_root(target) / str(payload["report_id"])
+    payload["path"] = str(report_dir)
+    payload["bundle_files"] = ["PHASE_REPORT.md", "PHASE_EVIDENCE.json"]
+    _write_json(report_dir / "PHASE_EVIDENCE.json", payload)
+    _write_report_markdown(report_dir / "PHASE_REPORT.md", payload)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase report: {payload['report_id']}")
+        print(f"path: {report_dir}")
+        print(f"issues: {payload['doctor']['issue_count']}")
+    return 0
+
+
+def report_list(*, target: Path, limit: int = 20, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    reports: list[dict[str, Any]] = []
+    for path in sorted(_reports_root(target).glob("*/PHASE_EVIDENCE.json"), reverse=True):
+        payload = _read_json(path)
+        if payload is None:
+            continue
+        reports.append(
+            {
+                "report_id": payload.get("report_id"),
+                "created_at": payload.get("created_at"),
+                "phase_range": payload.get("phase_range"),
+                "record_count": payload.get("record_count"),
+                "issue_count": (payload.get("doctor") or {}).get("issue_count") if isinstance(payload.get("doctor"), dict) else None,
+                "path": str(path.parent),
+            }
+        )
+    reports = reports[:limit]
+    out = {"schema_version": SCHEMA_VERSION, "schema": _schema("phase-ledger-report-list"), "target": str(target), "reports": reports, "report_count": len(reports)}
+    if json_output:
+        print(json.dumps(out, indent=2, sort_keys=True))
+    else:
+        print(f"phase reports: {target}")
+        for item in reports:
+            print(f"- {item.get('report_id')} issues={item.get('issue_count')} range={item.get('phase_range') or 'all'}")
+    return 0
+
+
+def report_show(*, target: Path, report_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    candidates = sorted(_reports_root(target).glob(f"{report_id}*/PHASE_EVIDENCE.json"))
+    if report_id == "latest":
+        candidates = sorted(_reports_root(target).glob("*/PHASE_EVIDENCE.json"), reverse=True)[:1]
+    if len(candidates) != 1:
+        print(f"error: phase report not found: {report_id}", file=sys.stderr)
+        return 1
+    payload = _read_json(candidates[0])
+    if payload is None:
+        print(f"error: invalid phase report: {candidates[0]}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase report: {payload.get('report_id')}")
+        print(f"records: {payload.get('record_count')}")
+        doctor_data = payload.get("doctor") if isinstance(payload.get("doctor"), dict) else {}
+        print(f"issues: {doctor_data.get('issue_count', 0)}")
+    return 0
+
+
+def import_issues(*, target: Path, phase_range: str | None = None, dry_run: bool = False, json_output: bool = False) -> int:
+    from . import work_cmd
+
+    target = target.expanduser().resolve()
+    doctor_data = doctor_payload(target, phase_range=phase_range)
+    records: list[dict[str, Any]] = []
+    for check in doctor_data["checks"]:
+        if check.get("status") == "ok":
+            continue
+        fingerprint = f"phase-ledger:{check.get('phase_id') or 'ledger'}:{check.get('name')}:{check.get('detail')}"
+        records.append(
+            {
+                "kind": "task",
+                "source": "phase-ledger",
+                "text": f"Resolve phase ledger issue: {check.get('name')}",
+                "type": "workflow",
+                "priority": "high" if check.get("status") == "fail" else "normal",
+                "acceptance": [
+                    "The phase ledger issue is fixed or explicitly deferred.",
+                    "The affected phase record has current evidence or a clear next recommendation.",
+                    "`brigade work phases doctor` no longer reports this issue.",
+                ],
+                "metadata": {
+                    "phase_id": check.get("phase_id"),
+                    "issue_type": check.get("name"),
+                    "safe_summary": check.get("detail"),
+                    "suggested_command": check.get("suggested_next_command"),
+                    "source_fingerprint": _slug(fingerprint),
+                },
+            }
+        )
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    dismissed: list[dict[str, Any]] = []
+    if not dry_run and records:
+        created, skipped, dismissed = work_cmd._append_import_records(target, records)
+    elif dry_run:
+        created = records
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-import-issues"),
+        "target": str(target),
+        "dry_run": dry_run,
+        "created": created,
+        "skipped": skipped,
+        "dismissed": dismissed,
+        "invalid": [],
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "dismissed_count": len(dismissed),
+        "invalid_count": 0,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase ledger imports: {target}")
+        print(f"created: {payload['created_count']}")
+        print(f"skipped: {payload['skipped_count']}")
+        print(f"dismissed: {payload['dismissed_count']}")
+    return 0
