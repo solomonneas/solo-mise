@@ -112,6 +112,7 @@ Implementation scope:
 - Add `brigade work phases session report build/list/show` for local session evidence bundles.
 - Add `brigade work phases session activity` for read-only chronological AFK session timelines.
 - Add `brigade work phases session progress` for read-only session completion, blocker, test, commit, push, and remaining-step summaries.
+- Add `brigade work phases session import-issues` for deduped `source: phase-session` work imports from unresolved session blockers.
 - Make `brigade daily status/plan/review/run/doctor` surface active phase sessions and allow exactly one safe session report or closeout step.
 - Include latest phase session and session report state in work brief/doctor, center status/reviews, release doctor, release candidates, and candidate compare.
 - Add `brigade work phases evidence add` so phase records can carry local evidence attachments without command execution.

@@ -101,6 +101,7 @@ brigade work phases session resume <session-id|latest>
 brigade work phases session closeout <session-id|latest>
 brigade work phases session activity <session-id|latest>
 brigade work phases session progress <session-id|latest>
+brigade work phases session import-issues <session-id|latest>
 brigade work phases session report build <session-id|latest>
 brigade work phases session report list
 brigade work phases session report show <report-id|latest>
@@ -172,6 +173,8 @@ Phase execution sessions group a declared AFK range into one local record under 
 `brigade work phases session activity` provides a read-only chronological ledger for a session, covering phase records, starts, completions, tests, commits, report and compare evidence, actions, imports, closeouts, handoff drafts, and resume events.
 
 `brigade work phases session progress` gives a read-only progress summary for a session: percent complete, phase status counts, blockers, current phase, next command, test coverage, commit and push coverage, and estimated remaining local steps.
+
+`brigade work phases session import-issues` routes unresolved AFK session blockers into the scanner-ready work inbox as `source: phase-session` task imports. It preserves session id, phase id, issue type, suggested command, acceptance criteria, and source fingerprint, then dedupes repeated unchanged blockers.
 
 The daily driver surfaces active phase sessions in `daily status`, `plan`, `review`, `run`, and `doctor`. A session can become the selected daily action when it blocks AFK completion. `daily run` still performs exactly one bounded local step: building a session report or writing reviewed session closeout metadata.
 

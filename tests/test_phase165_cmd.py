@@ -625,6 +625,41 @@ def test_phase_session_progress_summary(tmp_path, capsys):
     assert payload["estimated_remaining_local_steps"] >= 1
 
 
+def test_phase_session_import_issues_dedupes_blockers(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "223-224", "--title", "Imports", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "complete", "phase-223", "--target", str(tmp_path), "--summary", "Missing tests.", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "223-224", "--goal", "import session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+
+    assert cli.main(["work", "phases", "session", "import-issues", session["session_id"], "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run["created_count"] >= 1
+    assert work_cmd._read_imports(tmp_path) == []
+
+    assert cli.main(["work", "phases", "session", "import-issues", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
+    created = json.loads(capsys.readouterr().out)
+    assert created["created_count"] >= 1
+    imports = work_cmd._read_imports(tmp_path)
+    assert imports[0]["source"] == "phase-session"
+    assert imports[0]["metadata"]["session_id"] == session["session_id"]
+    assert imports[0]["metadata"]["issue_type"]
+    assert imports[0]["acceptance"]
+
+    assert cli.main(["work", "phases", "session", "import-issues", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
+    skipped = json.loads(capsys.readouterr().out)
+    assert skipped["created_count"] == 0
+    assert skipped["skipped_count"] >= 1
+
+    imports[0]["status"] = "dismissed"
+    work_cmd._write_imports(tmp_path, imports)
+    assert cli.main(["work", "phases", "session", "import-issues", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
+    dismissed_skip = json.loads(capsys.readouterr().out)
+    assert dismissed_skip["created_count"] == 0
+    assert dismissed_skip["skipped"][0]["status"] == "dismissed"
+
+
 def test_daily_driver_surfaces_and_runs_phase_session_step(tmp_path, capsys):
     assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "214-215", "--title", "Daily", "--goal", "afk", "--json"]) == 0
     capsys.readouterr()

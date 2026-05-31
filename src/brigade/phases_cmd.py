@@ -1521,6 +1521,148 @@ def session_progress(*, target: Path, session_id: str, json_output: bool = False
     return 0
 
 
+def _session_blocker_fingerprint(*, session_id: object, phase_id: object, issue_type: object, detail: object) -> str:
+    payload = {
+        "session_id": session_id,
+        "phase_id": phase_id,
+        "issue_type": issue_type,
+        "detail": detail,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _session_blocker_import_candidates(target: Path, session: dict[str, Any]) -> list[dict[str, Any]]:
+    progress = _session_progress_payload(target, session)
+    candidates: list[dict[str, Any]] = []
+    session_id = session.get("session_id")
+    for phase_id in progress.get("missing_phase_ids") or []:
+        issue_type = "phase_session_missing_record"
+        detail = f"{phase_id} is missing from the phase session range"
+        fingerprint = _session_blocker_fingerprint(session_id=session_id, phase_id=phase_id, issue_type=issue_type, detail=detail)
+        candidates.append(
+            {
+                "text": f"Resolve phase session blocker {issue_type} for {phase_id}: {detail}",
+                "kind": "task",
+                "source": "phase-session",
+                "metadata": {
+                    "session_id": session_id,
+                    "phase_id": phase_id,
+                    "issue_type": issue_type,
+                    "safe_summary": detail,
+                    "source_fingerprint": fingerprint,
+                    "suggested_next_command": f"brigade work phases plan --phase-id {phase_id}",
+                },
+                "acceptance": [
+                    f"Phase session `{session_id}` no longer reports `{issue_type}` for `{phase_id}`.",
+                    "The phase ledger remains local and auditable.",
+                ],
+            }
+        )
+    for blocker in progress.get("blockers") or []:
+        if not isinstance(blocker, dict):
+            continue
+        issue_type = str(blocker.get("name") or "phase_session_blocker")
+        phase_id = blocker.get("phase_id") or progress.get("current_phase_id") or "session"
+        detail = str(blocker.get("detail") or issue_type)
+        fingerprint = _session_blocker_fingerprint(session_id=session_id, phase_id=phase_id, issue_type=issue_type, detail=detail)
+        candidates.append(
+            {
+                "text": f"Resolve phase session blocker {issue_type} for {phase_id}: {detail}",
+                "kind": "task",
+                "source": "phase-session",
+                "metadata": {
+                    "session_id": session_id,
+                    "phase_id": phase_id,
+                    "issue_type": issue_type,
+                    "safe_summary": detail,
+                    "source_fingerprint": fingerprint,
+                    "suggested_next_command": blocker.get("suggested_next_command") or progress.get("suggested_next_command"),
+                },
+                "acceptance": [
+                    f"Phase session `{session_id}` no longer reports `{issue_type}` for `{phase_id}`.",
+                    "The fix is represented by local phase evidence, deferral, or reviewed closeout metadata.",
+                ],
+            }
+        )
+    return candidates
+
+
+def session_import_issues(*, target: Path, session_id: str, dry_run: bool = False, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _path, session, error = _resolve_session(target, session_id)
+    if session is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    try:
+        candidates = _session_blocker_import_candidates(target, session)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    from . import work_cmd
+
+    existing = work_cmd._read_imports(target)
+    existing_keys = {
+        (
+            item.get("source"),
+            (item.get("metadata") or {}).get("session_id") if isinstance(item.get("metadata"), dict) else None,
+            (item.get("metadata") or {}).get("phase_id") if isinstance(item.get("metadata"), dict) else None,
+            (item.get("metadata") or {}).get("issue_type") if isinstance(item.get("metadata"), dict) else None,
+            (item.get("metadata") or {}).get("source_fingerprint") if isinstance(item.get("metadata"), dict) else None,
+        ): item
+        for item in existing
+        if item.get("source") == "phase-session" and isinstance(item.get("metadata"), dict)
+    }
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for candidate in candidates:
+        metadata = candidate["metadata"]
+        key = (
+            "phase-session",
+            metadata.get("session_id"),
+            metadata.get("phase_id"),
+            metadata.get("issue_type"),
+            metadata.get("source_fingerprint"),
+        )
+        if key in existing_keys:
+            skipped.append({"import_id": existing_keys[key].get("id"), "status": existing_keys[key].get("status"), "metadata": metadata})
+            continue
+        item = work_cmd._make_import(
+            candidate["text"],
+            kind=candidate["kind"],
+            source=candidate["source"],
+            metadata=metadata,
+            task_type="task",
+            priority="high",
+            acceptance=candidate["acceptance"],
+            template="bugfix",
+        )
+        created.append(item)
+        if not dry_run:
+            existing.append(item)
+    if created and not dry_run:
+        work_cmd._write_imports(target, existing)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-import-issues"),
+        "target": str(target),
+        "session_id": session.get("session_id"),
+        "dry_run": dry_run,
+        "created": created,
+        "created_count": len(created),
+        "skipped": skipped,
+        "skipped_count": len(skipped),
+        "candidate_count": len(candidates),
+        "suggested_next_command": "brigade work inbox",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session imports: {session.get('session_id')}")
+        print(f"created: {len(created)}")
+        print(f"skipped: {len(skipped)}")
+    return 0
+
+
 def _find_action(target: Path, action_id: str) -> tuple[Path, dict[str, Any] | None]:
     wanted = _slug(action_id)
     exact = _actions_root(target) / f"{wanted}.json"
