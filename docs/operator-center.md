@@ -112,6 +112,7 @@ brigade work phases session verification <session-id|latest>
 brigade work phases session privacy <session-id|latest>
 brigade work phases session handoffs <session-id|latest>
 brigade work phases session next <session-id|latest>
+brigade work phases session protocol <session-id|latest>
 brigade work phases session resume <session-id|latest>
 brigade work phases session closeout <session-id|latest>
 brigade work phases session activity <session-id|latest>

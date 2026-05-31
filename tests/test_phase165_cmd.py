@@ -707,6 +707,36 @@ def test_phase_session_recovery_notes_are_reviewable(tmp_path, capsys):
     assert any(event["event_type"] == "session-recovery-note" and event["local_id"] == note["note_id"] and event["status"] == "reviewed" for event in activity["events"])
 
 
+def test_phase_session_protocol_guides_safe_wrapper_resume(tmp_path, capsys):
+    assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "247-248", "--title", "Protocol", "--goal", "afk", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "start", "--target", str(tmp_path), "--range", "247-248", "--goal", "protocol session", "--json"]) == 0
+    session = json.loads(capsys.readouterr().out)
+
+    assert cli.main(["work", "phases", "session", "protocol", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
+    protocol = json.loads(capsys.readouterr().out)
+    assert protocol["schema"]["name"] == "phase-ledger-session-protocol"
+    assert protocol["safe_resume"] is True
+    assert protocol["executes_suggested_command"] is False
+    assert protocol["wrapper_steps"][-1]["step"] == "record-resume"
+    assert protocol["allowed_command_prefixes"] == ["brigade work phases "]
+    assert "git push" in protocol["forbidden_actions"]
+
+    assert cli.main(["work", "phases", "session", "checkpoint", session["session_id"], "--target", str(tmp_path), "--status", "blocked", "--summary", "Needs operator review.", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["work", "phases", "session", "protocol", "latest", "--target", str(tmp_path), "--json"]) == 0
+    blocked_protocol = json.loads(capsys.readouterr().out)
+    assert blocked_protocol["safe_resume"] is False
+    assert blocked_protocol["resume_blocker_count"] >= 1
+    assert blocked_protocol["wrapper_steps"][-1]["step"] == "route-blockers"
+    assert blocked_protocol["wrapper_steps"][-1]["command"].startswith("brigade work phases session checkpoints import-issues")
+
+    assert cli.main(["work", "phases", "session", "protocol", "latest", "--target", str(tmp_path)]) == 0
+    text = capsys.readouterr().out
+    assert "phase session protocol:" in text
+    assert "safe_resume: false" in text
+
+
 def test_phase_session_risk_summarizes_checkpoint_notes_and_doctor(tmp_path, capsys):
     assert cli.main(["work", "phases", "plan", "--target", str(tmp_path), "--range", "235-236", "--title", "Risk", "--goal", "afk", "--json"]) == 0
     capsys.readouterr()

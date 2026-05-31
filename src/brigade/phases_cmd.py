@@ -265,6 +265,11 @@ def schema(*, target: Path, json_output: bool = False) -> int:
             description="Metadata-only resume receipt for an AFK phase session.",
         ),
         _contract_schema(
+            "phase-ledger-session-protocol",
+            ["session", "next_step", "safe_resume", "resume_blockers", "wrapper_steps", "allowed_command_prefixes", "forbidden_actions"],
+            description="Read-only wrapper protocol for safe AFK phase session resume decisions.",
+        ),
+        _contract_schema(
             "phase-ledger-session-checkpoint",
             ["checkpoint_id", "session_id", "phase_id", "status", "summary", "next_step", "suggested_next_command", "source_fingerprint"],
             description="Local AFK recovery checkpoint without command execution.",
@@ -2049,6 +2054,164 @@ def session_next(*, target: Path, session_id: str, json_output: bool = False) ->
             latest = checkpoint.get("latest_checkpoint") if isinstance(checkpoint.get("latest_checkpoint"), dict) else {}
             print(f"checkpoint: {latest.get('checkpoint_id')} issues={checkpoint.get('issue_count')}")
         print(f"next: {payload['suggested_next_command']}")
+    return 0
+
+
+def _session_protocol_payload(target: Path, session: dict[str, Any]) -> dict[str, Any]:
+    next_payload = _session_next_payload(target, session)
+    risk_payload = _session_risk_payload(target, session)
+    progress_payload = _session_progress_payload(target, session)
+    verification_payload = _session_verification_payload(target, session)
+    privacy_payload = _session_privacy_payload(target, session)
+    handoffs_payload = _session_handoffs_payload(target, session)
+    gate_payload = _session_gate_payload(target, session)
+    checkpoint = next_payload.get("checkpoint") if isinstance(next_payload.get("checkpoint"), dict) else None
+    resume_blockers: list[dict[str, Any]] = []
+    next_command = str(next_payload.get("suggested_next_command") or "")
+    if checkpoint and int(checkpoint.get("issue_count") or 0) > 0:
+        top_issue = checkpoint.get("top_issue") if isinstance(checkpoint.get("top_issue"), dict) else {}
+        resume_blockers.append(
+            _check(
+                "block",
+                "phase_session_protocol_checkpoint_issue",
+                str(top_issue.get("detail") or "checkpoint needs review before resume"),
+                phase_id=top_issue.get("phase_id"),
+                suggested=str(checkpoint.get("suggested_next_command") or "brigade work phases session checkpoints compare latest"),
+            )
+        )
+    if risk_payload.get("risk_level") == "high":
+        resume_blockers.append(
+            _check(
+                "block",
+                "phase_session_protocol_high_risk",
+                "session risk is high",
+                suggested=str(risk_payload.get("suggested_next_command") or "brigade work phases session risk latest"),
+            )
+        )
+    if next_command and not next_command.startswith("brigade work phases "):
+        resume_blockers.append(
+            _check(
+                "block",
+                "phase_session_protocol_command_not_allowed",
+                "suggested next command is outside the phase ledger command family",
+                suggested="brigade work phases session next latest",
+            )
+        )
+    wrapper_steps = [
+        {
+            "step": "inspect-next",
+            "command": f"brigade work phases session next {session.get('session_id')} --json",
+            "writes": False,
+        },
+        {
+            "step": "inspect-risk",
+            "command": f"brigade work phases session risk {session.get('session_id')} --json",
+            "writes": False,
+        },
+        {
+            "step": "inspect-progress",
+            "command": f"brigade work phases session progress {session.get('session_id')} --json",
+            "writes": False,
+        },
+    ]
+    if checkpoint:
+        latest = checkpoint.get("latest_checkpoint") if isinstance(checkpoint.get("latest_checkpoint"), dict) else {}
+        wrapper_steps.append(
+            {
+                "step": "compare-checkpoint",
+                "command": f"brigade work phases session checkpoints compare {latest.get('checkpoint_id') or 'latest'} --json",
+                "writes": False,
+            }
+        )
+    if resume_blockers:
+        wrapper_steps.append(
+            {
+                "step": "route-blockers",
+                "command": "brigade work phases session checkpoints import-issues latest --json" if checkpoint else f"brigade work phases session import-issues {session.get('session_id')} --json",
+                "writes": True,
+            }
+        )
+    else:
+        wrapper_steps.append(
+            {
+                "step": "record-resume",
+                "command": f"brigade work phases session resume {session.get('session_id')} --json",
+                "writes": True,
+            }
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-protocol"),
+        "target": str(target),
+        "session_id": session.get("session_id"),
+        "phase_range": session.get("phase_range"),
+        "safe_resume": not resume_blockers,
+        "metadata_only": True,
+        "executes_suggested_command": False,
+        "next_step": next_payload.get("next_step"),
+        "checkpoint": checkpoint,
+        "risk": {
+            "risk_level": risk_payload.get("risk_level"),
+            "risk_count": risk_payload.get("risk_count"),
+            "suggested_next_command": risk_payload.get("suggested_next_command"),
+        },
+        "progress": {
+            "percent_complete": progress_payload.get("percent_complete"),
+            "blocker_count": progress_payload.get("blocker_count"),
+            "current_phase_id": progress_payload.get("current_phase_id"),
+        },
+        "verification": {
+            "issue_count": verification_payload.get("issue_count"),
+            "suggested_next_command": verification_payload.get("suggested_next_command"),
+        },
+        "privacy": {
+            "issue_count": privacy_payload.get("issue_count"),
+            "suggested_next_command": privacy_payload.get("suggested_next_command"),
+        },
+        "handoffs": {
+            "issue_count": handoffs_payload.get("issue_count"),
+            "suggested_next_command": handoffs_payload.get("suggested_next_command"),
+        },
+        "completion_gate": {
+            "safe_to_claim_complete": gate_payload.get("safe_to_claim_complete"),
+            "blocker_count": gate_payload.get("blocker_count"),
+            "suggested_next_command": gate_payload.get("suggested_next_command"),
+        },
+        "resume_blockers": resume_blockers,
+        "resume_blocker_count": len(resume_blockers),
+        "allowed_command_prefixes": ["brigade work phases "],
+        "forbidden_actions": [
+            "arbitrary command execution",
+            "git push",
+            "remote mutation",
+            "scanner execution",
+            "reviewer execution",
+            "tool execution",
+        ],
+        "wrapper_steps": wrapper_steps,
+        "suggested_next_command": wrapper_steps[-1]["command"],
+    }
+
+
+def session_protocol(*, target: Path, session_id: str, json_output: bool = False) -> int:
+    target = target.expanduser().resolve()
+    _path, session, error = _resolve_session(target, session_id)
+    if session is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    try:
+        payload = _session_protocol_payload(target, session)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session protocol: {payload['session_id']}")
+        print(f"safe_resume: {str(payload['safe_resume']).lower()}")
+        print(f"blockers: {payload['resume_blocker_count']}")
+        for step in payload["wrapper_steps"]:
+            print(f"- {step['step']}: {step['command']}")
     return 0
 
 
