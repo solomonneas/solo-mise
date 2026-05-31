@@ -1160,6 +1160,116 @@ def session_checkpoint_compare(*, target: Path, checkpoint_id: str, json_output:
     return 0
 
 
+def _checkpoint_issue_import_records(target: Path, checkpoint: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    compare = _session_checkpoint_compare_payload(target, checkpoint)
+    checkpoint_id = str(checkpoint.get("checkpoint_id") or "")
+    session_id = str(checkpoint.get("session_id") or "")
+    phase_id = str(checkpoint.get("phase_id") or "")
+    records: list[dict[str, Any]] = []
+
+    def append_record(*, issue_type: str, detail: str, suggested_command: object) -> None:
+        fingerprint = _source_fingerprint(
+            [],
+            {
+                "checkpoint_id": checkpoint_id,
+                "session_id": session_id,
+                "phase_id": phase_id,
+                "issue_type": issue_type,
+                "detail": detail,
+                "checkpoint_fingerprint": checkpoint.get("source_fingerprint"),
+            },
+        )
+        records.append(
+            {
+                "kind": "task",
+                "source": "phase-session-checkpoint",
+                "text": f"Resolve phase session checkpoint issue {issue_type} for {phase_id or checkpoint_id}: {detail}",
+                "type": "workflow",
+                "priority": "high" if issue_type.endswith("_missing_session") or checkpoint.get("status") == "blocked" else "normal",
+                "template": "bugfix",
+                "acceptance": [
+                    f"Checkpoint `{checkpoint_id}` no longer reports `{issue_type}`.",
+                    "The phase session has current checkpoint, closeout, report, or deferral evidence.",
+                    "`brigade work phases session checkpoints compare` reflects the reviewed state.",
+                ],
+                "metadata": {
+                    "checkpoint_id": checkpoint_id,
+                    "session_id": session_id,
+                    "phase_id": phase_id,
+                    "issue_type": issue_type,
+                    "safe_summary": detail,
+                    "suggested_command": suggested_command or compare.get("suggested_next_command"),
+                    "source_item_key": f"phase-session-checkpoint:{checkpoint_id}:{issue_type}",
+                    "source_fingerprint": fingerprint,
+                },
+            }
+        )
+
+    if checkpoint.get("status") == "blocked":
+        append_record(
+            issue_type="phase_session_checkpoint_blocked",
+            detail=str(checkpoint.get("summary") or "checkpoint is marked blocked"),
+            suggested_command=checkpoint.get("suggested_next_command"),
+        )
+    for check in compare.get("checks") or []:
+        if not isinstance(check, dict) or check.get("status") == "ok":
+            continue
+        append_record(
+            issue_type=str(check.get("name") or "phase_session_checkpoint_issue"),
+            detail=str(check.get("detail") or check.get("name") or "checkpoint issue"),
+            suggested_command=check.get("suggested_next_command"),
+        )
+    return records, compare
+
+
+def session_checkpoint_import_issues(*, target: Path, checkpoint_id: str, dry_run: bool = False, json_output: bool = False) -> int:
+    from . import work_cmd
+
+    target = target.expanduser().resolve()
+    checkpoint, error = _resolve_session_checkpoint(target, checkpoint_id)
+    if checkpoint is None:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    try:
+        records, compare = _checkpoint_issue_import_records(target, checkpoint)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    dismissed: list[dict[str, Any]] = []
+    if dry_run:
+        created = records
+    elif records:
+        created, skipped, dismissed = work_cmd._append_import_records(target, records)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "schema": _schema("phase-ledger-session-checkpoint-import-issues"),
+        "target": str(target),
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "session_id": checkpoint.get("session_id"),
+        "phase_id": checkpoint.get("phase_id"),
+        "dry_run": dry_run,
+        "compare_issue_count": compare.get("issue_count"),
+        "candidate_count": len(records),
+        "created": created,
+        "skipped": skipped,
+        "dismissed": dismissed,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "dismissed_count": len(dismissed),
+        "suggested_next_command": "brigade work inbox" if records else "brigade work phases session checkpoints show latest",
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"phase session checkpoint imports: {payload['checkpoint_id']}")
+        print(f"created: {payload['created_count']}")
+        print(f"skipped: {payload['skipped_count']}")
+        print(f"dismissed: {payload['dismissed_count']}")
+    return 0
+
+
 def session_closeout(*, target: Path, session_id: str, status: str = "reviewed", reason: str | None = None, json_output: bool = False) -> int:
     if status not in PHASE_SESSION_CLOSEOUT_STATUSES:
         print(f"error: --status must be one of {sorted(PHASE_SESSION_CLOSEOUT_STATUSES)}", file=sys.stderr)

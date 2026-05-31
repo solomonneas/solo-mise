@@ -62,6 +62,7 @@ Phase execution sessions group a declared AFK range into one local record with c
 Session next/resume commands identify the safest next local command and record resume metadata without executing hidden work.
 Session checkpoints record local recovery points with safe summaries, notes, current next-step state, and suggested commands without executing the suggested command.
 Session checkpoint list/show/compare commands inspect those local recovery points and detect stale saved next-step state without executing their suggested commands.
+Session checkpoint import commands route blocked or stale checkpoint issues into the normal work inbox as deduped local tasks.
 Session report bundles collect the phase records, checks, actions, imports, commits, tests, and blockers into local Markdown and JSON evidence.
 The daily driver can surface active phase sessions and run exactly one safe session step, such as building a session report or writing session closeout metadata.
 Release and operator review surfaces include phase session state so stale or unreported AFK work blocks publish review visibly.

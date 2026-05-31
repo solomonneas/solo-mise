@@ -575,6 +575,28 @@ def test_phase_session_checkpoint_records_recovery_metadata(tmp_path, capsys):
     assert "phase_session_checkpoint_step_changed" in names
     assert "phase_session_checkpoint_fingerprint_changed" in names
 
+    assert cli.main(["work", "phases", "session", "checkpoints", "import-issues", checkpoint["checkpoint_id"], "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run["dry_run"] is True
+    assert dry_run["created_count"] >= 1
+    assert dry_run["created"][0]["source"] == "phase-session-checkpoint"
+    assert work_cmd._read_imports(tmp_path) == []
+
+    assert cli.main(["work", "phases", "session", "checkpoints", "import-issues", checkpoint["checkpoint_id"], "--target", str(tmp_path), "--json"]) == 0
+    imported = json.loads(capsys.readouterr().out)
+    assert imported["created_count"] >= 1
+    imports = work_cmd._read_imports(tmp_path)
+    checkpoint_import = next(item for item in imports if item["source"] == "phase-session-checkpoint")
+    assert checkpoint_import["metadata"]["checkpoint_id"] == checkpoint["checkpoint_id"]
+    assert checkpoint_import["metadata"]["session_id"] == session["session_id"]
+    assert checkpoint_import["metadata"]["source_item_key"].startswith("phase-session-checkpoint:")
+    assert checkpoint_import["acceptance"]
+
+    assert cli.main(["work", "phases", "session", "checkpoints", "import-issues", checkpoint["checkpoint_id"], "--target", str(tmp_path), "--json"]) == 0
+    deduped = json.loads(capsys.readouterr().out)
+    assert deduped["created_count"] == 0
+    assert deduped["skipped_count"] >= 1
+
     assert cli.main(["work", "phases", "session", "activity", session["session_id"], "--target", str(tmp_path), "--json"]) == 0
     activity = json.loads(capsys.readouterr().out)
     assert any(event["event_type"] == "session-checkpoint" and event["local_id"] == checkpoint["checkpoint_id"] for event in activity["events"])
