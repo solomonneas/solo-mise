@@ -6,7 +6,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from contextlib import redirect_stdout
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -15,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from . import center_cmd, context_cmd, handoff_cmd, memory_cmd, phases_cmd, security_cmd, tools_cmd, work_cmd
+from . import center_cmd, context_cmd, handoff_cmd, memory_cmd, phases_cmd, security_cmd, toml_compat as tomllib, tools_cmd, work_cmd
 
 SCHEMA_VERSION = 1
 RUN_STATUSES = {"reviewed", "deferred", "blocked", "archived"}
