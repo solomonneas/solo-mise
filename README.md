@@ -61,8 +61,10 @@ The installable source files live under `src/brigade/templates/`; root workspace
 
 See [`ROADMAP.md`](ROADMAP.md) for the daily-driver, scanner inbox, chat-surface scanner, and memory-card decay roadmap. The active phase queue for roadmap completion hardening is tracked in [`docs/phase-61-100-plan.md`](docs/phase-61-100-plan.md).
 The production-hardening queue for the daily operator system is tracked in [`docs/phase-115-164-plan.md`](docs/phase-115-164-plan.md).
+
 Long unattended phase work is audited through the local phase execution ledger described in [`docs/phase-execution-ledger.md`](docs/phase-execution-ledger.md). Future multi-phase work is not complete unless each phase has ledger evidence or an explicit deferral.
 Phase ledger closeouts let an operator mark completed phase evidence as reviewed, deferred, blocked, or archived, and stale unreviewed completed phases surface in doctor output.
+
 Phase execution sessions group a declared AFK range into one local record with current phase, status, commit and test counts, report references, closeout state, and the next recommended command.
 Session next/resume commands identify the safest next local command and record resume metadata without executing hidden work.
 Session checkpoints record local recovery points with safe summaries, notes, current next-step state, and suggested commands without executing the suggested command.
@@ -70,6 +72,7 @@ Session checkpoint list/show/compare commands inspect those local recovery point
 Session checkpoint import commands route blocked or stale checkpoint issues into the normal work inbox as deduped local tasks.
 Session next/resume output includes the latest checkpoint summary and issue counts when checkpoint recovery metadata exists.
 Session recovery notes record safe summaries, notes, and evidence labels for AFK resume context, with list/show/closeout commands and activity timeline entries.
+
 Daily planning can surface checkpoint issues as local candidates that point at checkpoint import commands instead of hiding AFK recovery drift.
 Daily run can also write one local phase session checkpoint as its single bounded action when the selected session needs safe AFK recovery metadata.
 Session risk output summarizes next-step blockers, checkpoint drift, open recovery notes, and phase doctor issues in one read-only view.
@@ -77,6 +80,7 @@ Session verification output rolls up expected, passed, failed, skipped, and defe
 Session privacy output rolls up clean, blocked, and missing privacy checks across a whole AFK session range.
 Session handoff output rolls up linted, drafted, failed, deferred, and missing handoff evidence across a whole AFK session range.
 Session report bundles collect the phase records, checks, actions, imports, commits, tests, and blockers into local Markdown and JSON evidence.
+
 The daily driver can surface active phase sessions and run exactly one safe session step, such as building a session report or writing session closeout metadata.
 Release and operator review surfaces include phase session state so stale or unreported AFK work blocks publish review visibly.
 Release doctor also reports blocked or stale phase-session checkpoint evidence before publish review.
@@ -86,6 +90,7 @@ Work brief includes the latest phase-session checkpoint and compare summary in t
 Phase action planning can turn blocked or stale phase-session checkpoint issues into local phase actions.
 Session checkpoint archive moves old recovery points into local JSONL metadata so they stop driving latest-checkpoint health.
 Session report bundles include a recovery section with checkpoint and recovery-note summaries.
+
 `brigade work phases evidence add` appends local files, tests, report ids, handoff paths, and notes to a phase record without running commands.
 `brigade work phases verify plan/record` keeps expected verification and recorded outcomes visible without executing tests.
 `brigade work phases reconcile` checks recorded commit and push evidence against local git state without changing git.
@@ -96,13 +101,16 @@ Session report bundles include a recovery section with checkpoint and recovery-n
 `brigade work phases session import-issues` routes unresolved AFK session blockers into the work inbox with phase-session provenance and dedupe.
 `brigade work phases goal scaffold` writes a local editable `/goal` draft from ledger state, session evidence, blockers, and roadmap references without copying private evidence.
 `brigade work phases session gate` is the final read-only AFK claim check, and release evidence includes its latest result.
+
 Phase ledger compare checks make it clear when local HEAD, referenced files, reports, or doctor issue counts drift after a phase is recorded.
 Phase ledger action queues turn those ledger issues into local metadata-only next steps without executing commands.
 The daily driver can select those phase-ledger actions when they block AFK or release completion, then start one action or build one phase report as a bounded local step.
+
 Release readiness and candidate compare include phase closeout and report references so publish review can catch unreviewed or stale phase evidence.
 Phase report closeouts let an operator review, defer, supersede, or archive a generated phase report without changing its evidence.
 Phase report compare checks saved report bundles against current ledger state before relying on them.
 Work brief and center status include open phase action counts so ledger follow-ups stay visible in the daily loop.
+
 Open phase actions can be imported into the normal work inbox when they need a reviewed task.
 Release candidate evidence includes the latest phase report compare summary.
 The current AFK ledger hardening tranche is described in [`docs/phase-226-250-plan.md`](docs/phase-226-250-plan.md).
